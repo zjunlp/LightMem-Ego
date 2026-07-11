@@ -93,11 +93,11 @@ Recommended README layout once the video is available:
 </p>
 
 <p align="center">
-  <a href="YOUR_VIDEO_LINK">▶ Watch the full demo video</a>
+  <a href="https://www.bilibili.com/video/BV1oANw62EA3/?spm_id_from=333.1387.homepage.video_card.click">▶ Watch the full demo video</a>
 </p>
 ```
 
-For large videos, we recommend uploading the full MP4 to a GitHub Release, YouTube, Bilibili, or another video-hosting service, and keeping only the thumbnail image in this repository.
+For large videos, we recommend uploading the full MP4 to a YouTube, Bilibili, or another video-hosting service, and keeping only the thumbnail image in this repository.
 
 ---
 
