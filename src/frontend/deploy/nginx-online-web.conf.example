@@ -1,0 +1,19 @@
+server {
+    listen 80;
+    server_name your-domain.example.com;
+
+    root /var/www/online_web;
+    index index.html;
+
+    client_max_body_size 50m;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location ~* \.(js|css|png|jpg|jpeg|gif|svg|ico|webp|woff2?)$ {
+        expires 7d;
+        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
+    }
+}

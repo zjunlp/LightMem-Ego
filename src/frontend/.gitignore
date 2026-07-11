@@ -1,0 +1,13 @@
+# Dependencies and build outputs
+online_web/node_modules/
+online_web/dist/
+
+# Local environment files
+online_web/.env
+online_web/.env.*
+
+# Logs and editor state
+*.log
+.DS_Store
+.idea/
+.vscode/

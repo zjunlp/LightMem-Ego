@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "worldmm-online-server"
+version = "0.1.0"
+description = "Online long-video and realtime multimodal memory QA server."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+dependencies = [
+  "fastapi",
+  "uvicorn[standard]",
+  "python-multipart",
+  "pydantic>=2",
+  "python-dotenv",
+  "numpy",
+  "opencv-python",
+  "Pillow",
+  "tqdm",
+  "openai",
+  "tenacity",
+  "requests",
+  "httpx",
+  "filelock",
+  "packaging",
+  "networkx",
+  "python-igraph",
+  "faiss-cpu",
+  "transformers",
+  "sentence-transformers",
+  "accelerate",
+  "peft",
+  "qwen-vl-utils",
+  "decord",
+  "pysrt",
+  "scikit-image",
+  "litellm",
+  "tiktoken",
+  "boto3",
+  "einops",
+  "opencc-python-reimplemented"
+]
+
+[project.optional-dependencies]
+asr = ["whisperx"]
+gpu = ["torch", "torchvision"]
+dev = ["pytest", "ruff", "mypy"]
+
+[tool.setuptools]
+packages = []
+py-modules = []
