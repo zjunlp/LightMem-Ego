@@ -28,6 +28,7 @@
   <a href="#system-design">System Design</a> |
   <a href="#quick-start">Quick Start</a> |
   <a href="#repository-layout">Repository Layout</a> |
+  <a href="#related-works">Related Works</a> |
   <a href="#privacy-notice">Privacy</a>
 </p>
 
@@ -217,6 +218,14 @@ Set `API_BASE_URL` to the backend API address used by your deployment.
 | **Wearable Assistance** | "What am I looking at now?" | Current memory |
 
 ---
+
+<span id="related-works"></span>
+
+## Related Works
+This repository belongs to ZJUNLP LightMem series, focusing on solving context bloat, excessive token consumption and low cache utilization for long-running LLM agents:
+- [LightMem](https://github.com/zjunlp/LightMem) — Lightweight memory-augmented generation
+- [LightMem2](https://github.com/zjunlp/LightMem2) — A modular framework for long-running agent memory and context management
+- [LightMem-Ego](https://github.com/zjunlp/LightMem-Ego) — Temporal memory extension for ego-centric autonomous agents
 
 <span id="privacy-notice"></span>
 
