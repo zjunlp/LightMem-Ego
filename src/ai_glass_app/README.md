@@ -19,7 +19,7 @@ This open-source version does not include local session recording, replay-from-f
 ## Project Layout
 
 ```text
-src/
+src/ai_glass_app/
   app/src/main/java/cn/zjukg/lightmem/glass/
     activities/main/       # Android entry activity
     activities/worldmm/    # Glasses UI and session state
@@ -65,7 +65,7 @@ Change `API_BASE_URL` before building if you want the app to connect to a differ
 
 ## Build
 
-Run commands from the `src/` directory.
+Run commands from the `src/ai_glass_app/` directory.
 
 Windows:
 
@@ -148,7 +148,7 @@ When a capture session is running, the app captures camera frames and microphone
 
 ## Test
 
-Run unit tests from the `src/` directory:
+Run unit tests from the `src/ai_glass_app/` directory:
 
 ```powershell
 .\gradlew.bat testDebugUnitTest
