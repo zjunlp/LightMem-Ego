@@ -1,8 +1,22 @@
 # LightMem Glass App
 
-This is the Android glasses-side app for Rokid AI Glass. It captures camera frames and microphone audio from the glasses, sends the live stream to a configured LightMem API service, and displays voice-question answers on the glasses screen.
+This is the Rokid AI Glass Android client for LightMem-Ego. LightMem-Ego is a streaming multimodal memory system with both web and wearable interfaces; this app is the lightweight glasses-side interface for hands-free capture and question answering.
+
+The app captures camera frames and microphone audio from the glasses, sends the live stream to a configured LightMem API service, and displays voice-question answers on the glasses screen.
 
 The app uses standard Android APIs, Jetpack Compose UI, CameraX frame capture, `AudioRecord` microphone capture, RootEncoder RTMP streaming, and Rokid touchpad / button input. It does not require a phone-side SDK at runtime.
+
+
+
+## Demonstration
+
+- User perspective
+
+  <img src="assets/demo_slide7_cropped_for_emnlp_01.png" alt="Rokid AI Glass demo view showing a LightMem-Ego answer over the user's real-world scene" width="260" />
+
+- Glasses app UI
+
+  <img src="assets/glass_1_01.png" alt="LightMem-Ego glasses UI showing an audio question, answer page, latency, and touch controls" width="260" />
 
 ## Features
 

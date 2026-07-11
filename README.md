@@ -23,11 +23,11 @@
 </p>
 
 <p align="center">
-  <a href="#overview">Overview</a> •
-  <a href="#demo">Demo</a> •
-  <a href="#system-design">System Design</a> •
-  <a href="#quick-start">Quick Start</a> •
-  <a href="#repository-layout">Repository Layout</a> •
+  <a href="#overview">Overview</a> |
+  <a href="#demo">Demo</a> |
+  <a href="#system-design">System Design</a> |
+  <a href="#quick-start">Quick Start</a> |
+  <a href="#repository-layout">Repository Layout</a> |
   <a href="#privacy-notice">Privacy</a>
 </p>
 
@@ -38,6 +38,8 @@
 ## Overview
 
 **LightMem-Ego** is an end-to-end egocentric memory system for everyday-life assistance. It connects a **Rokid AI Glass app**, a **web frontend**, and a **backend service** so that users can stream first-person camera/audio context, build structured memory from daily experience, and ask questions about live or remembered moments.
+
+LightMem-Ego captures visual and audio streams from web, mobile, or wearable clients, organizes continuous experience into current, short-term, and long-term memory, and answers questions grounded in remembered daily experience.
 
 LightMem-Ego organizes continuous visual-audio experience into a hierarchical memory structure:
 
@@ -89,9 +91,11 @@ The system is designed for practical scenarios such as object finding, conversat
 
 <p align="center">
   <a href="https://www.bilibili.com/video/BV1oANw62EA3/">
-    ▶ Watch the full demo video
+    Watch the full demo video
   </a>
 </p>
+
+---
 
 <span id="system-design"></span>
 
@@ -106,16 +110,15 @@ LightMem-Ego is organized as three cooperating components:
    Receives live streams, manages sessions, extracts and stores memory, performs retrieval, and returns answers.
 
 3. **Web Frontend**  
-   Provides a browser interface for reviewing sessions, interacting with memory, and using backend-powered QA outside the glasses.
+   Provides a browser interface for live capture, memory interaction, session review, and backend-powered QA outside the glasses.
 
 ```text
-Rokid AI Glass app  ->  Backend API and workers  ->  Memory / Retrieval / QA
-                                       ^
-                                       |
-                                Web frontend
+Web frontend         \
+                     -> Backend API and workers -> Memory / retrieval / QA
+Rokid AI Glass app  /
 ```
 
-At runtime, the glasses app opens a live session with the backend, sends camera/audio data, and receives answers for voice questions. The frontend connects to the same backend service for browser-side interaction and session review.
+At runtime, either the web frontend or the glasses app can open a live session with the backend, send visual/audio data, and receive memory-grounded answers. The frontend is the full browser interface for using and reviewing the system, while the glasses app provides a hands-free wearable interaction surface.
 
 ---
 
@@ -138,7 +141,7 @@ src/
 
 ### `src/ai_glass_app/`
 
-Android app for Rokid AI Glass.
+Android client app for Rokid AI Glass. This is one deployment surface for LightMem-Ego rather than the whole system.
 
 Current open-source features include:
 
@@ -161,7 +164,7 @@ See [`src/backend/README.md`](src/backend/README.md) for backend-specific setup 
 
 ### `src/frontend/`
 
-Web frontend for LightMem-Ego. It provides the browser interface for interacting with the system, reviewing memory/session content, and using backend-powered QA outside the glasses.
+Web frontend for LightMem-Ego. It provides the main browser interface for live capture, memory/session review, and backend-powered QA without requiring the glasses app.
 
 See [`src/frontend/README.md`](src/frontend/README.md) for frontend-specific setup and deployment notes.
 
@@ -207,11 +210,11 @@ Set `API_BASE_URL` to the backend API address used by your deployment.
 
 | Scenario | Example Query | Memory Scope |
 | :--- | :--- | :--- |
-| **Object Finding** | “Where did I leave my badge?” | Current / short-term memory |
-| **Conversation Recall** | “What did the doctor tell me after checking the report?” | Short-term memory + transcript context |
-| **Life Summarization** | “What did I do this afternoon?” | Short-term and long-term memory |
-| **Routine Discovery** | “What do I usually do after arriving at the office?” | Long-term semantic memory |
-| **Wearable Assistance** | “What am I looking at now?” | Current memory |
+| **Object Finding** | "Where did I leave my badge?" | Current / short-term memory |
+| **Conversation Recall** | "What did the doctor tell me after checking the report?" | Short-term memory + transcript context |
+| **Life Summarization** | "What did I do this afternoon?" | Short-term and long-term memory |
+| **Routine Discovery** | "What do I usually do after arriving at the office?" | Long-term semantic memory |
+| **Wearable Assistance** | "What am I looking at now?" | Current memory |
 
 ---
 
