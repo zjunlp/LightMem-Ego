@@ -81,25 +81,17 @@ The system is designed for practical scenarios such as object finding, conversat
 
 ## Demo
 
-The full demo video will be released soon.
-
-Recommended README layout once the video is available:
-
-```md
 <p align="center">
-  <a href="https://www.bilibili.com/video/BV1oANw62EA3/?spm_id_from=333.1387.homepage.video_card.click">
-    <img src="./figs/demo_thumbnail.png" width="80%" alt="LightMem-Ego Demo Video">
+  <a href="https://www.bilibili.com/video/BV1oANw62EA3/">
+    <img src="./figs/thumbnail.png" width="80%" alt="LightMem-Ego Demo Video">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://www.bilibili.com/video/BV1oANw62EA3/?spm_id_from=333.1387.homepage.video_card.click">▶ Watch the full demo video</a>
+  <a href="https://www.bilibili.com/video/BV1oANw62EA3/">
+    ▶ Watch the full demo video
+  </a>
 </p>
-```
-
-For large videos, we recommend uploading the full MP4 to a YouTube, Bilibili, or another video-hosting service, and keeping only the thumbnail image in this repository.
-
----
 
 <span id="system-design"></span>
 
