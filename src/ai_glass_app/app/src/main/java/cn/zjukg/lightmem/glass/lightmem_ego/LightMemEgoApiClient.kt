@@ -1,4 +1,4 @@
-package cn.zjukg.lightmem.glass.worldmm
+package cn.zjukg.lightmem.glass.lightmem_ego
 
 import org.json.JSONObject
 import java.io.BufferedOutputStream
@@ -12,7 +12,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.UUID
 
-data class WorldMMStartResult(
+data class LightMemEgoStartResult(
     val sessionId: String,
     val parentSessionId: String,
     val childSessionId: String,
@@ -31,18 +31,18 @@ data class WorldMMStartResult(
     val audioQuestionPath: String,
 )
 
-class WorldMMApiException(
+class LightMemEgoApiException(
     message: String,
     val statusCode: Int,
     val payload: JSONObject,
 ) : IllegalStateException(message)
 
-data class WorldMMUploadResult(
+data class LightMemEgoUploadResult(
     val status: String,
     val canAsk: Boolean,
 )
 
-data class WorldMMStatusResult(
+data class LightMemEgoStatusResult(
     val streamStatus: String,
     val canAsk: Boolean,
     val memoryReady: Boolean,
@@ -52,7 +52,7 @@ data class WorldMMStatusResult(
     val latestAudioTsMs: Long?,
 )
 
-data class WorldMMAudioQuestionSubmitResult(
+data class LightMemEgoAudioQuestionSubmitResult(
     val status: String,
     val question: String,
     val queued: Boolean,
@@ -61,7 +61,7 @@ data class WorldMMAudioQuestionSubmitResult(
     val message: String,
 )
 
-data class WorldMMStreamEvent(
+data class LightMemEgoStreamEvent(
     val type: String,
     val status: String,
     val delta: String,
@@ -71,29 +71,29 @@ data class WorldMMStreamEvent(
     val message: String,
 )
 
-data class WorldMMStreamResult(
+data class LightMemEgoStreamResult(
     val status: String,
     val answer: String,
     val question: String,
     val message: String,
 )
 
-data class WorldMMAudioQuestionStreamResult(
+data class LightMemEgoAudioQuestionStreamResult(
     val status: String,
     val question: String,
     val answer: String,
     val message: String,
 )
 
-data class WorldMMQueryTaskResult(
+data class LightMemEgoQueryTaskResult(
     val status: String,
     val done: Boolean,
     val answer: String,
     val message: String,
 )
 
-class WorldMMApiClient(
-    private val baseUrl: String = WorldMMConfig.API_BASE_URL,
+class LightMemEgoApiClient(
+    private val baseUrl: String = LightMemEgoConfig.API_BASE_URL,
 ) {
     private val frameUploadPaths = mutableMapOf<String, String>()
     private val audioUploadPaths = mutableMapOf<String, String>()
@@ -103,11 +103,11 @@ class WorldMMApiClient(
     private val dateLabelFormatter = DateTimeFormatter.ofPattern("yyyy.M.d")
 
     fun startRokidStream(
-        inputMode: String = WorldMMConfig.INPUT_MODE,
+        inputMode: String = LightMemEgoConfig.INPUT_MODE,
         parentSessionId: String? = null,
         runId: String,
         createParentSession: Boolean,
-    ): WorldMMStartResult {
+    ): LightMemEgoStartResult {
         val requestedParentSessionId = parentSessionId?.trim().orEmpty()
         val startTsMs = System.currentTimeMillis()
         val zone = ZoneId.systemDefault()
@@ -160,7 +160,7 @@ class WorldMMApiClient(
         requestedParentSessionId: String,
         inputMode: String,
         runId: String,
-    ): WorldMMStartResult {
+    ): LightMemEgoStartResult {
         val sessionId = json.optString("session_id")
         val parentId = json.optString("parent_session_id", requestedParentSessionId)
         val childId = json.optString("child_session_id", sessionId)
@@ -177,7 +177,7 @@ class WorldMMApiClient(
         val dayIndex = dayContext.firstIntOrNull("day_index", "dayIndex", "index")
             ?: json.firstIntOrNull("day_index", "dayIndex")
             ?: 0
-        return WorldMMStartResult(
+        return LightMemEgoStartResult(
             sessionId = sessionId,
             parentSessionId = parentId,
             childSessionId = childId.ifBlank { sessionId },
@@ -214,7 +214,7 @@ class WorldMMApiClient(
         relativeTsMs: Long,
         width: Int,
         height: Int,
-    ): WorldMMUploadResult {
+    ): LightMemEgoUploadResult {
         val json = postMultipart(
             path = frameUploadPaths[sessionId] ?: "/rokid/$sessionId/frame",
             fileField = "frame",
@@ -231,7 +231,7 @@ class WorldMMApiClient(
                 "height" to height.toString(),
             ),
         )
-        return WorldMMUploadResult(
+        return LightMemEgoUploadResult(
             status = json.optString("status"),
             canAsk = json.optBoolean("can_ask", false) || json.optBoolean("mcur_ready", false),
         )
@@ -243,7 +243,7 @@ class WorldMMApiClient(
         audioIndex: Int,
         relativeTsMs: Long,
         durationMs: Long,
-    ): WorldMMUploadResult {
+    ): LightMemEgoUploadResult {
         val json = postMultipart(
             path = audioUploadPaths[sessionId] ?: "/rokid/$sessionId/audio_chunk",
             fileField = "audio",
@@ -256,22 +256,22 @@ class WorldMMApiClient(
                 "client_ts_ms" to System.currentTimeMillis().toString(),
                 "duration_ms" to durationMs.toString(),
                 "format" to "wav",
-                "sample_rate" to WorldMMConfig.AUDIO_SAMPLE_RATE.toString(),
+                "sample_rate" to LightMemEgoConfig.AUDIO_SAMPLE_RATE.toString(),
                 "channels" to "1",
                 "source" to "rokid_sdk_audio",
             ),
         )
-        return WorldMMUploadResult(
+        return LightMemEgoUploadResult(
             status = json.optString("status"),
             canAsk = json.optBoolean("can_ask", false),
         )
     }
 
-    fun getStreamStatus(sessionId: String): WorldMMStatusResult {
+    fun getStreamStatus(sessionId: String): LightMemEgoStatusResult {
         val json = getJson(statusPaths[sessionId] ?: "/rokid/$sessionId/status")
         val rokid = json.optJSONObject("rokid") ?: JSONObject()
         val memoryReady = getMemoryReady(sessionId)
-        return WorldMMStatusResult(
+        return LightMemEgoStatusResult(
             streamStatus = json.optString("stream_status", json.optString("status", "")),
             canAsk = json.optBoolean("can_ask", false),
             memoryReady = memoryReady,
@@ -298,7 +298,7 @@ class WorldMMApiClient(
         sessionId: String,
         wavBytes: ByteArray,
         durationMs: Long,
-    ): WorldMMAudioQuestionSubmitResult {
+    ): LightMemEgoAudioQuestionSubmitResult {
         val json = postMultipart(
             path = audioQuestionPaths[sessionId] ?: "/rokid/$sessionId/audio_question",
             fileField = "audio",
@@ -308,7 +308,7 @@ class WorldMMApiClient(
             fields = mapOf(
                 "duration_ms" to durationMs.toString(),
                 "format" to "wav",
-                "sample_rate" to WorldMMConfig.AUDIO_SAMPLE_RATE.toString(),
+                "sample_rate" to LightMemEgoConfig.AUDIO_SAMPLE_RATE.toString(),
                 "channels" to "1",
                 "mode" to "async",
                 "retrieval_mode" to "auto",
@@ -327,7 +327,7 @@ class WorldMMApiClient(
         val status = json.optString("status", "")
         val answer = extractAnswer(json)
         val question = json.firstNonBlankString("question", "transcript", "text").orEmpty()
-        return WorldMMAudioQuestionSubmitResult(
+        return LightMemEgoAudioQuestionSubmitResult(
             status = status,
             question = question,
             queued = status == "queued" || taskId.isNotBlank(),
@@ -341,8 +341,8 @@ class WorldMMApiClient(
         sessionId: String,
         wavBytes: ByteArray,
         durationMs: Long,
-        onEvent: (WorldMMStreamEvent) -> Unit,
-    ): WorldMMAudioQuestionStreamResult {
+        onEvent: (LightMemEgoStreamEvent) -> Unit,
+    ): LightMemEgoAudioQuestionStreamResult {
         val result = postMultipartStream(
             path = audioQuestionStreamPath(sessionId),
             fileField = "audio",
@@ -352,7 +352,7 @@ class WorldMMApiClient(
             fields = mapOf(
                 "duration_ms" to durationMs.toString(),
                 "format" to "wav",
-                "sample_rate" to WorldMMConfig.AUDIO_SAMPLE_RATE.toString(),
+                "sample_rate" to LightMemEgoConfig.AUDIO_SAMPLE_RATE.toString(),
                 "channels" to "1",
                 "retrieval_mode" to "auto",
                 "memory_mode" to "auto",
@@ -367,17 +367,17 @@ class WorldMMApiClient(
             ),
             onEvent = onEvent,
         )
-        return WorldMMAudioQuestionStreamResult(
+        return LightMemEgoAudioQuestionStreamResult(
             status = result.status,
             question = result.question,
             answer = result.answer,
             message = result.message,
         )
     }
-    fun getQueryTask(taskId: String): WorldMMQueryTaskResult {
+    fun getQueryTask(taskId: String): LightMemEgoQueryTaskResult {
         val json = getJson("/query_task/$taskId")
         val status = json.optString("status", "queued").lowercase()
-        return WorldMMQueryTaskResult(
+        return LightMemEgoQueryTaskResult(
             status = status,
             done = status == "done",
             answer = extractAnswer(json),
@@ -415,7 +415,7 @@ class WorldMMApiClient(
         payload: ByteArray,
         fields: Map<String, String>,
     ): JSONObject {
-        val boundary = "WorldMM-${UUID.randomUUID()}"
+        val boundary = "LightMemEgo-${UUID.randomUUID()}"
         val conn = openConnection(path, "POST")
         conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
         conn.doOutput = true
@@ -442,9 +442,9 @@ class WorldMMApiClient(
         contentType: String,
         payload: ByteArray,
         fields: Map<String, String>,
-        onEvent: (WorldMMStreamEvent) -> Unit,
-    ): WorldMMStreamResult {
-        val boundary = "WorldMM-${UUID.randomUUID()}"
+        onEvent: (LightMemEgoStreamEvent) -> Unit,
+    ): LightMemEgoStreamResult {
+        val boundary = "LightMemEgo-${UUID.randomUUID()}"
         val conn = openConnection(path, "POST")
         conn.setRequestProperty("Accept", "text/event-stream")
         conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
@@ -467,8 +467,8 @@ class WorldMMApiClient(
 
     private fun parseSseResponse(
         conn: HttpURLConnection,
-        onEvent: (WorldMMStreamEvent) -> Unit,
-    ): WorldMMStreamResult {
+        onEvent: (LightMemEgoStreamEvent) -> Unit,
+    ): LightMemEgoStreamResult {
         val code = conn.responseCode
         val stream = if (code in 200..299) conn.inputStream else conn.errorStream
         if (code !in 200..299) {
@@ -529,7 +529,7 @@ class WorldMMApiClient(
         if (status == "error" && answer.isBlank()) {
             throw IllegalStateException(message.ifBlank { "Stream question failed" })
         }
-        return WorldMMStreamResult(
+        return LightMemEgoStreamResult(
             status = status.ifBlank { "ok" },
             answer = answer,
             question = question,
@@ -537,7 +537,7 @@ class WorldMMApiClient(
         )
     }
 
-    private fun parseStreamEvent(eventName: String, json: JSONObject): WorldMMStreamEvent {
+    private fun parseStreamEvent(eventName: String, json: JSONObject): LightMemEgoStreamEvent {
         val result = json.optJSONObject("result")
         val resultAnswer = result?.let { extractAnswer(it) }.orEmpty()
         val answer = json.firstNonBlankString("answer", "final_answer", "finalAnswer", "response", "text")
@@ -552,7 +552,7 @@ class WorldMMApiClient(
         val message = json.firstNonBlankString("message", "error")
             ?: result?.firstNonBlankString("message", "error")
             ?: ""
-        return WorldMMStreamEvent(
+        return LightMemEgoStreamEvent(
             type = json.optString("type").ifBlank { eventName.ifBlank { "message" } },
             status = json.firstNonBlankString("status") ?: result?.firstNonBlankString("status") ?: "",
             delta = json.optString("delta"),
@@ -580,7 +580,7 @@ class WorldMMApiClient(
         return (URL(joined).openConnection() as HttpURLConnection).apply {
             requestMethod = method
             connectTimeout = 12_000
-            readTimeout = WorldMMConfig.HTTP_READ_TIMEOUT_MS
+            readTimeout = LightMemEgoConfig.HTTP_READ_TIMEOUT_MS
             useCaches = false
             setRequestProperty("Accept", "application/json")
         }
@@ -597,7 +597,7 @@ class WorldMMApiClient(
                 ?: text.ifBlank { "HTTP $code" }
             val path = conn.url?.path.orEmpty()
             val message = "HTTP $code${path.ifBlank { "" }.let { if (it.isBlank()) "" else " $it" }}: $bodyMessage"
-            throw WorldMMApiException(message, code, payload)
+            throw LightMemEgoApiException(message, code, payload)
         }
         return if (text.isBlank()) JSONObject() else JSONObject(text)
     }

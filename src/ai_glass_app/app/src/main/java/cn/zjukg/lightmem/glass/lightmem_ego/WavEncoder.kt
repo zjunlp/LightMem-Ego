@@ -1,11 +1,11 @@
-package cn.zjukg.lightmem.glass.worldmm
+package cn.zjukg.lightmem.glass.lightmem_ego
 
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 object WavEncoder {
-    fun mono16PcmToWav(pcmBytes: ByteArray, sampleRate: Int = WorldMMConfig.AUDIO_SAMPLE_RATE): ByteArray {
+    fun mono16PcmToWav(pcmBytes: ByteArray, sampleRate: Int = LightMemEgoConfig.AUDIO_SAMPLE_RATE): ByteArray {
         val out = ByteArrayOutputStream(44 + pcmBytes.size)
         val byteRate = sampleRate * 2
         out.writeAscii("RIFF")
@@ -26,7 +26,7 @@ object WavEncoder {
     }
 
     fun downmixRokidEightChannelToMono(input: ByteArray, bytesRead: Int): ByteArray {
-        val frameBytes = WorldMMConfig.ROKID_CHANNEL_COUNT * 2
+        val frameBytes = LightMemEgoConfig.ROKID_CHANNEL_COUNT * 2
         val frames = bytesRead / frameBytes
         val output = ByteArray(frames * 2)
         var outIndex = 0

@@ -1,4 +1,4 @@
-package cn.zjukg.lightmem.glass.activities.worldmm
+package cn.zjukg.lightmem.glass.activities.lightmem_ego
 
 import android.Manifest
 import android.annotation.SuppressLint
@@ -11,16 +11,16 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import cn.zjukg.lightmem.glass.app.CONSTANT
 import cn.zjukg.lightmem.glass.utils.BarePermissions
-import cn.zjukg.lightmem.glass.worldmm.WavEncoder
-import cn.zjukg.lightmem.glass.worldmm.WorldMMApiClient
-import cn.zjukg.lightmem.glass.worldmm.WorldMMConfig
-import cn.zjukg.lightmem.glass.worldmm.StoredRokidSession
-import cn.zjukg.lightmem.glass.worldmm.WorldMMStartResult
-import cn.zjukg.lightmem.glass.worldmm.WorldMMStreamEvent
-import cn.zjukg.lightmem.glass.worldmm.WorldMMUploadResult
-import cn.zjukg.lightmem.glass.worldmm.WorldMMRokidSessionStore
-import cn.zjukg.lightmem.glass.worldmm.WorldMMApiException
-import cn.zjukg.lightmem.glass.worldmm.WorldMMDiagnostics
+import cn.zjukg.lightmem.glass.lightmem_ego.WavEncoder
+import cn.zjukg.lightmem.glass.lightmem_ego.LightMemEgoApiClient
+import cn.zjukg.lightmem.glass.lightmem_ego.LightMemEgoConfig
+import cn.zjukg.lightmem.glass.lightmem_ego.StoredRokidSession
+import cn.zjukg.lightmem.glass.lightmem_ego.LightMemEgoStartResult
+import cn.zjukg.lightmem.glass.lightmem_ego.LightMemEgoStreamEvent
+import cn.zjukg.lightmem.glass.lightmem_ego.LightMemEgoUploadResult
+import cn.zjukg.lightmem.glass.lightmem_ego.LightMemEgoRokidSessionStore
+import cn.zjukg.lightmem.glass.lightmem_ego.LightMemEgoApiException
+import cn.zjukg.lightmem.glass.lightmem_ego.LightMemEgoDiagnostics
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -36,7 +36,7 @@ import java.util.UUID
 
 private val TERMINAL_STREAM_STATUSES = setOf("ended", "stopped", "aborted", "cancelled", "canceled", "done")
 
-data class WorldMMGlassUiState(
+data class LightMemEgoGlassUiState(
     val status: String = "disconnected",
     val sessionId: String = "",
     val parentSessionId: String = "",
@@ -80,17 +80,17 @@ data class WorldMMGlassUiState(
     val rtmpRestartToken: Int = 0,
 )
 
-class WorldMMGlassViewModel(application: Application) : AndroidViewModel(application) {
-    private val api = WorldMMApiClient()
-    private val sessionStore = WorldMMRokidSessionStore(application)
+class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(application) {
+    private val api = LightMemEgoApiClient()
+    private val sessionStore = LightMemEgoRokidSessionStore(application)
 
     private val _uiState = MutableStateFlow(
-        WorldMMGlassUiState(
+        LightMemEgoGlassUiState(
             cameraGranted = BarePermissions.hasCamera(application),
             audioGranted = BarePermissions.hasRecordAudio(application),
         ),
     )
-    val uiState: StateFlow<WorldMMGlassUiState> = _uiState.asStateFlow()
+    val uiState: StateFlow<LightMemEgoGlassUiState> = _uiState.asStateFlow()
 
     @Volatile
     private var streaming = false
@@ -205,7 +205,7 @@ class WorldMMGlassViewModel(application: Application) : AndroidViewModel(applica
             _uiState.update { it.copy(voiceQuestionStatus = "failed", voiceQuestionMessage = "Capture session ended", lastError = "Capture session ended") }
             return
         }
-        if (pcmBytes.size < WorldMMConfig.AUDIO_SAMPLE_RATE) {
+        if (pcmBytes.size < LightMemEgoConfig.AUDIO_SAMPLE_RATE) {
             _uiState.update { it.copy(voiceQuestionStatus = "failed", voiceQuestionMessage = "Voice question was too short. Please try again.", lastError = "Voice question was too short. Please try again.") }
             return
         }
@@ -289,7 +289,7 @@ class WorldMMGlassViewModel(application: Application) : AndroidViewModel(applica
         }
     }
 
-    private fun applyQuestionStreamEvent(event: WorldMMStreamEvent, isVoice: Boolean) {
+    private fun applyQuestionStreamEvent(event: LightMemEgoStreamEvent, isVoice: Boolean) {
         when (event.type) {
             "transcribing" -> if (isVoice) {
                 _uiState.update {
@@ -374,7 +374,7 @@ class WorldMMGlassViewModel(application: Application) : AndroidViewModel(applica
 
     private fun startLiveIngestSession() {
         val state = _uiState.value
-        WorldMMDiagnostics.log(getApplication(), "start-live-ingest", "streaming=$streaming stopping=$stopping")
+        LightMemEgoDiagnostics.log(getApplication(), "start-live-ingest", "streaming=$streaming stopping=$stopping")
         if (!state.cameraGranted || !state.audioGranted) {
             _uiState.update { it.copy(status = "Please grant camera and microphone permissions", lastError = "") }
             return
@@ -386,7 +386,7 @@ class WorldMMGlassViewModel(application: Application) : AndroidViewModel(applica
             runCatching {
                 startPreferredRokidSession()
             }.onSuccess { result ->
-                WorldMMDiagnostics.log(
+                LightMemEgoDiagnostics.log(
                     getApplication(),
                     "start-live-ingest-success",
                     "session=${result.sessionId} parent=${result.parentSessionId} mode=${result.inputMode} hasPush=${result.pushUrl.isNotBlank()}",
@@ -439,7 +439,7 @@ class WorldMMGlassViewModel(application: Application) : AndroidViewModel(applica
                 if (result.inputMode == "rokid_live_rtmp") startLiveIngest(result.sessionId, result.liveIngestStartPath)
                 startStatusPolling(result.sessionId)
             }.onFailure { error ->
-                WorldMMDiagnostics.logError(getApplication(), "start-live-ingest-failed", "", error)
+                LightMemEgoDiagnostics.logError(getApplication(), "start-live-ingest-failed", "", error)
                 failStart(error.message ?: "Connection failed")
             }
         }
@@ -448,17 +448,17 @@ class WorldMMGlassViewModel(application: Application) : AndroidViewModel(applica
     fun resumeStoredSessionIfAvailable(): Boolean {
         if (attemptedStoredSessionResume || streaming || stopping) return false
         attemptedStoredSessionResume = true
-        if (WorldMMConfig.CREATE_NEW_PARENT_SESSION) {
+        if (LightMemEgoConfig.CREATE_NEW_PARENT_SESSION) {
             sessionStore.clear()
-            WorldMMDiagnostics.log(getApplication(), "stored-session-clear", "CREATE_NEW_PARENT_SESSION=true")
+            LightMemEgoDiagnostics.log(getApplication(), "stored-session-clear", "CREATE_NEW_PARENT_SESSION=true")
             return false
         }
         val stored = sessionStore.load()
         if (stored == null) {
-            WorldMMDiagnostics.log(getApplication(), "stored-session-missing")
+            LightMemEgoDiagnostics.log(getApplication(), "stored-session-missing")
             return false
         }
-        WorldMMDiagnostics.log(
+        LightMemEgoDiagnostics.log(
             getApplication(),
             "stored-session-resume",
             "session=${stored.sessionId} parent=${stored.parentSessionId} hasPush=${stored.pushUrl.isNotBlank()}",
@@ -537,13 +537,13 @@ class WorldMMGlassViewModel(application: Application) : AndroidViewModel(applica
                 startMicrophoneAudioLoop(cleanSessionId, uploadToBackend = true)
                 startLiveIngest(cleanSessionId, stored.liveIngestStartPath.ifBlank { "/rokid/$cleanSessionId/live/ingest/start" })
                 startStatusPolling(cleanSessionId)
-                WorldMMDiagnostics.log(
+                LightMemEgoDiagnostics.log(
                     getApplication(),
                     "stored-session-resumed",
                     "session=$cleanSessionId status=${status.streamStatus} frames=${status.framesReceived} audio=${status.audioChunksReceived}",
                 )
             }.onFailure { error ->
-                WorldMMDiagnostics.logError(getApplication(), "stored-session-resume-failed", "session=$cleanSessionId", error)
+                LightMemEgoDiagnostics.logError(getApplication(), "stored-session-resume-failed", "session=$cleanSessionId", error)
                 _uiState.update { it.copy(status = "resume failed", lastError = error.message ?: "Stored session resume failed") }
             }
         }
@@ -554,7 +554,7 @@ class WorldMMGlassViewModel(application: Application) : AndroidViewModel(applica
         val state = _uiState.value
         val sessionId = state.sessionId
         val liveStopPath = state.liveIngestStopPath
-        WorldMMDiagnostics.log(getApplication(), "stop-streaming", "session=$sessionId liveStopPath=$liveStopPath")
+        LightMemEgoDiagnostics.log(getApplication(), "stop-streaming", "session=$sessionId liveStopPath=$liveStopPath")
         sessionStore.clear()
         stopping = true
         streaming = false
@@ -600,7 +600,7 @@ class WorldMMGlassViewModel(application: Application) : AndroidViewModel(applica
     fun reserveFrameCapture(): Boolean {
         if (!streaming || frameUploadInFlight) return false
         val now = SystemClock.elapsedRealtime()
-        if (now - lastFrameCaptureElapsedMs < WorldMMConfig.FRAME_INTERVAL_MS) return false
+        if (now - lastFrameCaptureElapsedMs < LightMemEgoConfig.FRAME_INTERVAL_MS) return false
         lastFrameCaptureElapsedMs = now
         return true
     }
@@ -666,18 +666,18 @@ class WorldMMGlassViewModel(application: Application) : AndroidViewModel(applica
         releaseRecorder()
         audioJob = viewModelScope.launch(Dispatchers.IO) {
             val audioFormat = AudioFormat.Builder()
-                .setSampleRate(WorldMMConfig.AUDIO_SAMPLE_RATE)
+                .setSampleRate(LightMemEgoConfig.AUDIO_SAMPLE_RATE)
                 .setChannelMask(CONSTANT.AUDIO_CHANNEL_MASK)
                 .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
                 .build()
-            val bytesPerSecond = WorldMMConfig.AUDIO_SAMPLE_RATE * WorldMMConfig.ROKID_CHANNEL_COUNT * 2
+            val bytesPerSecond = LightMemEgoConfig.AUDIO_SAMPLE_RATE * LightMemEgoConfig.ROKID_CHANNEL_COUNT * 2
             val rec = AudioRecord.Builder()
                 .setAudioSource(MediaRecorder.AudioSource.MIC)
                 .setAudioFormat(audioFormat)
                 .setBufferSizeInBytes(bytesPerSecond * 2)
                 .build()
             recorder = rec
-            val readBuffer = ByteArray(4096 * WorldMMConfig.ROKID_CHANNEL_COUNT)
+            val readBuffer = ByteArray(4096 * LightMemEgoConfig.ROKID_CHANNEL_COUNT)
             var chunkStartElapsedMs = SystemClock.elapsedRealtime()
             var pcm = ByteArrayOutputStream()
             rec.startRecording()
@@ -690,7 +690,7 @@ class WorldMMGlassViewModel(application: Application) : AndroidViewModel(applica
                     appendVoiceQuestionAudio(monoBytes)
                 }
                 val now = SystemClock.elapsedRealtime()
-                if (now - chunkStartElapsedMs >= WorldMMConfig.AUDIO_CHUNK_MS && pcm.size() > 0) {
+                if (now - chunkStartElapsedMs >= LightMemEgoConfig.AUDIO_CHUNK_MS && pcm.size() > 0) {
                     val pcmBytes = pcm.toByteArray()
                     pcm = ByteArrayOutputStream()
                     val audioIndex = _uiState.value.audioIndex
@@ -737,13 +737,13 @@ class WorldMMGlassViewModel(application: Application) : AndroidViewModel(applica
         relativeTsMs: Long,
         durationMs: Long,
         pcmBytes: ByteArray,
-    ): WorldMMUploadResult {
+    ): LightMemEgoUploadResult {
         val wavBytes = WavEncoder.mono16PcmToWav(pcmBytes)
         return api.uploadAudioChunk(sessionId, wavBytes, audioIndex, relativeTsMs, durationMs)
     }
 
     private suspend fun pollQueryAnswer(taskId: String): String {
-        val maxAttempts = (WorldMMConfig.QUERY_POLL_TIMEOUT_MS / WorldMMConfig.QUERY_POLL_INTERVAL_MS).toInt().coerceAtLeast(1)
+        val maxAttempts = (LightMemEgoConfig.QUERY_POLL_TIMEOUT_MS / LightMemEgoConfig.QUERY_POLL_INTERVAL_MS).toInt().coerceAtLeast(1)
         repeat(maxAttempts) {
             val task = api.getQueryTask(taskId)
             _uiState.update { it.copy(queryStatus = task.status.ifBlank { "running" }) }
@@ -753,17 +753,17 @@ class WorldMMGlassViewModel(application: Application) : AndroidViewModel(applica
             if (task.status in setOf("failed", "cancelled", "canceled", "aborted", "not_found")) {
                 throw IllegalStateException(task.message.ifBlank { "Question task failed: ${task.status}" })
             }
-            delay(WorldMMConfig.QUERY_POLL_INTERVAL_MS)
+            delay(LightMemEgoConfig.QUERY_POLL_INTERVAL_MS)
         }
         throw IllegalStateException("Question timed out")
     }
 
-    private fun rememberActiveSession(result: WorldMMStartResult) {
+    private fun rememberActiveSession(result: LightMemEgoStartResult) {
         if (result.parentSessionId.isNotBlank()) {
             sessionStore.saveParentSessionId(result.parentSessionId)
         }
         if (result.inputMode == "rokid_live_rtmp" && result.sessionId.isNotBlank() && result.pushUrl.isNotBlank()) {
-            WorldMMDiagnostics.log(
+            LightMemEgoDiagnostics.log(
                 getApplication(),
                 "stored-session-save",
                 "session=${result.sessionId} parent=${result.parentSessionId}",
@@ -780,15 +780,15 @@ class WorldMMGlassViewModel(application: Application) : AndroidViewModel(applica
                 ),
             )
         } else {
-            WorldMMDiagnostics.log(getApplication(), "stored-session-clear", "inputMode=${result.inputMode}")
+            LightMemEgoDiagnostics.log(getApplication(), "stored-session-clear", "inputMode=${result.inputMode}")
             sessionStore.clear()
         }
     }
 
-    private fun startPreferredRokidSession(): WorldMMStartResult {
+    private fun startPreferredRokidSession(): LightMemEgoStartResult {
         val runId = UUID.randomUUID().toString()
         val parentSessionId = configuredParentSessionId()
-        val createParentSession = WorldMMConfig.CREATE_NEW_PARENT_SESSION && parentSessionId.isNullOrBlank()
+        val createParentSession = LightMemEgoConfig.CREATE_NEW_PARENT_SESSION && parentSessionId.isNullOrBlank()
         if (!parentSessionId.isNullOrBlank()) {
             runCatching { api.getSessionState(parentSessionId) }.onSuccess { stateJson ->
                 val streamStatus = stateJson.optString("stream_status", stateJson.optString("status", "unknown"))
@@ -805,20 +805,20 @@ class WorldMMGlassViewModel(application: Application) : AndroidViewModel(applica
         }
         return runCatching {
             api.startRokidStream(
-                inputMode = WorldMMConfig.INPUT_MODE,
+                inputMode = LightMemEgoConfig.INPUT_MODE,
                 parentSessionId = parentSessionId,
                 runId = runId,
                 createParentSession = createParentSession,
             )
         }.getOrElse { liveError ->
-            if (WorldMMConfig.INPUT_MODE == "rokid_live_rtmp") {
-                val fallbackParentId = (liveError as? WorldMMApiException)
+            if (LightMemEgoConfig.INPUT_MODE == "rokid_live_rtmp") {
+                val fallbackParentId = (liveError as? LightMemEgoApiException)
                     ?.payload
                     ?.optString("parent_session_id")
                     ?.takeIf { it.isNotBlank() }
                     ?: parentSessionId
                 api.startRokidStream(
-                    inputMode = WorldMMConfig.FALLBACK_INPUT_MODE,
+                    inputMode = LightMemEgoConfig.FALLBACK_INPUT_MODE,
                     parentSessionId = fallbackParentId,
                     runId = runId,
                     createParentSession = createParentSession && fallbackParentId.isNullOrBlank(),
@@ -834,10 +834,10 @@ class WorldMMGlassViewModel(application: Application) : AndroidViewModel(applica
     }
 
     private fun configuredParentSessionId(): String? {
-        if (WorldMMConfig.CREATE_NEW_PARENT_SESSION) {
+        if (LightMemEgoConfig.CREATE_NEW_PARENT_SESSION) {
             return null
         }
-        val sessionId = WorldMMConfig.PARENT_SESSION_ID.trim()
+        val sessionId = LightMemEgoConfig.PARENT_SESSION_ID.trim()
         if (sessionId.isBlank()) {
             throw IllegalStateException("PARENT_SESSION_ID is blank while CREATE_NEW_PARENT_SESSION is false")
         }
@@ -863,7 +863,7 @@ class WorldMMGlassViewModel(application: Application) : AndroidViewModel(applica
     }
 
     fun onRtmpStatus(status: String, detail: String = "") {
-        WorldMMDiagnostics.log(getApplication(), "rtmp-status", "status=$status detail=$detail")
+        LightMemEgoDiagnostics.log(getApplication(), "rtmp-status", "status=$status detail=$detail")
         when (status) {
             "connected", "auth_success" -> {
                 cancelRtmpRetry(resetAttempt = true)
@@ -931,7 +931,7 @@ class WorldMMGlassViewModel(application: Application) : AndroidViewModel(applica
         statusJob = viewModelScope.launch(Dispatchers.IO) {
             while (isActive && streaming) {
                 pollStatus(sessionId)
-                delay(WorldMMConfig.STATUS_POLL_MS)
+                delay(LightMemEgoConfig.STATUS_POLL_MS)
             }
         }
     }
@@ -956,7 +956,7 @@ class WorldMMGlassViewModel(application: Application) : AndroidViewModel(applica
     }
 
     private fun failStart(message: String) {
-        WorldMMDiagnostics.log(getApplication(), "start-failed", message)
+        LightMemEgoDiagnostics.log(getApplication(), "start-failed", message)
         streaming = false
         cancelRtmpRetry(resetAttempt = true)
         releaseRecorder()

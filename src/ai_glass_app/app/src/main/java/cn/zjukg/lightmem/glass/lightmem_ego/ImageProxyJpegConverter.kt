@@ -1,4 +1,4 @@
-package cn.zjukg.lightmem.glass.worldmm
+package cn.zjukg.lightmem.glass.lightmem_ego
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -17,10 +17,10 @@ data class EncodedJpegFrame(
 )
 
 object ImageProxyJpegConverter {
-    fun toJpeg(image: ImageProxy, quality: Int = WorldMMConfig.JPEG_QUALITY): ByteArray? =
+    fun toJpeg(image: ImageProxy, quality: Int = LightMemEgoConfig.JPEG_QUALITY): ByteArray? =
         toJpegFrame(image, quality)?.bytes
 
-    fun toJpegFrame(image: ImageProxy, quality: Int = WorldMMConfig.JPEG_QUALITY): EncodedJpegFrame? {
+    fun toJpegFrame(image: ImageProxy, quality: Int = LightMemEgoConfig.JPEG_QUALITY): EncodedJpegFrame? {
         if (image.format != ImageFormat.YUV_420_888) return null
         val nv21 = yuv420ToNv21(image)
         val yuv = YuvImage(nv21, ImageFormat.NV21, image.width, image.height, null)

@@ -5,7 +5,7 @@
 <h1 align="center">LightMem-Ego: Your AI Memory for Everyday Life</h1>
 
 <p align="center">
-  <b>A streaming multimodal memory system for everyday-life assistance on smart glasses and mobile devices.</b>
+  <b>A streaming multimodal memory system for smart glasses, web capture, and everyday-life question answering.</b>
 </p>
 
 <p align="center">
@@ -38,17 +38,15 @@
 
 ## Overview
 
-**LightMem-Ego** is an end-to-end egocentric memory system for everyday-life assistance. It connects a **Rokid AI Glass app**, a **web frontend**, and a **backend service** so that users can stream first-person camera/audio context, build structured memory from daily experience, and ask questions about live or remembered moments.
+**LightMem-Ego** is an end-to-end egocentric memory system for everyday-life assistance. It connects a Rokid AI Glass Android app, a browser frontend, and an online backend service so users can stream first-person camera/audio context, build structured memory from daily experience, and ask questions about current or past moments.
 
-LightMem-Ego captures visual and audio streams from web, mobile, or wearable clients, organizes continuous experience into current, short-term, and long-term memory, and answers questions grounded in remembered daily experience.
-
-LightMem-Ego organizes continuous visual-audio experience into a hierarchical memory structure:
+The system organizes continuous visual-audio experience into three memory scopes:
 
 - **Current memory** for ongoing scene understanding.
-- **Short-term memory** for recent events and conversations.
+- **Short-term memory** for recent events, actions, and conversations.
 - **Long-term memory** for consolidated episodes, routines, preferences, and semantic facts.
 
-The system is designed for practical scenarios such as object finding, conversation recall, life summarization, routine discovery, and wearable assistance.
+LightMem-Ego is designed for practical scenarios such as object finding, conversation recall, life summarization, routine discovery, and hands-free wearable assistance.
 
 <div align="center">
   <img src="./figs/system_design.png" width="95%" alt="LightMem-Ego System Design">
@@ -60,23 +58,12 @@ The system is designed for practical scenarios such as object finding, conversat
 
 ## Highlights
 
-- **Streaming egocentric capture**  
-  Captures first-person visual frames and microphone audio from smart glasses.
-
-- **Timeline-aligned multimodal memory**  
-  Aligns frames, audio chunks, transcripts, and metadata on a shared session timeline.
-
-- **Hierarchical memory organization**  
-  Maintains current, short-term, and long-term memory for different temporal scopes.
-
-- **Memory-grounded question answering**  
-  Retrieves timestamped multimodal evidence before generating answers.
-
-- **Glasses + Web deployment**  
-  Supports lightweight interaction through a Rokid AI Glass app and a browser frontend.
-
-- **Modular backend**  
-  Separates stream ingestion, session management, memory construction, retrieval, and QA.
+- **Streaming egocentric capture**: captures first-person visual frames and microphone audio from smart glasses or the browser.
+- **Timeline-aligned multimodal memory**: aligns frames, audio chunks, transcripts, and metadata on a shared session timeline.
+- **Hierarchical memory organization**: maintains current, short-term, and long-term memory for different temporal scopes.
+- **Memory-grounded question answering**: retrieves timestamped multimodal evidence before generating answers.
+- **Glasses + web deployment**: supports a Rokid AI Glass app for hands-free interaction and a browser frontend for desktop/mobile use.
+- **Modular backend**: separates stream ingestion, session management, memory construction, retrieval, and QA workers.
 
 ---
 
@@ -104,14 +91,14 @@ The system is designed for practical scenarios such as object finding, conversat
 
 LightMem-Ego is organized as three cooperating components:
 
-1. **AI Glass App**  
+1. **AI Glass App**
    Captures first-person camera frames and microphone audio, controls live sessions, submits voice questions, and displays memory-grounded answers on the glasses.
 
-2. **Backend Service**  
-   Receives live streams, manages sessions, extracts and stores memory, performs retrieval, and returns answers.
+2. **Backend Service**
+   Receives live streams, manages sessions, builds current/short-term/long-term memories, retrieves evidence, and returns answers.
 
-3. **Web Frontend**  
-   Provides a browser interface for live capture, memory interaction, session review, and backend-powered QA outside the glasses.
+3. **Web Frontend**
+   Provides a browser interface for live capture, memory interaction, session review, and backend-powered QA.
 
 ```text
 Web frontend         \
@@ -119,7 +106,7 @@ Web frontend         \
 Rokid AI Glass app  /
 ```
 
-At runtime, either the web frontend or the glasses app can open a live session with the backend, send visual/audio data, and receive memory-grounded answers. The frontend is the full browser interface for using and reviewing the system, while the glasses app provides a hands-free wearable interaction surface.
+At runtime, either the web frontend or the glasses app can open a live session with the backend, send visual/audio data, and receive memory-grounded answers.
 
 ---
 
@@ -129,10 +116,16 @@ At runtime, either the web frontend or the glasses app can open a live session w
 
 ```text
 src/
-  frontend/       # Web UI for using and reviewing LightMem-Ego
-  backend/        # API service, online workers, and memory-processing logic
+  frontend/       # Vite + React web frontend
+  backend/        # FastAPI service, online workers, and memory-processing logic
   ai_glass_app/   # Rokid AI Glass Android app
 ```
+
+Component documentation:
+
+- [`src/frontend/README.md`](src/frontend/README.md)
+- [`src/backend/README.md`](src/backend/README.md)
+- [`src/ai_glass_app/README.md`](src/ai_glass_app/README.md)
 
 ---
 
@@ -140,34 +133,27 @@ src/
 
 ## Components
 
-### `src/ai_glass_app/`
+### `src/frontend/`
 
-Android client app for Rokid AI Glass. This is one deployment surface for LightMem-Ego rather than the whole system.
+The web frontend is a Vite + React app. It supports browser camera/microphone capture, session start/stop, live ingest controls, question submission, answer display, and evidence review.
 
-Current open-source features include:
-
-- Real-time glasses capture session start/stop.
-- Camera frame capture from the glasses camera.
-- Microphone audio capture from the glasses microphone.
-- RTMP live video push when a backend `push_url` is available.
-- HTTP frame/audio upload fallback when RTMP is unavailable.
-- Voice-question recording and answer display on the glasses UI.
-
-This open-source version does not include local session recording, replay-from-file mode, preset-question UI, or standalone sample screens.
-
-See [`src/ai_glass_app/README.md`](src/ai_glass_app/README.md) for build, install, configuration, controls, and permissions.
+The API base URL is configured with `VITE_API_BASE_URL` at build time, with a production fallback in `online_web/src/api/lightmem_egoApi.js`.
 
 ### `src/backend/`
 
-Backend service for LightMem-Ego. It is responsible for API endpoints, online session management, stream ingestion, memory processing, retrieval, and answer generation.
+The backend is a FastAPI-based online server. It exposes stream and query APIs, manages live sessions, runs workers for preprocessing/ASR/memory updates, and serves memory-grounded answers.
 
-See [`src/backend/README.md`](src/backend/README.md) for backend-specific setup and deployment notes.
+The backend uses the `src/em2mem/` runtime package for memory, LLM, and embedding components. Runtime sessions, logs, model weights, generated indexes, and private `.env` files are intentionally excluded.
 
-### `src/frontend/`
+### `src/ai_glass_app/`
 
-Web frontend for LightMem-Ego. It provides the main browser interface for live capture, memory/session review, and backend-powered QA without requiring the glasses app.
+The glasses app is an Android client for Rokid AI Glass. It starts and stops live capture, streams camera/audio data, records short voice questions, and renders answers on a glasses-friendly UI.
 
-See [`src/frontend/README.md`](src/frontend/README.md) for frontend-specific setup and deployment notes.
+The backend endpoint is configured in:
+
+```text
+src/ai_glass_app/app/src/main/java/cn/zjukg/lightmem/glass/lightmem_ego/LightMemEgoConfig.kt
+```
 
 ---
 
@@ -175,33 +161,55 @@ See [`src/frontend/README.md`](src/frontend/README.md) for frontend-specific set
 
 ## Quick Start
 
-Each subproject has its own setup and runtime requirements. Start with the component README for the part you want to run.
+Each component has its own setup and runtime requirements. Start with the README for the component you want to run.
 
-### Build the glasses app
+### Frontend
 
-On Windows:
+```bash
+cd src/frontend/online_web
+npm install
+npm run dev
+```
+
+For production build:
+
+```bash
+npm run build
+```
+
+### Backend
+
+```bash
+cd src/backend
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e .
+cp .env.example .env
+scripts/start_api.sh
+```
+
+Start the default online worker set:
+
+```bash
+scripts/start_online_all_workers.sh
+```
+
+### Glasses App
+
+Windows:
 
 ```powershell
 cd src\ai_glass_app
 .\gradlew.bat assembleDebug
 ```
 
-On macOS or Linux:
+macOS or Linux:
 
 ```bash
 cd src/ai_glass_app
 ./gradlew assembleDebug
 ```
-
-### Configure the backend endpoint
-
-The glasses app API endpoint is configured in:
-
-```text
-src/ai_glass_app/app/src/main/java/cn/zjukg/lightmem/glass/worldmm/WorldMMConfig.kt
-```
-
-Set `API_BASE_URL` to the backend API address used by your deployment.
 
 ---
 
@@ -231,7 +239,7 @@ This repository belongs to ZJUNLP LightMem series, focusing on solving context b
 
 ## Privacy Notice
 
-LightMem-Ego may process camera frames, microphone audio, transcripts, generated answers, and memory data depending on deployment configuration. Before deploying with real users, review the API endpoint configuration, data retention policy, access control, and user consent flow for your environment.
+LightMem-Ego may process camera frames, microphone audio, transcripts, generated answers, and memory data depending on deployment configuration. Before deploying with real users, review endpoint configuration, data retention policy, access control, and user consent flow.
 
 This repository is intended for research and demonstration. Production deployments should implement privacy-preserving capture, sensitive-content filtering, encrypted storage, access control, retention/deletion policies, and user-controlled memory editing.
 
@@ -242,6 +250,14 @@ This repository is intended for research and demonstration. Production deploymen
 ## License
 
 See [`LICENSE`](LICENSE).
+
+---
+
+<span id="citation"></span>
+
+## Citation
+
+Paper and citation information will be added when available.
 
 ---
 

@@ -1,6 +1,6 @@
-package cn.zjukg.lightmem.glass.worldmm
+package cn.zjukg.lightmem.glass.lightmem_ego
 
-object WorldMMConfig {
+object LightMemEgoConfig {
     const val API_BASE_URL = "https://lightmem-ego.zjukg.cn/api"
     const val INPUT_MODE = "rokid_live_rtmp"
     const val FALLBACK_INPUT_MODE = "rokid_frame_audio"

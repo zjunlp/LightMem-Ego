@@ -17,24 +17,24 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import cn.zjukg.lightmem.glass.activities.worldmm.WorldMMGlassScreen
-import cn.zjukg.lightmem.glass.activities.worldmm.WorldMMGlassViewModel
+import cn.zjukg.lightmem.glass.activities.lightmem_ego.LightMemEgoGlassScreen
+import cn.zjukg.lightmem.glass.activities.lightmem_ego.LightMemEgoGlassViewModel
 import cn.zjukg.lightmem.glass.input.BareGlassesInputDispatcher
 import cn.zjukg.lightmem.glass.input.LocalBareGlassesInputDispatcher
 import cn.zjukg.lightmem.glass.input.rememberBareGlassesInputDispatcher
 import cn.zjukg.lightmem.glass.ui.design.GlassesDisplayFrame
 import cn.zjukg.lightmem.glass.ui.theme.LightMemGlassTheme
 import cn.zjukg.lightmem.glass.ui.theme.PitchBlack
-import cn.zjukg.lightmem.glass.worldmm.WorldMMDiagnostics
+import cn.zjukg.lightmem.glass.lightmem_ego.LightMemEgoDiagnostics
 
 class MainActivity : ComponentActivity() {
-    private val worldMMGlassViewModel by viewModels<WorldMMGlassViewModel>()
+    private val lightMemEgoGlassViewModel by viewModels<LightMemEgoGlassViewModel>()
 
     private var keyDispatcher: BareGlassesInputDispatcher? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        WorldMMDiagnostics.recordStartup(this, "MainActivity.onCreate")
+        LightMemEgoDiagnostics.recordStartup(this, "MainActivity.onCreate")
         setupFullscreen()
         setContent {
             val context = LocalContext.current
@@ -49,7 +49,7 @@ class MainActivity : ComponentActivity() {
                     ) {
                         GlassesDisplayFrame {
                             BareNavApp(
-                                worldMMGlassViewModel = worldMMGlassViewModel,
+                                lightMemEgoGlassViewModel = lightMemEgoGlassViewModel,
                                 onExit = { finish() },
                             )
                         }
@@ -61,35 +61,35 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        WorldMMDiagnostics.logLifecycle(this, "MainActivity", "onStart")
+        LightMemEgoDiagnostics.logLifecycle(this, "MainActivity", "onStart")
     }
 
     override fun onResume() {
         super.onResume()
-        WorldMMDiagnostics.logLifecycle(this, "MainActivity", "onResume")
-        WorldMMDiagnostics.logView(this, "MainActivity", "onResume", window.decorView)
+        LightMemEgoDiagnostics.logLifecycle(this, "MainActivity", "onResume")
+        LightMemEgoDiagnostics.logView(this, "MainActivity", "onResume", window.decorView)
     }
 
     override fun onPause() {
-        WorldMMDiagnostics.logLifecycle(this, "MainActivity", "onPause")
+        LightMemEgoDiagnostics.logLifecycle(this, "MainActivity", "onPause")
         super.onPause()
     }
 
     override fun onStop() {
-        WorldMMDiagnostics.logLifecycle(this, "MainActivity", "onStop")
-        WorldMMDiagnostics.recordMemory(this, "MainActivity.onStop")
+        LightMemEgoDiagnostics.logLifecycle(this, "MainActivity", "onStop")
+        LightMemEgoDiagnostics.recordMemory(this, "MainActivity.onStop")
         super.onStop()
     }
 
     override fun onTrimMemory(level: Int) {
-        WorldMMDiagnostics.logLifecycle(this, "MainActivity", "onTrimMemory", "level=$level")
-        WorldMMDiagnostics.recordMemory(this, "trim-$level")
+        LightMemEgoDiagnostics.logLifecycle(this, "MainActivity", "onTrimMemory", "level=$level")
+        LightMemEgoDiagnostics.recordMemory(this, "trim-$level")
         super.onTrimMemory(level)
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        WorldMMDiagnostics.logView(this, "MainActivity", "windowFocus=$hasFocus", window.decorView)
+        LightMemEgoDiagnostics.logView(this, "MainActivity", "windowFocus=$hasFocus", window.decorView)
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
@@ -142,7 +142,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        WorldMMDiagnostics.logLifecycle(this, "MainActivity", "onDestroy", "finishing=$isFinishing")
+        LightMemEgoDiagnostics.logLifecycle(this, "MainActivity", "onDestroy", "finishing=$isFinishing")
         keyDispatcher?.unregister(applicationContext)
         keyDispatcher = null
         super.onDestroy()
@@ -160,11 +160,11 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun BareNavApp(
-    worldMMGlassViewModel: WorldMMGlassViewModel,
+    lightMemEgoGlassViewModel: LightMemEgoGlassViewModel,
     onExit: () -> Unit,
 ) {
-    WorldMMGlassScreen(
+    LightMemEgoGlassScreen(
         onBack = onExit,
-        viewModel = worldMMGlassViewModel,
+        viewModel = lightMemEgoGlassViewModel,
     )
 }

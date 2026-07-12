@@ -1,4 +1,4 @@
-package cn.zjukg.lightmem.glass.activities.worldmm
+package cn.zjukg.lightmem.glass.activities.lightmem_ego
 
 import android.Manifest
 import android.util.Size
@@ -33,18 +33,18 @@ import cn.zjukg.lightmem.glass.ui.design.BareRichInfoBlock
 import cn.zjukg.lightmem.glass.ui.design.BareScreenLayout
 import cn.zjukg.lightmem.glass.ui.design.BareTokens
 import cn.zjukg.lightmem.glass.ui.theme.NeonGreen
-import cn.zjukg.lightmem.glass.worldmm.ImageProxyJpegConverter
-import cn.zjukg.lightmem.glass.worldmm.WorldMMConfig
-import cn.zjukg.lightmem.glass.worldmm.WorldMMDiagnostics
-import cn.zjukg.lightmem.glass.worldmm.WorldMMRtmpStreamer
+import cn.zjukg.lightmem.glass.lightmem_ego.ImageProxyJpegConverter
+import cn.zjukg.lightmem.glass.lightmem_ego.LightMemEgoConfig
+import cn.zjukg.lightmem.glass.lightmem_ego.LightMemEgoDiagnostics
+import cn.zjukg.lightmem.glass.lightmem_ego.LightMemEgoRtmpStreamer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.concurrent.Executors
 
 @Composable
-fun WorldMMGlassScreen(
+fun LightMemEgoGlassScreen(
     onBack: () -> Unit,
-    viewModel: WorldMMGlassViewModel,
+    viewModel: LightMemEgoGlassViewModel,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -55,9 +55,9 @@ fun WorldMMGlassScreen(
         state.running &&
         !state.liveRtmpMode
     val rtmpStreamer = remember(context) {
-        WorldMMRtmpStreamer(
+        LightMemEgoRtmpStreamer(
             context = context,
-            listener = object : WorldMMRtmpStreamer.Listener {
+            listener = object : LightMemEgoRtmpStreamer.Listener {
                 override fun onRtmpStatus(status: String, detail: String) = viewModel.onRtmpStatus(status, detail)
             },
         )
@@ -75,10 +75,10 @@ fun WorldMMGlassScreen(
         viewModel.onPermissionsResult(grants)
     }
     DisposableEffect(Unit) {
-        WorldMMDiagnostics.log(context, "screen-enter", "WorldMMGlassScreen")
+        LightMemEgoDiagnostics.log(context, "screen-enter", "LightMemEgoGlassScreen")
         viewModel.refreshPermissions()
         onDispose {
-            WorldMMDiagnostics.log(context, "screen-dispose", "WorldMMGlassScreen running=${state.running}")
+            LightMemEgoDiagnostics.log(context, "screen-dispose", "LightMemEgoGlassScreen running=${state.running}")
             rtmpStreamer.stop()
             analysisExecutor.shutdown()
             viewModel.stopStreaming()
@@ -88,7 +88,7 @@ fun WorldMMGlassScreen(
     LaunchedEffect(Unit) {
         if (viewModel.resumeStoredSessionIfAvailable()) {
             hasEnteredSessionScreen = true
-            WorldMMDiagnostics.log(context, "resume-ui", "showing session screen while restoring stored session")
+            LightMemEgoDiagnostics.log(context, "resume-ui", "showing session screen while restoring stored session")
         }
     }
 
@@ -115,7 +115,7 @@ fun WorldMMGlassScreen(
         val shouldKeepRtmpStreamer = state.running &&
             state.liveRtmpMode &&
             state.livePushUrl.isNotBlank()
-        WorldMMDiagnostics.log(
+        LightMemEgoDiagnostics.log(
             context,
             "rtmp-effect",
             "running=${state.running} live=${state.liveRtmpMode} active=${rtmpStreamer.isActive} " +
@@ -147,7 +147,7 @@ fun WorldMMGlassScreen(
         },
         useCases = {
             val analyzer = ImageAnalysis.Builder()
-                .setTargetResolution(Size(WorldMMConfig.FRAME_CAPTURE_WIDTH, WorldMMConfig.FRAME_CAPTURE_HEIGHT))
+                .setTargetResolution(Size(LightMemEgoConfig.FRAME_CAPTURE_WIDTH, LightMemEgoConfig.FRAME_CAPTURE_HEIGHT))
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .build()
             analyzer.setAnalyzer(analysisExecutor) { image ->
@@ -287,13 +287,13 @@ fun WorldMMGlassScreen(
     }
 }
 
-private fun WorldMMGlassUiState.displayDayLabel(): String {
+private fun LightMemEgoGlassUiState.displayDayLabel(): String {
     val label = dayLabel.trim()
     if (label.isBlank() || label.equals("null", ignoreCase = true) || label.equals("none", ignoreCase = true)) return "-"
     return if (label.startsWith("DAY", ignoreCase = true)) "-" else label
 }
 
-private fun handleAnalysisFrame(image: ImageProxy, viewModel: WorldMMGlassViewModel) {
+private fun handleAnalysisFrame(image: ImageProxy, viewModel: LightMemEgoGlassViewModel) {
     try {
         if (!viewModel.reserveFrameCapture()) {
             return

@@ -1,4 +1,4 @@
-package cn.zjukg.lightmem.glass.worldmm
+package cn.zjukg.lightmem.glass.lightmem_ego
 
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -7,12 +7,12 @@ import org.junit.Test
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
-class WorldMMApiClientStartResultTest {
+class LightMemEgoApiClientStartResultTest {
     private val dateLabelFormatter = DateTimeFormatter.ofPattern("yyyy.M.d")
 
     @Test
     fun parsesTopLevelDateLabelWhenDayContextIsMissing() {
-        val result = WorldMMApiClient().parseStartResult(
+        val result = LightMemEgoApiClient().parseStartResult(
             json = JSONObject()
                 .put("session_id", "parent__day3")
                 .put("date_label", "2026.7.11")
@@ -30,7 +30,7 @@ class WorldMMApiClientStartResultTest {
 
     @Test
     fun ignoresDayLabelFromChildSessionId() {
-        val result = WorldMMApiClient().parseStartResult(
+        val result = LightMemEgoApiClient().parseStartResult(
             json = JSONObject()
                 .put("session_id", "parent")
                 .put("child_session_id", "parent__day7")
@@ -48,7 +48,7 @@ class WorldMMApiClientStartResultTest {
 
     @Test
     fun ignoresNumericDayLabel() {
-        val result = WorldMMApiClient().parseStartResult(
+        val result = LightMemEgoApiClient().parseStartResult(
             json = JSONObject()
                 .put("session_id", "parent")
                 .put("day", "4")
@@ -66,7 +66,7 @@ class WorldMMApiClientStartResultTest {
 
     @Test
     fun ignoresNullStringDateLabel() {
-        val result = WorldMMApiClient().parseStartResult(
+        val result = LightMemEgoApiClient().parseStartResult(
             json = JSONObject()
                 .put("session_id", "parent")
                 .put(

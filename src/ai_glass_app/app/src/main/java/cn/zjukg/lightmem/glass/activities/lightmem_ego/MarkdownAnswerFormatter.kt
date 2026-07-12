@@ -1,4 +1,4 @@
-package cn.zjukg.lightmem.glass.activities.worldmm
+package cn.zjukg.lightmem.glass.activities.lightmem_ego
 
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle

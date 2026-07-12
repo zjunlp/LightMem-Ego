@@ -1,12 +1,10 @@
-# LightMem Glass App
+# LightMem-Ego Glass App
 
-This is the Rokid AI Glass Android client for LightMem-Ego. LightMem-Ego is a streaming multimodal memory system with both web and wearable interfaces; this app is the lightweight glasses-side interface for hands-free capture and question answering.
+This directory contains the Rokid AI Glass Android client for LightMem-Ego. The app is the wearable interface for hands-free capture and question answering.
 
-The app captures camera frames and microphone audio from the glasses, sends the live stream to a configured LightMem API service, and displays voice-question answers on the glasses screen.
+The app captures camera frames and microphone audio from the glasses, sends the live stream to a configured LightMem-Ego backend service, records short voice questions, and displays memory-grounded answers on the glasses screen.
 
 The app uses standard Android APIs, Jetpack Compose UI, CameraX frame capture, `AudioRecord` microphone capture, RootEncoder RTMP streaming, and Rokid touchpad / button input. It does not require a phone-side SDK at runtime.
-
-
 
 ## Demonstration
 
@@ -35,13 +33,13 @@ This open-source version does not include local session recording, replay-from-f
 ```text
 src/ai_glass_app/
   app/src/main/java/cn/zjukg/lightmem/glass/
-    activities/main/       # Android entry activity
-    activities/worldmm/    # Glasses UI and session state
-    camera/                # CameraX binding helper
-    input/                 # Rokid key and touchpad input dispatcher
-    ui/design/             # Glasses-oriented UI components
-    ui/theme/              # Compose theme
-    worldmm/               # API client, RTMP streamer, audio/image helpers
+    activities/main/            # Android entry activity
+    activities/lightmem_ego/    # Glasses UI and session state
+    camera/                     # CameraX binding helper
+    input/                      # Rokid key and touchpad input dispatcher
+    ui/design/                  # Glasses-oriented UI components
+    ui/theme/                   # Compose theme
+    lightmem_ego/               # API client, RTMP streamer, audio/image helpers
   app/src/main/AndroidManifest.xml
   gradle/libs.versions.toml
 ```
@@ -52,6 +50,7 @@ src/ai_glass_app/
 - Android Studio or Android SDK command-line tools.
 - JDK compatible with the Android Gradle Plugin used by this project.
 - ADB access to the glasses.
+- A reachable LightMem-Ego backend API.
 
 Project settings:
 
@@ -64,7 +63,7 @@ Project settings:
 Edit:
 
 ```text
-app/src/main/java/cn/zjukg/lightmem/glass/worldmm/WorldMMConfig.kt
+app/src/main/java/cn/zjukg/lightmem/glass/lightmem_ego/LightMemEgoConfig.kt
 ```
 
 Important values:
@@ -73,9 +72,13 @@ Important values:
 const val API_BASE_URL = "https://lightmem-ego.zjukg.cn/api"
 const val INPUT_MODE = "rokid_live_rtmp"
 const val FALLBACK_INPUT_MODE = "rokid_frame_audio"
+const val CREATE_NEW_PARENT_SESSION = true
+const val PARENT_SESSION_ID = ""
 ```
 
-Change `API_BASE_URL` before building if you want the app to connect to a different LightMem API service.
+Change `API_BASE_URL` before building if you want the app to connect to a different backend service.
+
+`INPUT_MODE` asks the backend for a live RTMP push URL. `FALLBACK_INPUT_MODE` is used when the app needs to upload frames and audio directly over HTTP.
 
 ## Build
 
@@ -123,13 +126,13 @@ adb shell monkey -p cn.zjukg.lightmem.glass 1
 5. Watch logs if needed:
 
 ```bash
-adb logcat | grep OmniSparkDiag
+adb logcat | grep LightMemEgoDiag
 ```
 
 On Windows PowerShell:
 
 ```powershell
-adb logcat | findstr OmniSparkDiag
+adb logcat | findstr LightMemEgoDiag
 ```
 
 ## Controls
@@ -152,13 +155,13 @@ The app declares only the permissions needed by the glasses-side real-time flow:
 
 - `CAMERA`: captures frames from the glasses camera.
 - `RECORD_AUDIO`: captures microphone audio and voice questions.
-- `INTERNET`: sends data to the configured API service.
+- `INTERNET`: sends data to the configured backend service.
 
 No external-storage permission is required. Android automatic backup is disabled with `android:allowBackup="false"`.
 
 ## Privacy
 
-When a capture session is running, the app captures camera frames and microphone audio and sends them to the configured API service. The current open-source version does not save local session recordings.
+When a capture session is running, the app captures camera frames and microphone audio and sends them to the configured backend service. The current open-source version does not save local session recordings.
 
 ## Test
 

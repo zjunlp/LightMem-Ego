@@ -1,4 +1,4 @@
-package cn.zjukg.lightmem.glass.worldmm
+package cn.zjukg.lightmem.glass.lightmem_ego
 
 import android.app.ActivityManager
 import android.app.ApplicationExitInfo
@@ -13,11 +13,11 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-object WorldMMDiagnostics {
-    private const val TAG = "OmniSparkDiag"
-    private const val PREFS_NAME = "worldmm_diagnostics"
+object LightMemEgoDiagnostics {
+    private const val TAG = "LightMemEgoDiag"
+    private const val PREFS_NAME = "lightmem_ego_diagnostics"
     private const val KEY_LAST_EXIT_TS = "last_exit_ts"
-    private const val DIR_NAME = "worldmm_diagnostics"
+    private const val DIR_NAME = "lightmem_ego_diagnostics"
     private const val LOG_FILE = "diagnostics.log"
     private const val MAX_LOG_BYTES = 512_000L
     private const val MAX_TRACE_CHARS = 32_000

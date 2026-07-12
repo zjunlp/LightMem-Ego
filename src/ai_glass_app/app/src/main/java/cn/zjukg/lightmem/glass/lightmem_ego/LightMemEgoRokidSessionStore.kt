@@ -1,4 +1,4 @@
-package cn.zjukg.lightmem.glass.worldmm
+package cn.zjukg.lightmem.glass.lightmem_ego
 
 import android.content.Context
 
@@ -12,7 +12,7 @@ data class StoredRokidSession(
     val liveIngestStopPath: String,
 )
 
-class WorldMMRokidSessionStore(context: Context) {
+class LightMemEgoRokidSessionStore(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     fun save(session: StoredRokidSession) {
@@ -58,7 +58,7 @@ class WorldMMRokidSessionStore(context: Context) {
     }
 
     private companion object {
-        const val PREFS_NAME = "worldmm_rokid_session"
+        const val PREFS_NAME = "lightmem_ego_rokid_session"
         const val KEY_SESSION_ID = "session_id"
         const val KEY_PARENT_SESSION_ID = "parent_session_id"
         const val KEY_DAY_LABEL = "day_label"

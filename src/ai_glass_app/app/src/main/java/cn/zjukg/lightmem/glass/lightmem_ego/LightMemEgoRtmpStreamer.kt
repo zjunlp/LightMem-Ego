@@ -1,4 +1,4 @@
-package cn.zjukg.lightmem.glass.worldmm
+package cn.zjukg.lightmem.glass.lightmem_ego
 
 import android.content.Context
 import com.pedro.common.ConnectChecker
@@ -9,7 +9,7 @@ import com.pedro.library.generic.GenericStream
 private const val RTMP_RECONNECT_MAX_DELAY_MS = 10_000L
 private const val RTMP_RECONNECT_SINGLE_RETRY = 1
 
-class WorldMMRtmpStreamer(
+class LightMemEgoRtmpStreamer(
     context: Context,
     private val listener: Listener,
 ) : ConnectChecker {
@@ -31,20 +31,20 @@ class WorldMMRtmpStreamer(
     fun start(pushUrl: String) {
         if (pushUrl.isBlank()) throw IllegalArgumentException("RTMP push_url is empty")
         if (isActive) return
-        WorldMMDiagnostics.log(appContext, "rtmp-start", "mode=live url=${pushUrl.safeRtmpUrl()}")
+        LightMemEgoDiagnostics.log(appContext, "rtmp-start", "mode=live url=${pushUrl.safeRtmpUrl()}")
         resetReconnectState()
         val nextStream = GenericStream(appContext, this, Camera2Source(appContext), NoAudioSource())
         try {
             val videoReady = nextStream.prepareVideo(
-                width = WorldMMConfig.RTMP_VIDEO_WIDTH,
-                height = WorldMMConfig.RTMP_VIDEO_HEIGHT,
-                bitrate = WorldMMConfig.RTMP_VIDEO_BITRATE,
-                fps = WorldMMConfig.RTMP_VIDEO_FPS,
+                width = LightMemEgoConfig.RTMP_VIDEO_WIDTH,
+                height = LightMemEgoConfig.RTMP_VIDEO_HEIGHT,
+                bitrate = LightMemEgoConfig.RTMP_VIDEO_BITRATE,
+                fps = LightMemEgoConfig.RTMP_VIDEO_FPS,
                 iFrameInterval = 2,
                 rotation = 0,
             )
             val audioReady = nextStream.prepareAudio(
-                sampleRate = WorldMMConfig.AUDIO_SAMPLE_RATE,
+                sampleRate = LightMemEgoConfig.AUDIO_SAMPLE_RATE,
                 isStereo = false,
                 bitrate = 32_000,
             )
@@ -54,7 +54,7 @@ class WorldMMRtmpStreamer(
             stream = nextStream
             nextStream.startStream(pushUrl)
         } catch (error: Throwable) {
-            WorldMMDiagnostics.logError(appContext, "rtmp-start-failed", "mode=live", error)
+            LightMemEgoDiagnostics.logError(appContext, "rtmp-start-failed", "mode=live", error)
             if (stream === nextStream) stream = null
             runCatching { nextStream.release() }
             throw error
@@ -63,7 +63,7 @@ class WorldMMRtmpStreamer(
 
     fun stop() {
         val active = stream ?: return
-        WorldMMDiagnostics.log(appContext, "rtmp-stop", "streaming=${active.isStreaming}")
+        LightMemEgoDiagnostics.log(appContext, "rtmp-stop", "streaming=${active.isStreaming}")
         stream = null
         resetReconnectState()
         runCatching {
@@ -75,40 +75,40 @@ class WorldMMRtmpStreamer(
     }
 
     override fun onConnectionStarted(url: String) {
-        WorldMMDiagnostics.log(appContext, "rtmp-connection-started", url.safeRtmpUrl())
+        LightMemEgoDiagnostics.log(appContext, "rtmp-connection-started", url.safeRtmpUrl())
         reconnectPending = false
         listener.onRtmpStatus("connecting", url)
     }
 
     override fun onConnectionSuccess() {
-        WorldMMDiagnostics.log(appContext, "rtmp-connection-success")
+        LightMemEgoDiagnostics.log(appContext, "rtmp-connection-success")
         resetReconnectState()
         listener.onRtmpStatus("connected")
     }
 
     override fun onConnectionFailed(reason: String) {
-        WorldMMDiagnostics.log(appContext, "rtmp-connection-failed", reason)
+        LightMemEgoDiagnostics.log(appContext, "rtmp-connection-failed", reason)
         if (retryKeepingStream(reason)) return
         releaseBrokenStream()
         listener.onRtmpStatus("failed", reason)
     }
 
     override fun onDisconnect() {
-        WorldMMDiagnostics.log(appContext, "rtmp-disconnect")
+        LightMemEgoDiagnostics.log(appContext, "rtmp-disconnect")
         if (retryKeepingStream("disconnect")) return
         releaseBrokenStream()
         listener.onRtmpStatus("disconnected")
     }
 
     override fun onAuthError() {
-        WorldMMDiagnostics.log(appContext, "rtmp-auth-error")
+        LightMemEgoDiagnostics.log(appContext, "rtmp-auth-error")
         resetReconnectState()
         releaseBrokenStream()
         listener.onRtmpStatus("auth_error")
     }
 
     override fun onAuthSuccess() {
-        WorldMMDiagnostics.log(appContext, "rtmp-auth-success")
+        LightMemEgoDiagnostics.log(appContext, "rtmp-auth-success")
         listener.onRtmpStatus("auth_success")
     }
 
@@ -116,7 +116,7 @@ class WorldMMRtmpStreamer(
 
     private fun releaseBrokenStream() {
         val active = stream ?: return
-        WorldMMDiagnostics.log(appContext, "rtmp-release-broken", "streaming=${active.isStreaming}")
+        LightMemEgoDiagnostics.log(appContext, "rtmp-release-broken", "streaming=${active.isStreaming}")
         stream = null
         resetReconnectState()
         runCatching {
@@ -128,7 +128,7 @@ class WorldMMRtmpStreamer(
     private fun retryKeepingStream(reason: String): Boolean {
         val active = stream ?: return false
         if (reconnectPending) {
-            WorldMMDiagnostics.log(
+            LightMemEgoDiagnostics.log(
                 appContext,
                 "rtmp-retry-pending",
                 "attempt=$reconnectAttempt reason=$reason streaming=${active.isStreaming}",
@@ -145,7 +145,7 @@ class WorldMMRtmpStreamer(
             val accepted = streamClient.reTry(delayMs, reason, null)
             if (accepted) {
                 reconnectAttempt = nextAttempt
-                WorldMMDiagnostics.log(
+                LightMemEgoDiagnostics.log(
                     appContext,
                     "rtmp-retry-keep-stream",
                     "attempt=$nextAttempt delayMs=$delayMs reason=$reason streaming=${active.isStreaming}",
@@ -153,7 +153,7 @@ class WorldMMRtmpStreamer(
                 listener.onRtmpStatus("retrying", "attempt=$nextAttempt delayMs=$delayMs reason=$reason")
             } else {
                 reconnectPending = false
-                WorldMMDiagnostics.log(
+                LightMemEgoDiagnostics.log(
                     appContext,
                     "rtmp-retry-rejected",
                     "attempt=$nextAttempt reason=$reason streaming=${active.isStreaming}",
@@ -162,7 +162,7 @@ class WorldMMRtmpStreamer(
             accepted
         }.getOrElse { error ->
             reconnectPending = false
-            WorldMMDiagnostics.logError(appContext, "rtmp-retry-failed", "reason=$reason", error)
+            LightMemEgoDiagnostics.logError(appContext, "rtmp-retry-failed", "reason=$reason", error)
             false
         }
     }
