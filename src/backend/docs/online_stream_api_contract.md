@@ -172,12 +172,12 @@ Audio chunks from `frame_audio_stream`, Rokid direct upload, WebRTC/WHIP, and RT
 Default rolling ASR window settings target about 3 seconds:
 
 ```bash
-WORLDMM_AUDIO_ASR_WINDOW_MS=3000
-WORLDMM_AUDIO_ASR_HOP_MS=3000
-WORLDMM_AUDIO_ASR_MIN_WINDOW_MS=2000
-WORLDMM_AUDIO_ASR_FLUSH_MIN_MS=1000
-WORLDMM_AUDIO_ASR_MAX_WINDOW_MS=4000
-WORLDMM_AUDIO_ASR_MAX_PENDING_WINDOWS=5
+EM2MEM_AUDIO_ASR_WINDOW_MS=3000
+EM2MEM_AUDIO_ASR_HOP_MS=3000
+EM2MEM_AUDIO_ASR_MIN_WINDOW_MS=2000
+EM2MEM_AUDIO_ASR_FLUSH_MIN_MS=1000
+EM2MEM_AUDIO_ASR_MAX_WINDOW_MS=4000
+EM2MEM_AUDIO_ASR_MAX_PENDING_WINDOWS=5
 ```
 
 Normal windows are non-overlapping and roughly 2-4 seconds depending on chunk boundaries. A final stream stop can flush a tail window when at least 1 second of audio remains.

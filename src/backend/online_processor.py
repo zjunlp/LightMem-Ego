@@ -13,7 +13,7 @@ from online_preprocess import (
     segment_video_into_clips,
     transcribe_audio_with_whisperx,
     write_empty_transcript_outputs,
-    write_worldmm_session_files,
+    write_em2mem_session_files,
 )
 from online_preprocess.asr_whisperx import WhisperXRuntime
 from online_preprocess.io_utils import OnlinePreprocessError, ensure_dir, write_json, write_status
@@ -122,7 +122,7 @@ def process_session(
         write_status(session_dir, session_id, status="processing", stage=current_stage, progress=85, error=None)
 
         write_json(segments_json_path, segments)
-        write_worldmm_session_files(segments=segments, preprocess_dir=preprocess_dir)
+        write_em2mem_session_files(segments=segments, preprocess_dir=preprocess_dir)
         write_status(
             session_dir,
             session_id,
@@ -145,7 +145,7 @@ def process_session(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Preprocess an uploaded MP4 session for WorldMM online input.")
+    parser = argparse.ArgumentParser(description="Preprocess an uploaded MP4 session for Em2Mem online input.")
     parser.add_argument("--session-id", required=True)
     parser.add_argument("--sessions-root", default="online_sessions")
     parser.add_argument("--whisperx-model", default="large-v3")

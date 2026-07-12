@@ -22,7 +22,7 @@ def _as_bool(value: Any, default: bool = False) -> bool:
 
 
 def _component_versions_path(session_dir: Path) -> Path:
-    return Path(session_dir) / "worldmm" / "incremental" / "component_versions.json"
+    return Path(session_dir) / "em2mem" / "incremental" / "component_versions.json"
 
 
 def _merge_component(existing: dict[str, Any], key: str, patch: dict[str, Any]) -> None:
@@ -57,12 +57,12 @@ def reconcile_component_versions(session_dir: Path) -> dict[str, Any]:
     versions = read_json(versions_path, default={})
     if not isinstance(versions, dict):
         versions = {}
-    config_path = session_dir / "worldmm" / "memory_config.json"
+    config_path = session_dir / "em2mem" / "memory_config.json"
     config = read_json(config_path, default={})
     if not isinstance(config, dict):
         config = {}
-    graph_state = read_json(session_dir / "worldmm" / "incremental" / "graph" / "graph_state.json", default={})
-    semantic_state = read_json(session_dir / "worldmm" / "incremental" / "semantic" / "semantic_state.json", default={})
+    graph_state = read_json(session_dir / "em2mem" / "incremental" / "graph" / "graph_state.json", default={})
+    semantic_state = read_json(session_dir / "em2mem" / "incremental" / "semantic" / "semantic_state.json", default={})
     if not isinstance(graph_state, dict):
         graph_state = {}
     if not isinstance(semantic_state, dict):
@@ -76,7 +76,7 @@ def reconcile_component_versions(session_dir: Path) -> dict[str, Any]:
     lag = config.get("lag") if isinstance(config.get("lag"), dict) else {}
     readiness = config.get("readiness") if isinstance(config.get("readiness"), dict) else {}
 
-    checkpoint_dir = session_dir / "worldmm" / "incremental" / "visual" / "checkpoints" / f"v{visual_v:06d}"
+    checkpoint_dir = session_dir / "em2mem" / "incremental" / "visual" / "checkpoints" / f"v{visual_v:06d}"
     visual_checkpoint_ready = (
         visual_v > 0
         and checkpoint_dir.exists()
@@ -86,7 +86,7 @@ def reconcile_component_versions(session_dir: Path) -> dict[str, Any]:
         and (checkpoint_dir / "visual_items.jsonl").exists()
     )
     visual_ready = _as_bool(config.get("visual_embedding_ready"), False) and visual_v > 0 and (
-        visual_checkpoint_ready or (session_dir / str(config.get("visual_faiss_path") or "worldmm/visual/visual.faiss")).exists()
+        visual_checkpoint_ready or (session_dir / str(config.get("visual_faiss_path") or "em2mem/visual/visual.faiss")).exists()
     )
     graph_ready = graph_v > 0 and (
         _as_bool(readiness.get("graph_ready"), False)

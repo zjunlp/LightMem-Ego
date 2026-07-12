@@ -7,7 +7,7 @@ from online_preprocess.io_utils import read_json
 
 
 def load_memory_config(session_id: str, sessions_root: Path = Path("online_sessions")) -> dict[str, Any]:
-    path = sessions_root / session_id / "worldmm" / "memory_config.json"
+    path = sessions_root / session_id / "em2mem" / "memory_config.json"
     data = read_json(path, default={})
     return data if isinstance(data, dict) else {}
 

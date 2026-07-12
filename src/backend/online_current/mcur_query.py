@@ -6,7 +6,7 @@ from typing import Any
 
 
 def _answer_language_instruction() -> str:
-    language = str(os.getenv("WORLDMM_ANSWER_LANGUAGE", "zh") or "zh").strip().lower()
+    language = str(os.getenv("EM2MEM_ANSWER_LANGUAGE", "zh") or "zh").strip().lower()
     if language in {"zh", "cn", "chinese", "中文", "zh-cn", "zh_hans", "zh-hans", "simplified_chinese"}:
         return "请始终用简体中文回答，不要使用繁体中文。即使证据文本是英文，也要翻译和概括成简体中文；专有名词、文件名、模型名可以保留原文。"
     if language in {"en", "english"}:

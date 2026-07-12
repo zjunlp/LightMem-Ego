@@ -42,11 +42,11 @@ class FrameDiffEventDetector:
             raise RuntimeError("opencv-python is required for frame-diff M_st detection")
         self.session_dir = session_dir
         self.keyframes_dir = session_dir / "stream" / "keyframes"
-        self.candidate_fps = candidate_fps or env_float("WORLDMM_MST_CANDIDATE_FPS", 1.0)
-        self.diff_threshold = diff_threshold or env_float("WORLDMM_MST_DIFF_THRESHOLD", 0.40)
-        self.min_event_duration = min_event_duration or env_float("WORLDMM_MST_MIN_EVENT_DURATION", 2.0)
-        self.max_event_duration = max_event_duration or env_float("WORLDMM_MST_MAX_EVENT_DURATION", 8.0)
-        self.min_boundary_gap = min_boundary_gap or env_float("WORLDMM_MST_MIN_BOUNDARY_GAP", 1.5)
+        self.candidate_fps = candidate_fps or env_float("EM2MEM_MST_CANDIDATE_FPS", 1.0)
+        self.diff_threshold = diff_threshold or env_float("EM2MEM_MST_DIFF_THRESHOLD", 0.40)
+        self.min_event_duration = min_event_duration or env_float("EM2MEM_MST_MIN_EVENT_DURATION", 2.0)
+        self.max_event_duration = max_event_duration or env_float("EM2MEM_MST_MAX_EVENT_DURATION", 8.0)
+        self.min_boundary_gap = min_boundary_gap or env_float("EM2MEM_MST_MIN_BOUNDARY_GAP", 1.5)
 
     def detect(
         self,

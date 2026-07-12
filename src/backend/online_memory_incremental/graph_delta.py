@@ -5,22 +5,22 @@ import os
 from pathlib import Path
 from typing import Any
 
-from online_memory.evidence_to_worldmm import (
+from online_memory.evidence_to_em2mem import (
     _build_graph_payload,
     _dedupe_triplets,
     _openie_triplets_for_items,
     _triplets_for_item,
 )
-from online_memory.worldmm_layout import WorldMMOnlineLayout
+from online_memory.em2mem_layout import Em2MemOnlineLayout
 from online_preprocess.io_utils import ensure_dir, read_json, utc_now_iso, write_json_atomic
 
 
 def _model_name(model_name: str | None = None) -> str:
-    return model_name or os.getenv("WORLDMM_MEMORY_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-5.4"
+    return model_name or os.getenv("EM2MEM_MEMORY_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-5.4"
 
 
 def _generation_backend(value: str | None = None) -> str:
-    backend = (value or os.getenv("WORLDMM_INCREMENTAL_GRAPH_BACKEND") or os.getenv("WORLDMM_MEMORY_GENERATION_BACKEND") or "llm").strip().lower()
+    backend = (value or os.getenv("EM2MEM_INCREMENTAL_GRAPH_BACKEND") or os.getenv("EM2MEM_MEMORY_GENERATION_BACKEND") or "llm").strip().lower()
     return backend if backend in {"llm", "rule"} else "llm"
 
 
@@ -38,7 +38,7 @@ def _load_triplet_payload(path: Path) -> dict[str, Any]:
 
 def _merge_active_30s_sidecar(
     *,
-    layout: WorldMMOnlineLayout,
+    layout: Em2MemOnlineLayout,
     model_name: str,
     caption_30s: list[dict[str, Any]],
     triplet_map_delta: dict[str, list[list[str]]],
@@ -101,9 +101,9 @@ def generate_graph_delta(
 ) -> dict[str, Any]:
     model = _model_name(model_name)
     backend = _generation_backend(generation_backend)
-    layout = WorldMMOnlineLayout(session_dir=session_dir, session_id=session_dir.name)
-    delta_dir = session_dir / "worldmm" / "incremental" / "graph" / "deltas"
-    state_path = session_dir / "worldmm" / "incremental" / "graph" / "graph_state.json"
+    layout = Em2MemOnlineLayout(session_dir=session_dir, session_id=session_dir.name)
+    delta_dir = session_dir / "em2mem" / "incremental" / "graph" / "deltas"
+    state_path = session_dir / "em2mem" / "incremental" / "graph" / "graph_state.json"
     delta_path = delta_dir / f"graph_delta_v{version:06d}.jsonl"
     error: str | None = None
 

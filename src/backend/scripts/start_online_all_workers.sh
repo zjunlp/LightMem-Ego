@@ -14,7 +14,7 @@ if [[ "${1:-}" == "--dry-run" ]]; then
   shift
 fi
 
-REQUESTED_PIPELINE_MODE="${WORLDMM_PIPELINE_MODE:-}"
+REQUESTED_PIPELINE_MODE="${EM2MEM_PIPELINE_MODE:-}"
 if [[ -f ".env" ]]; then
   set -a
   # shellcheck disable=SC1091
@@ -22,16 +22,16 @@ if [[ -f ".env" ]]; then
   set +a
 fi
 if [[ -n "$REQUESTED_PIPELINE_MODE" ]]; then
-  WORLDMM_PIPELINE_MODE="$REQUESTED_PIPELINE_MODE"
+  EM2MEM_PIPELINE_MODE="$REQUESTED_PIPELINE_MODE"
 fi
 
-PIPELINE_MODE="${WORLDMM_PIPELINE_MODE:-mst}"
+PIPELINE_MODE="${EM2MEM_PIPELINE_MODE:-mst}"
 PIPELINE_MODE="$(printf '%s' "$PIPELINE_MODE" | tr '[:upper:]' '[:lower:]')"
 case "$PIPELINE_MODE" in
   mst|legacy|hybrid) ;;
   *) PIPELINE_MODE="mst" ;;
 esac
-export WORLDMM_PIPELINE_MODE="$PIPELINE_MODE"
+export EM2MEM_PIPELINE_MODE="$PIPELINE_MODE"
 export HF_ENDPOINT="https://hf-mirror.com"
 
 PYTHON_BIN="${PYTHON_BIN:-}"
@@ -102,7 +102,7 @@ worker_count() {
 }
 
 vlm2vec_embedding_ready() {
-  local url="${WORLDMM_VLM2VEC_EMBED_URL:-http://${WORLDMM_VLM2VEC_EMBED_HOST:-127.0.0.1}:${WORLDMM_VLM2VEC_EMBED_PORT:-18091}}"
+  local url="${EM2MEM_VLM2VEC_EMBED_URL:-http://${EM2MEM_VLM2VEC_EMBED_HOST:-127.0.0.1}:${EM2MEM_VLM2VEC_EMBED_PORT:-18091}}"
   "$PYTHON_BIN" - "$url" <<'PY'
 import json
 import sys
@@ -121,7 +121,7 @@ PY
 }
 
 qwen3_embedding_ready() {
-  local url="${WORLDMM_TEXT_EMBED_URL:-http://${WORLDMM_TEXT_EMBED_HOST:-127.0.0.1}:${WORLDMM_TEXT_EMBED_PORT:-18096}}"
+  local url="${EM2MEM_TEXT_EMBED_URL:-http://${EM2MEM_TEXT_EMBED_HOST:-127.0.0.1}:${EM2MEM_TEXT_EMBED_PORT:-18096}}"
   "$PYTHON_BIN" - "$url" <<'PY'
 import json
 import sys
@@ -161,7 +161,7 @@ elif [[ "$PIPELINE_MODE" == "hybrid" ]]; then
   echo "[start_online_all_workers] Legacy evidence worker: optional legacy"
   start_worker evidence bash scripts/start_online_evidence_worker.sh --backend openai
 else
-  if [[ "${WORLDMM_ENABLE_LEGACY_EVIDENCE_WORKER:-0}" =~ ^(1|true|TRUE|yes|YES|on|ON)$ ]]; then
+  if [[ "${EM2MEM_ENABLE_LEGACY_EVIDENCE_WORKER:-0}" =~ ^(1|true|TRUE|yes|YES|on|ON)$ ]]; then
     echo "[start_online_all_workers] Legacy evidence worker: explicitly enabled as legacy_optional"
     start_worker evidence bash scripts/start_online_evidence_worker.sh --backend openai
   else
@@ -170,38 +170,38 @@ else
 fi
 
 if [[ "$PIPELINE_MODE" != "legacy" ]]; then
-  REFINE_WORKER_COUNT="$(worker_count "${WORLDMM_MST_REFINE_WORKER_COUNT:-1}")"
+  REFINE_WORKER_COUNT="$(worker_count "${EM2MEM_MST_REFINE_WORKER_COUNT:-1}")"
   echo "[start_online_all_workers] refine worker count: ${REFINE_WORKER_COUNT}"
   if [[ "$REFINE_WORKER_COUNT" == "1" ]]; then
     start_worker refine bash scripts/start_online_mst_refine_worker.sh
   else
     for ((i = 1; i <= REFINE_WORKER_COUNT; i++)); do
-      start_worker "refine_${i}" env WORLDMM_WORKER_INSTANCE_NAME="refine_${i}" bash scripts/start_online_mst_refine_worker.sh
+      start_worker "refine_${i}" env EM2MEM_WORKER_INSTANCE_NAME="refine_${i}" bash scripts/start_online_mst_refine_worker.sh
     done
   fi
   start_worker consolidation bash scripts/start_online_mst_consolidation_worker.sh
 fi
 
-if is_enabled "${WORLDMM_AUTO_VISUAL_EMBEDDING:-1}" && [[ "${WORLDMM_VISUAL_BACKEND:-vlm2vec}" == "remote" ]]; then
+if is_enabled "${EM2MEM_AUTO_VISUAL_EMBEDDING:-1}" && [[ "${EM2MEM_VISUAL_BACKEND:-vlm2vec}" == "remote" ]]; then
   if vlm2vec_embedding_ready; then
-    echo "[start_online_all_workers] VLM2Vec embedding service already healthy at ${WORLDMM_VLM2VEC_EMBED_URL:-http://${WORLDMM_VLM2VEC_EMBED_HOST:-127.0.0.1}:${WORLDMM_VLM2VEC_EMBED_PORT:-18091}}; reusing it"
+    echo "[start_online_all_workers] VLM2Vec embedding service already healthy at ${EM2MEM_VLM2VEC_EMBED_URL:-http://${EM2MEM_VLM2VEC_EMBED_HOST:-127.0.0.1}:${EM2MEM_VLM2VEC_EMBED_PORT:-18091}}; reusing it"
   else
     start_worker vlm2vec_embedding bash scripts/start_online_vlm2vec_embedding_server.sh
   fi
 fi
 
-if [[ "${WORLDMM_TEXT_EMBED_BACKEND:-local}" == "remote" ]]; then
+if [[ "${EM2MEM_TEXT_EMBED_BACKEND:-local}" == "remote" ]]; then
   if qwen3_embedding_ready; then
-    echo "[start_online_all_workers] Qwen3 text embedding service already healthy at ${WORLDMM_TEXT_EMBED_URL:-http://${WORLDMM_TEXT_EMBED_HOST:-127.0.0.1}:${WORLDMM_TEXT_EMBED_PORT:-18096}}; reusing it"
+    echo "[start_online_all_workers] Qwen3 text embedding service already healthy at ${EM2MEM_TEXT_EMBED_URL:-http://${EM2MEM_TEXT_EMBED_HOST:-127.0.0.1}:${EM2MEM_TEXT_EMBED_PORT:-18096}}; reusing it"
   else
-    CUDA_VISIBLE_DEVICES="${WORLDMM_TEXT_EMBED_CUDA_VISIBLE_DEVICES:-3}" WORLDMM_TEXT_EMBED_DEVICE="${WORLDMM_TEXT_EMBED_DEVICE:-cuda:0}" start_worker qwen3_embedding bash scripts/start_online_qwen3_embedding_server.sh
+    CUDA_VISIBLE_DEVICES="${EM2MEM_TEXT_EMBED_CUDA_VISIBLE_DEVICES:-3}" EM2MEM_TEXT_EMBED_DEVICE="${EM2MEM_TEXT_EMBED_DEVICE:-cuda:0}" start_worker qwen3_embedding bash scripts/start_online_qwen3_embedding_server.sh
   fi
 fi
 
-if is_enabled "${WORLDMM_AUTO_VISUAL_EMBEDDING:-1}"; then
+if is_enabled "${EM2MEM_AUTO_VISUAL_EMBEDDING:-1}"; then
   start_worker visual bash scripts/start_online_visual_worker.sh
 else
-  echo "[start_online_all_workers] Visual embedding worker: disabled by WORLDMM_AUTO_VISUAL_EMBEDDING=0"
+  echo "[start_online_all_workers] Visual embedding worker: disabled by EM2MEM_AUTO_VISUAL_EMBEDDING=0"
 fi
 start_worker memory bash scripts/start_online_memory_worker.sh
 CUDA_VISIBLE_DEVICES=1 start_worker rokid_day_merge bash scripts/start_online_rokid_day_merge_worker.sh

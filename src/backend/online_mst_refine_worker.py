@@ -31,7 +31,7 @@ MST_REFINE_SCAN_REASON = "mst_refine_scan"
 
 
 def _worker_runtime_name() -> str:
-    name = str(os.getenv("WORLDMM_WORKER_INSTANCE_NAME") or "refine").strip()
+    name = str(os.getenv("EM2MEM_WORKER_INSTANCE_NAME") or "refine").strip()
     return name or "refine"
 
 
@@ -53,10 +53,10 @@ def _env_float(name: str, default: float) -> float:
 
 
 def _heartbeat_interval_seconds() -> float:
-    configured = os.getenv("WORLDMM_MST_REFINE_HEARTBEAT_SECONDS")
+    configured = os.getenv("EM2MEM_MST_REFINE_HEARTBEAT_SECONDS")
     if configured not in {None, ""}:
-        return max(1.0, _env_float("WORLDMM_MST_REFINE_HEARTBEAT_SECONDS", 15.0))
-    stale_seconds = max(3.0, _env_float("WORLDMM_WORKER_STALE_SECONDS", 60.0))
+        return max(1.0, _env_float("EM2MEM_MST_REFINE_HEARTBEAT_SECONDS", 15.0))
+    stale_seconds = max(3.0, _env_float("EM2MEM_WORKER_STALE_SECONDS", 60.0))
     return max(1.0, min(15.0, stale_seconds / 3.0))
 
 
@@ -261,12 +261,12 @@ def _run_refine_task(
     session_dir = sessions_root / session_id
     ready_count = _ready_window_count(session_dir)
     result["ready_30s_window_count"] = ready_count
-    if ready_count > 0 and _env_bool("WORLDMM_AUTO_MST_CONSOLIDATION", True):
+    if ready_count > 0 and _env_bool("EM2MEM_AUTO_MST_CONSOLIDATION", True):
         task_path = enqueue_mst_consolidation_task(
             project_root=project_root,
             session_id=session_id,
-            backend=os.getenv("WORLDMM_MST_EPISODIC_BACKEND", "openai"),
-            update_worldmm=_env_bool("WORLDMM_MST_CONSOLIDATE_UPDATE_WORLDMM", True),
+            backend=os.getenv("EM2MEM_MST_EPISODIC_BACKEND", "openai"),
+            update_em2mem=_env_bool("EM2MEM_MST_CONSOLIDATE_UPDATE_EM2MEM", True),
             force=False,
             limit_windows=None,
             reason=MST_REFINE_READY_REASON,
@@ -287,12 +287,12 @@ def _run_refine_task(
             end = float(window.get("end_time"))
         except Exception:
             continue
-        if _env_bool("WORLDMM_AUTO_MST_CONSOLIDATION", True):
+        if _env_bool("EM2MEM_AUTO_MST_CONSOLIDATION", True):
             task_path = enqueue_mst_consolidation_task(
                 project_root=project_root,
                 session_id=session_id,
-                backend=os.getenv("WORLDMM_MST_EPISODIC_BACKEND", "openai"),
-                update_worldmm=_env_bool("WORLDMM_MST_CONSOLIDATE_UPDATE_WORLDMM", True),
+                backend=os.getenv("EM2MEM_MST_EPISODIC_BACKEND", "openai"),
+                update_em2mem=_env_bool("EM2MEM_MST_CONSOLIDATE_UPDATE_EM2MEM", True),
                 force=True,
                 limit_windows=1,
                 window_start=start,
@@ -458,14 +458,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Persistent worker for asynchronous M_st micro-event refinement.")
     parser.add_argument("--project-root", default=str(PROJECT_ROOT))
     parser.add_argument("--sessions-root", default=str(DEFAULT_SESSIONS_ROOT))
-    parser.add_argument("--backend", default=os.getenv("WORLDMM_MST_REFINE_BACKEND", "openai"), choices=["openai", "mock"])
-    parser.add_argument("--model", default=os.getenv("WORLDMM_MST_REFINE_MODEL") or os.getenv("WORLDMM_VLM_MODEL") or os.getenv("OPENAI_MODEL"))
-    parser.add_argument("--limit-events", type=int, default=int(os.getenv("WORLDMM_MST_REFINE_LIMIT_EVENTS", "20")))
+    parser.add_argument("--backend", default=os.getenv("EM2MEM_MST_REFINE_BACKEND", "openai"), choices=["openai", "mock"])
+    parser.add_argument("--model", default=os.getenv("EM2MEM_MST_REFINE_MODEL") or os.getenv("EM2MEM_VLM_MODEL") or os.getenv("OPENAI_MODEL"))
+    parser.add_argument("--limit-events", type=int, default=int(os.getenv("EM2MEM_MST_REFINE_LIMIT_EVENTS", "20")))
     parser.add_argument("--force-refine", action="store_true")
-    parser.add_argument("--max-concurrency", type=int, default=int(os.getenv("WORLDMM_REFINE_MAX_CONCURRENCY", "4")))
-    parser.add_argument("--scan-sessions", action=argparse.BooleanOptionalAction, default=_env_bool("WORLDMM_MST_REFINE_SCAN_SESSIONS", True))
-    parser.add_argument("--scan-limit-sessions", type=int, default=int(os.getenv("WORLDMM_MST_REFINE_SCAN_LIMIT_SESSIONS", "5")))
-    parser.add_argument("--poll-interval", type=float, default=float(os.getenv("WORLDMM_MST_REFINE_POLL_SECONDS", "10")))
+    parser.add_argument("--max-concurrency", type=int, default=int(os.getenv("EM2MEM_REFINE_MAX_CONCURRENCY", "4")))
+    parser.add_argument("--scan-sessions", action=argparse.BooleanOptionalAction, default=_env_bool("EM2MEM_MST_REFINE_SCAN_SESSIONS", True))
+    parser.add_argument("--scan-limit-sessions", type=int, default=int(os.getenv("EM2MEM_MST_REFINE_SCAN_LIMIT_SESSIONS", "5")))
+    parser.add_argument("--poll-interval", type=float, default=float(os.getenv("EM2MEM_MST_REFINE_POLL_SECONDS", "10")))
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()

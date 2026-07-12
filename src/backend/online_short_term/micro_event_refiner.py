@@ -179,9 +179,9 @@ def _normalize_reasoning_effort(value: Any) -> str:
 
 
 def _reasoning_effort_kwargs() -> dict[str, Any]:
-    if os.getenv("WORLDMM_OPENAI_DISABLE_REASONING", "1").strip().lower() in {"1", "true", "yes", "on"}:
+    if os.getenv("EM2MEM_OPENAI_DISABLE_REASONING", "1").strip().lower() in {"1", "true", "yes", "on"}:
         return {"reasoning_effort": "none"}
-    effort = os.getenv("WORLDMM_CHAT_REASONING_EFFORT") or os.getenv("WORLDMM_OPENAI_REASONING_EFFORT") or "none"
+    effort = os.getenv("EM2MEM_CHAT_REASONING_EFFORT") or os.getenv("EM2MEM_OPENAI_REASONING_EFFORT") or "none"
     return {"reasoning_effort": _normalize_reasoning_effort(effort)}
 
 
@@ -221,10 +221,10 @@ class MicroEventRefiner:
         max_images: int | None = None,
         timeout: float | None = None,
     ) -> None:
-        self.backend = (backend or os.getenv("WORLDMM_MST_REFINE_BACKEND", "openai")).strip().lower()
-        self.model = model or os.getenv("WORLDMM_MST_REFINE_MODEL") or os.getenv("WORLDMM_VLM_MODEL", "gpt-4o-mini")
-        self.max_images = int(max_images or os.getenv("WORLDMM_MST_REFINE_MAX_IMAGES", "4"))
-        self.timeout = float(timeout or os.getenv("WORLDMM_MST_REFINE_TIMEOUT", "120"))
+        self.backend = (backend or os.getenv("EM2MEM_MST_REFINE_BACKEND", "openai")).strip().lower()
+        self.model = model or os.getenv("EM2MEM_MST_REFINE_MODEL") or os.getenv("EM2MEM_VLM_MODEL", "gpt-4o-mini")
+        self.max_images = int(max_images or os.getenv("EM2MEM_MST_REFINE_MAX_IMAGES", "4"))
+        self.timeout = float(timeout or os.getenv("EM2MEM_MST_REFINE_TIMEOUT", "120"))
         self._client = None
 
     def refine_event(
@@ -327,7 +327,7 @@ class MicroEventRefiner:
         try:
             from openai import OpenAI
         except ImportError as exc:
-            raise RuntimeError("openai package is required for WORLDMM_MST_REFINE_BACKEND=openai") from exc
+            raise RuntimeError("openai package is required for EM2MEM_MST_REFINE_BACKEND=openai") from exc
         if self._client is None:
             self._client = OpenAI(
                 api_key=os.getenv("OPENAI_API_KEY"),

@@ -91,19 +91,19 @@ sudo systemctl reload nginx
 当前前端默认请求后端：
 
 ```text
-https://api.worldmm.xyz
+https://lightmem-ego.zjukg.cn/api
 ```
 
 这个地址写在：
 
 ```text
-online_web/src/api/worldmmApi.js
+online_web/src/api/lightmem_egoApi.js
 ```
 
 第一行：
 
 ```js
-const API_BASE_URL = 'https://api.worldmm.xyz'
+const API_BASE_URL = 'https://lightmem-ego.zjukg.cn/api'
 ```
 
 如果新服务器仍然访问这个后端，则不需要修改。若后端地址变了，需要在服务器或本地改这一行，然后重新构建：

@@ -112,11 +112,11 @@ def resolve_tool_binary(tool_name: str, env_name: str) -> str:
 
 
 def ffmpeg_bin() -> str:
-    return resolve_tool_binary("ffmpeg", "WORLDMM_FFMPEG_BIN")
+    return resolve_tool_binary("ffmpeg", "EM2MEM_FFMPEG_BIN")
 
 
 def ffprobe_bin() -> str:
-    return resolve_tool_binary("ffprobe", "WORLDMM_FFPROBE_BIN")
+    return resolve_tool_binary("ffprobe", "EM2MEM_FFPROBE_BIN")
 
 
 def relative_to_session(path: Path, session_dir: Path) -> str:
@@ -141,7 +141,7 @@ def run_command(
         executable = str(cmd[0]) if cmd else "<empty command>"
         raise OnlinePreprocessError(
             f"{description} failed because executable was not found: {executable}. "
-            "If this is ffmpeg/ffprobe, set WORLDMM_FFMPEG_BIN / WORLDMM_FFPROBE_BIN."
+            "If this is ffmpeg/ffprobe, set EM2MEM_FFMPEG_BIN / EM2MEM_FFPROBE_BIN."
         ) from exc
     if result.returncode != 0:
         raise OnlinePreprocessError(

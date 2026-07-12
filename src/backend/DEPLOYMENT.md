@@ -1,11 +1,11 @@
 # Deployment Guide
 
-This guide describes how to deploy the WorldMM Online Server on a new GPU server with internet access. It assumes the API server, workers, model caches, and optional SRS live media service run on the same machine, so no relay or SSH tunnel is required.
+This guide describes how to deploy the Em2Mem Online Server on a new GPU server with internet access. It assumes the API server, workers, model caches, and optional SRS live media service run on the same machine, so no relay or SSH tunnel is required.
 
 ## Target Layout
 
 ```text
-worldmm-online-server-release/
+lightmem_ego-online-server-release/
   .venv/             general API, query, memory, visual, and live ingest runtime
   .venv_whisperx/    ASR/preprocess runtime with WhisperX and CUDA packages
   .env               local secrets and deployment configuration
@@ -21,7 +21,7 @@ Use `.venv` for most services. Use `.venv_whisperx` for `online_worker.py`, beca
 
 - Linux server with an NVIDIA GPU and working CUDA driver.
 - Python 3.10 or newer. Python 3.11 is recommended for the general server environment.
-- `ffmpeg` and `ffprobe` on `PATH`, or explicit `WORLDMM_FFMPEG_BIN` and `WORLDMM_FFPROBE_BIN`.
+- `ffmpeg` and `ffprobe` on `PATH`, or explicit `EM2MEM_FFMPEG_BIN` and `EM2MEM_FFPROBE_BIN`.
 - Docker if you want to run the bundled SRS live media helper.
 - Outbound internet access for Python packages, Hugging Face model downloads, and OpenAI-compatible APIs.
 - OpenAI-compatible API key and base URL, or another configured LLM backend supported by the code.
@@ -36,9 +36,9 @@ sudo apt-get install -y python3 python3-venv python3-dev build-essential ffmpeg 
 ## Unpack The Release
 
 ```bash
-cd /opt/worldmm
-unzip /path/to/worldmm-online-server-release.zip
-cd worldmm-online-server-release
+cd /opt/em2mem
+unzip /path/to/lightmem_ego-online-server-release.zip
+cd lightmem_ego-online-server-release
 ```
 
 Any path is fine. Avoid placing model weights or runtime data inside git-tracked directories unless they are ignored.
@@ -91,32 +91,32 @@ cp .env.example .env
 Edit `.env` and set at least:
 
 ```bash
-WORLDMM_API_HOST=0.0.0.0
-WORLDMM_API_PORT=8000
-WORLDMM_CORS_ORIGINS=http://localhost:5173,https://your-frontend.example.com
+EM2MEM_API_HOST=0.0.0.0
+EM2MEM_API_PORT=8000
+EM2MEM_CORS_ORIGINS=http://localhost:5173,https://your-frontend.example.com
 
 OPENAI_API_KEY=<your-key>
 OPENAI_BASE_URL=<your-openai-compatible-base-url>
 
-WORLDMM_FFMPEG_BIN=ffmpeg
-WORLDMM_FFPROBE_BIN=ffprobe
+EM2MEM_FFMPEG_BIN=ffmpeg
+EM2MEM_FFPROBE_BIN=ffprobe
 
-WORLDMM_ALLOW_HF_DOWNLOAD=1
+EM2MEM_ALLOW_HF_DOWNLOAD=1
 TRANSFORMERS_OFFLINE=0
 HF_HUB_OFFLINE=0
 HF_DATASETS_OFFLINE=0
-HF_HOME=/data/worldmm/hf
+HF_HOME=/data/em2mem/hf
 
-WORLDMM_WHISPERX_MODEL=medium
-WORLDMM_WHISPERX_DEVICE=cuda
-WORLDMM_WHISPERX_COMPUTE_TYPE=float16
-WORLDMM_WHISPERX_MODEL_DIR=/data/worldmm/models/whisperx
-WORLDMM_WHISPERX_ALIGN_MODEL_DIR=/data/worldmm/models/whisperx/alignment
+EM2MEM_WHISPERX_MODEL=medium
+EM2MEM_WHISPERX_DEVICE=cuda
+EM2MEM_WHISPERX_COMPUTE_TYPE=float16
+EM2MEM_WHISPERX_MODEL_DIR=/data/em2mem/models/whisperx
+EM2MEM_WHISPERX_ALIGN_MODEL_DIR=/data/em2mem/models/whisperx/alignment
 
-WORLDMM_VLM2VEC_MODEL_PATH=/data/worldmm/models/VLM2Vec-V2.0
-WORLDMM_VISUAL_BACKEND=vlm2vec
-WORLDMM_VLM2VEC_DEVICE=cuda
-WORLDMM_VLM2VEC_DTYPE=float16
+EM2MEM_VLM2VEC_MODEL_PATH=/data/em2mem/models/VLM2Vec-V2.0
+EM2MEM_VISUAL_BACKEND=vlm2vec
+EM2MEM_VLM2VEC_DEVICE=cuda
+EM2MEM_VLM2VEC_DTYPE=float16
 ```
 
 Do not commit `.env`. Keep API keys, tokens, local model paths, and hostnames in `.env` or a deployment secret manager.
@@ -126,45 +126,45 @@ Do not commit `.env`. Keep API keys, tokens, local model paths, and hostnames in
 When SRS and the workers run on the same server, leave the worker pull override empty:
 
 ```bash
-WORLDMM_LIVE_PULL_BASE_URL=
+EM2MEM_LIVE_PULL_BASE_URL=
 ```
 
 Use direct local/internal pull URLs instead:
 
 ```bash
-WORLDMM_LIVE_RTMP_ENABLED=1
-WORLDMM_WEBRTC_WHIP_ENABLED=1
-WORLDMM_LIVE_RTMP_SCHEME=rtmp
-WORLDMM_LIVE_RTMP_DOMAIN=<server-public-hostname-or-ip>
-WORLDMM_LIVE_RTMP_PUBLIC_PORT=1935
-WORLDMM_LIVE_RTMP_INTERNAL_PULL_BASE=rtmp://127.0.0.1:1935/live
+EM2MEM_LIVE_RTMP_ENABLED=1
+EM2MEM_WEBRTC_WHIP_ENABLED=1
+EM2MEM_LIVE_RTMP_SCHEME=rtmp
+EM2MEM_LIVE_RTMP_DOMAIN=<server-public-hostname-or-ip>
+EM2MEM_LIVE_RTMP_PUBLIC_PORT=1935
+EM2MEM_LIVE_RTMP_INTERNAL_PULL_BASE=rtmp://127.0.0.1:1935/live
 
-WORLDMM_WEBRTC_WHIP_SCHEME=http
-WORLDMM_WEBRTC_WHIP_DOMAIN=<server-public-hostname-or-ip>
-WORLDMM_WEBRTC_WHIP_PUBLIC_PORT=1985
-WORLDMM_WEBRTC_WHIP_PATH=/rtc/v1/whip/
-WORLDMM_WEBRTC_WHIP_APP=live
+EM2MEM_WEBRTC_WHIP_SCHEME=http
+EM2MEM_WEBRTC_WHIP_DOMAIN=<server-public-hostname-or-ip>
+EM2MEM_WEBRTC_WHIP_PUBLIC_PORT=1985
+EM2MEM_WEBRTC_WHIP_PATH=/rtc/v1/whip/
+EM2MEM_WEBRTC_WHIP_APP=live
 ```
 
-If API, SRS, and workers are split across machines later, set `WORLDMM_LIVE_PULL_BASE_URL` only for the worker machine. For the single-server deployment described here, it should stay empty.
+If API, SRS, and workers are split across machines later, set `EM2MEM_LIVE_PULL_BASE_URL` only for the worker machine. For the single-server deployment described here, it should stay empty.
 
 ## Rolling Audio ASR Defaults
 
 Realtime live audio remains sliced into short ingest chunks, but ASR tasks are scheduled on stable 5 second windows:
 
 ```bash
-WORLDMM_LIVE_INGEST_AUDIO_SEGMENT_MS=1500
-WORLDMM_AUDIO_ASR_ENABLED=1
-WORLDMM_AUDIO_ASR_BACKEND=whisperx
-WORLDMM_AUDIO_ASR_WINDOW_MS=5000
-WORLDMM_AUDIO_ASR_HOP_MS=5000
-WORLDMM_AUDIO_ASR_MIN_WINDOW_MS=4500
-WORLDMM_AUDIO_ASR_FLUSH_MIN_MS=2000
-WORLDMM_AUDIO_ASR_MAX_WINDOW_MS=7000
-WORLDMM_AUDIO_ASR_MAX_PENDING_WINDOWS=3
+EM2MEM_LIVE_INGEST_AUDIO_SEGMENT_MS=1500
+EM2MEM_AUDIO_ASR_ENABLED=1
+EM2MEM_AUDIO_ASR_BACKEND=whisperx
+EM2MEM_AUDIO_ASR_WINDOW_MS=5000
+EM2MEM_AUDIO_ASR_HOP_MS=5000
+EM2MEM_AUDIO_ASR_MIN_WINDOW_MS=4500
+EM2MEM_AUDIO_ASR_FLUSH_MIN_MS=2000
+EM2MEM_AUDIO_ASR_MAX_WINDOW_MS=7000
+EM2MEM_AUDIO_ASR_MAX_PENDING_WINDOWS=3
 ```
 
-On live ingest stop, remaining buffered audio of at least `WORLDMM_AUDIO_ASR_FLUSH_MIN_MS` is queued as a final flush ASR window. Shorter tails are recorded as dropped tail duration in stream status.
+On live ingest stop, remaining buffered audio of at least `EM2MEM_AUDIO_ASR_FLUSH_MIN_MS` is queued as a final flush ASR window. Shorter tails are recorded as dropped tail duration in stream status.
 
 ## Start SRS
 
@@ -180,7 +180,7 @@ Open or proxy these ports as needed:
 - `1935/tcp`: RTMP publish and pull.
 - `1985/tcp`: SRS HTTP API and WHIP endpoint in the bundled helper.
 - `8080/tcp`: SRS HTTP server, if enabled.
-- `8000/tcp`: WorldMM API.
+- `8000/tcp`: Em2Mem API.
 
 Production deployments should add TLS, authentication, reverse proxy rules, and firewall policy outside this repository.
 
@@ -206,7 +206,7 @@ Scale refine workers:
 
 ```bash
 source .venv/bin/activate
-WORLDMM_MST_REFINE_WORKER_COUNT=4 scripts/start_online_all_workers.sh
+EM2MEM_MST_REFINE_WORKER_COUNT=4 scripts/start_online_all_workers.sh
 ```
 
 Manual worker split:

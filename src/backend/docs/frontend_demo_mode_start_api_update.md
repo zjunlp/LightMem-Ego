@@ -16,7 +16,7 @@ Now demo routes are auto-registered when the normal API starts:
 bash scripts/start_api.sh
 ```
 
-If the `demo/` directory exists and `WORLDMM_ENABLE_DEMO_ROUTES` is not disabled, `api_server:app` now exposes:
+If the `demo/` directory exists and `EM2MEM_ENABLE_DEMO_ROUTES` is not disabled, `api_server:app` now exposes:
 
 ```http
 POST /demo/upload
@@ -58,7 +58,7 @@ Frontend should only assume one backend base URL.
 For example:
 
 ```ts
-const API_BASE_URL = "https://omnispark.zjukg.cn";
+const API_BASE_URL = "https://lightmem_ego.zjukg.cn";
 ```
 
 Demo mode should call paths under the same base URL:
@@ -244,7 +244,7 @@ does not return 404.
 Use this prompt to ask a frontend coding agent to implement the update:
 
 ```text
-You are modifying the WorldMM frontend demo mode.
+You are modifying the Em2Mem frontend demo mode.
 
 Backend update: demo routes are now auto-registered on the normal API app. The backend should be started with bash scripts/start_api.sh, and demo mode should use the same API base URL as normal modes. Do not require a separate demo backend process.
 

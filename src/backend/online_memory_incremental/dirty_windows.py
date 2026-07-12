@@ -16,7 +16,7 @@ KNOWN_LEVEL_SECONDS = {
 
 
 def _parse_levels_env() -> dict[str, int]:
-    raw = os.getenv("WORLDMM_MEMORY_LEVELS") or os.getenv("WORLDMM_INCREMENTAL_LEVELS") or ""
+    raw = os.getenv("EM2MEM_MEMORY_LEVELS") or os.getenv("EM2MEM_INCREMENTAL_LEVELS") or ""
     levels: dict[str, int] = {}
     for part in raw.split(","):
         part = part.strip()
@@ -34,7 +34,7 @@ def _parse_levels_env() -> dict[str, int]:
 
 
 def infer_multiscale_levels(session_dir: Path) -> dict[str, int]:
-    """Infer configured WorldMM levels from env and existing caption files.
+    """Infer configured Em2Mem levels from env and existing caption files.
 
     The current project usually has 3min/10min/1h, but this keeps 1min or
     future levels opt-in via env or existing files.
@@ -44,7 +44,7 @@ def infer_multiscale_levels(session_dir: Path) -> dict[str, int]:
     if env_levels:
         return dict(sorted(env_levels.items(), key=lambda x: x[1]))
 
-    caption_root = session_dir / "worldmm" / "caption_root"
+    caption_root = session_dir / "em2mem" / "caption_root"
     found: dict[str, int] = {}
     if caption_root.exists():
         for path in caption_root.glob(f"{session_dir.name}_*.json"):
@@ -72,7 +72,7 @@ def window_for_range(level: str, seconds: int, start_time: float, end_time: floa
 class DirtyWindowManager:
     def __init__(self, session_dir: Path) -> None:
         self.session_dir = Path(session_dir)
-        self.path = self.session_dir / "worldmm" / "incremental" / "dirty_windows.json"
+        self.path = self.session_dir / "em2mem" / "incremental" / "dirty_windows.json"
 
     def load(self) -> dict[str, Any]:
         data = read_json(self.path, default={})

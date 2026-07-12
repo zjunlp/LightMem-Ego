@@ -6,7 +6,7 @@ import os
 import time
 from pathlib import Path
 
-from online_mst_to_worldmm import consolidate_short_term_to_worldmm
+from online_mst_to_em2mem import consolidate_short_term_to_em2mem
 from online_pipeline.active_session import session_is_active_or_allowed
 from online_pipeline.runtime_state import WorkerTaskHeartbeat, refresh_session_pipeline_state, write_worker_runtime
 from online_pipeline.stream_timeline import append_timeline_event
@@ -42,7 +42,7 @@ def run_worker(
     *,
     sessions_root: Path,
     backend: str,
-    update_worldmm: bool,
+    update_em2mem: bool,
     interval_seconds: float,
     limit_windows: int | None,
     once: bool,
@@ -52,7 +52,7 @@ def run_worker(
     project_root = Path(__file__).resolve().parent
     last_task_id = None
     last_error = None
-    model_name = os.getenv("WORLDMM_MST_EPISODIC_MODEL") or os.getenv("WORLDMM_MEMORY_MODEL") or os.getenv("OPENAI_MODEL")
+    model_name = os.getenv("EM2MEM_MST_EPISODIC_MODEL") or os.getenv("EM2MEM_MEMORY_MODEL") or os.getenv("OPENAI_MODEL")
 
     def _queue_pending() -> int:
         return len(list_queued_mst_consolidation_tasks(project_root))
@@ -66,7 +66,7 @@ def run_worker(
         client_loaded=backend == "openai",
         warmup_done=True,
         queue_pending=_queue_pending(),
-        extra={"update_worldmm": update_worldmm},
+        extra={"update_em2mem": update_em2mem},
     )
     while True:
         results = []
@@ -85,14 +85,14 @@ def run_worker(
                     "consolidation",
                     status="busy",
                     backend=str(task.get("backend") or backend),
-                    model_name=os.getenv("WORLDMM_MST_EPISODIC_MODEL") or os.getenv("WORLDMM_MEMORY_MODEL") or os.getenv("OPENAI_MODEL"),
+                    model_name=os.getenv("EM2MEM_MST_EPISODIC_MODEL") or os.getenv("EM2MEM_MEMORY_MODEL") or os.getenv("OPENAI_MODEL"),
                     client_loaded=(str(task.get("backend") or backend) == "openai"),
                     warmup_done=True,
                     queue_pending=len(list_queued_mst_consolidation_tasks(project_root)),
                     last_task_id=task_id,
-                    extra={"session_id": session_id, "update_worldmm": bool(task.get("update_worldmm", update_worldmm))},
+                    extra={"session_id": session_id, "update_em2mem": bool(task.get("update_em2mem", update_em2mem))},
                 )
-                requested_update_worldmm = bool(task.get("update_worldmm", update_worldmm))
+                requested_update_em2mem = bool(task.get("update_em2mem", update_em2mem))
                 task_backend = str(task.get("backend") or backend)
                 with WorkerTaskHeartbeat(
                     project_root,
@@ -105,14 +105,14 @@ def run_worker(
                     client_loaded=task_backend == "openai",
                     warmup_done=True,
                     queue_pending=_queue_pending,
-                    extra={"session_id": session_id, "update_worldmm": requested_update_worldmm},
-                    interval_env="WORLDMM_MST_CONSOLIDATION_HEARTBEAT_SECONDS",
+                    extra={"session_id": session_id, "update_em2mem": requested_update_em2mem},
+                    interval_env="EM2MEM_MST_CONSOLIDATION_HEARTBEAT_SECONDS",
                 ):
-                    result = consolidate_short_term_to_worldmm(
+                    result = consolidate_short_term_to_em2mem(
                         session_id=session_id,
                         sessions_root=sessions_root,
                         backend=task_backend,
-                        update_worldmm=False,
+                        update_em2mem=False,
                         force=bool(task.get("force", False)),
                         limit_windows=task.get("limit_windows") or limit_windows,
                         window_start=task.get("window_start"),
@@ -120,13 +120,13 @@ def run_worker(
                         verbose=verbose,
                     )
                 generated_episode_ids = result.get("generated_episode_ids") if isinstance(result.get("generated_episode_ids"), list) else []
-                if requested_update_worldmm and generated_episode_ids:
+                if requested_update_em2mem and generated_episode_ids:
                     memory_task = enqueue_memory_task(
                         project_root=project_root,
                         session_id=session_id,
                         force=bool(task.get("force", False)),
-                        skip_visual_embedding=os.getenv("WORLDMM_SKIP_VISUAL_EMBEDDING", "1").lower() in {"1", "true", "yes", "on"},
-                        skip_semantic=os.getenv("WORLDMM_SKIP_SEMANTIC_MEMORY", "0").lower() in {"1", "true", "yes", "on"},
+                        skip_visual_embedding=os.getenv("EM2MEM_SKIP_VISUAL_EMBEDDING", "1").lower() in {"1", "true", "yes", "on"},
+                        skip_semantic=os.getenv("EM2MEM_SKIP_SEMANTIC_MEMORY", "0").lower() in {"1", "true", "yes", "on"},
                         source="mst_episodic",
                         update_mode="incremental_append",
                         append_ready_episodes=True,
@@ -134,15 +134,15 @@ def run_worker(
                         reason=str(task.get("reason") or "mst_consolidation"),
                     )
                     result["memory_task_path"] = str(memory_task)
-                    result["updated_worldmm"] = False
+                    result["updated_em2mem"] = False
                     result["memory_update_queued"] = True
                     append_timeline_event(
                         sessions_root / session_id,
                         "memory_append_queued",
                         metadata={"task_id": memory_task.stem, "episode_ids": generated_episode_ids},
                     )
-                elif requested_update_worldmm:
-                    result["updated_worldmm"] = False
+                elif requested_update_em2mem:
+                    result["updated_em2mem"] = False
                     result["memory_update_queued"] = False
                     result["memory_skip_reason"] = "no newly generated episodes"
                 if str(task.get("reason") or "") == "transcript_backfill" and task.get("window_start") is not None and task.get("window_end") is not None:
@@ -196,26 +196,26 @@ def run_worker(
                     client_loaded=backend == "openai",
                     warmup_done=True,
                     queue_pending=_queue_pending,
-                    extra={"session_id": session_dir.name, "update_worldmm": update_worldmm, "ready_window_count": ready_count},
-                    interval_env="WORLDMM_MST_CONSOLIDATION_HEARTBEAT_SECONDS",
+                    extra={"session_id": session_dir.name, "update_em2mem": update_em2mem, "ready_window_count": ready_count},
+                    interval_env="EM2MEM_MST_CONSOLIDATION_HEARTBEAT_SECONDS",
                 ):
-                    result = consolidate_short_term_to_worldmm(
+                    result = consolidate_short_term_to_em2mem(
                         session_id=session_dir.name,
                         sessions_root=sessions_root,
                         backend=backend,
-                        update_worldmm=False,
+                        update_em2mem=False,
                         force=False,
                         limit_windows=limit_windows,
                         verbose=verbose,
                     )
                 generated_episode_ids = result.get("generated_episode_ids") if isinstance(result.get("generated_episode_ids"), list) else []
-                if update_worldmm and generated_episode_ids:
+                if update_em2mem and generated_episode_ids:
                     memory_task = enqueue_memory_task(
                         project_root=project_root,
                         session_id=session_dir.name,
                         force=False,
-                        skip_visual_embedding=os.getenv("WORLDMM_SKIP_VISUAL_EMBEDDING", "1").lower() in {"1", "true", "yes", "on"},
-                        skip_semantic=os.getenv("WORLDMM_SKIP_SEMANTIC_MEMORY", "0").lower() in {"1", "true", "yes", "on"},
+                        skip_visual_embedding=os.getenv("EM2MEM_SKIP_VISUAL_EMBEDDING", "1").lower() in {"1", "true", "yes", "on"},
+                        skip_semantic=os.getenv("EM2MEM_SKIP_SEMANTIC_MEMORY", "0").lower() in {"1", "true", "yes", "on"},
                         source="mst_episodic",
                         update_mode="incremental_append",
                         append_ready_episodes=True,
@@ -223,15 +223,15 @@ def run_worker(
                         reason="mst_consolidation_scan",
                     )
                     result["memory_task_path"] = str(memory_task)
-                    result["updated_worldmm"] = False
+                    result["updated_em2mem"] = False
                     result["memory_update_queued"] = True
                     append_timeline_event(
                         session_dir,
                         "memory_append_queued",
                         metadata={"task_id": memory_task.stem, "episode_ids": generated_episode_ids},
                     )
-                elif update_worldmm:
-                    result["updated_worldmm"] = False
+                elif update_em2mem:
+                    result["updated_em2mem"] = False
                     result["memory_update_queued"] = False
                     result["memory_skip_reason"] = "no newly generated episodes"
                 results.append(result)
@@ -255,7 +255,7 @@ def run_worker(
                 "status": "ok",
                 "updated_at": utc_now_iso(),
                 "backend": backend,
-                "update_worldmm": update_worldmm,
+                "update_em2mem": update_em2mem,
                 "last_results": results[-20:],
             },
         )
@@ -264,13 +264,13 @@ def run_worker(
             "consolidation",
             status="ready",
             backend=backend,
-            model_name=os.getenv("WORLDMM_MST_EPISODIC_MODEL") or os.getenv("WORLDMM_MEMORY_MODEL") or os.getenv("OPENAI_MODEL"),
+            model_name=os.getenv("EM2MEM_MST_EPISODIC_MODEL") or os.getenv("EM2MEM_MEMORY_MODEL") or os.getenv("OPENAI_MODEL"),
             client_loaded=backend == "openai",
             warmup_done=True,
             queue_pending=len(list_queued_mst_consolidation_tasks(project_root)),
             last_task_id=last_task_id,
             last_error=last_error,
-            extra={"update_worldmm": update_worldmm, "last_results": results[-5:]},
+            extra={"update_em2mem": update_em2mem, "last_results": results[-5:]},
         )
         if once:
             return
@@ -280,9 +280,9 @@ def run_worker(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Poll refined-ready M_st windows and consolidate them into 30s episodic memory.")
     parser.add_argument("--sessions-root", default=str(DEFAULT_SESSIONS_ROOT))
-    parser.add_argument("--backend", default=os.getenv("WORLDMM_MST_EPISODIC_BACKEND", "openai"), choices=["openai", "rule", "mock"])
-    parser.add_argument("--update-worldmm", action="store_true", default=os.getenv("WORLDMM_MST_CONSOLIDATE_UPDATE_WORLDMM", "1").lower() in {"1", "true", "yes", "on"})
-    parser.add_argument("--interval-seconds", type=float, default=float(os.getenv("WORLDMM_MST_CONSOLIDATION_INTERVAL_SECONDS", "30")))
+    parser.add_argument("--backend", default=os.getenv("EM2MEM_MST_EPISODIC_BACKEND", "openai"), choices=["openai", "rule", "mock"])
+    parser.add_argument("--update-em2mem", action="store_true", default=os.getenv("EM2MEM_MST_CONSOLIDATE_UPDATE_EM2MEM", "1").lower() in {"1", "true", "yes", "on"})
+    parser.add_argument("--interval-seconds", type=float, default=float(os.getenv("EM2MEM_MST_CONSOLIDATION_INTERVAL_SECONDS", "30")))
     parser.add_argument("--limit-windows", type=int, default=None)
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--verbose", action="store_true")
@@ -290,7 +290,7 @@ def main() -> None:
     run_worker(
         sessions_root=Path(args.sessions_root),
         backend=args.backend,
-        update_worldmm=bool(args.update_worldmm),
+        update_em2mem=bool(args.update_em2mem),
         interval_seconds=args.interval_seconds,
         limit_windows=args.limit_windows,
         once=args.once,

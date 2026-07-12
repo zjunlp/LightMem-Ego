@@ -13,7 +13,7 @@ DEFAULT_SESSIONS_ROOT = PROJECT_ROOT / "online_sessions"
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Incrementally append MST 30s episodes into WorldMM long-term memory.")
+    parser = argparse.ArgumentParser(description="Incrementally append MST 30s episodes into Em2Mem long-term memory.")
     parser.add_argument("--session-id", required=True)
     parser.add_argument("--sessions-root", default=str(DEFAULT_SESSIONS_ROOT))
     parser.add_argument("--episode-id", action="append", dest="episode_ids", default=None)

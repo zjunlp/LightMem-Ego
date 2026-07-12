@@ -28,8 +28,8 @@ def _is_placeholder_path(value: str | None) -> bool:
 def _resolve_model_path(explicit: str | None = None) -> str:
     for value in (
         explicit,
-        os.getenv("WORLDMM_VLM2VEC_MODEL_PATH"),
-        os.getenv("WORLDMM_VIS_EMBED_MODEL"),
+        os.getenv("EM2MEM_VLM2VEC_MODEL_PATH"),
+        os.getenv("EM2MEM_VIS_EMBED_MODEL"),
         str(PROJECT_ROOT / "models" / "VLM2Vec-V2.0"),
     ):
         if not _is_placeholder_path(value):
@@ -39,7 +39,7 @@ def _resolve_model_path(explicit: str | None = None) -> str:
 
 def _configure_hf_local_first() -> None:
     """Prefer local HuggingFace files; allow network only when explicitly requested."""
-    allow_download = os.getenv("WORLDMM_ALLOW_HF_DOWNLOAD", "0").strip().lower() in {"1", "true", "yes"}
+    allow_download = os.getenv("EM2MEM_ALLOW_HF_DOWNLOAD", "0").strip().lower() in {"1", "true", "yes"}
     if allow_download:
         return
     os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
@@ -58,7 +58,7 @@ class VLM2VecRuntime:
     """Reusable visual embedding runtime.
 
     `mock` is deterministic and lightweight for structure tests.
-    `vlm2vec` reuses WorldMM's EmbeddingModel wrapper and loads the model once.
+    `vlm2vec` reuses Em2Mem's EmbeddingModel wrapper and loads the model once.
     `remote` calls a long-running VLM2Vec embedding HTTP service.
     """
 
@@ -72,18 +72,18 @@ class VLM2VecRuntime:
         normalize: bool = True,
         mock_dim: int = 256,
     ) -> None:
-        self.backend = (backend or os.getenv("WORLDMM_VISUAL_BACKEND") or "vlm2vec").strip().lower()
+        self.backend = (backend or os.getenv("EM2MEM_VISUAL_BACKEND") or "vlm2vec").strip().lower()
         self.model_path = _resolve_model_path(model_path)
-        self.device = device or os.getenv("WORLDMM_VLM2VEC_DEVICE") or "cuda"
-        self.dtype = dtype or os.getenv("WORLDMM_VLM2VEC_DTYPE") or "float16"
-        self.batch_size = int(batch_size or os.getenv("WORLDMM_VISUAL_BATCH_SIZE") or 8)
+        self.device = device or os.getenv("EM2MEM_VLM2VEC_DEVICE") or "cuda"
+        self.dtype = dtype or os.getenv("EM2MEM_VLM2VEC_DTYPE") or "float16"
+        self.batch_size = int(batch_size or os.getenv("EM2MEM_VISUAL_BATCH_SIZE") or 8)
         self.normalize = normalize
         self.mock_dim = mock_dim
         self.remote_url = (
-            os.getenv("WORLDMM_VLM2VEC_EMBED_URL")
-            or f"http://{os.getenv('WORLDMM_VLM2VEC_EMBED_HOST', '127.0.0.1')}:{os.getenv('WORLDMM_VLM2VEC_EMBED_PORT', '18091')}"
+            os.getenv("EM2MEM_VLM2VEC_EMBED_URL")
+            or f"http://{os.getenv('EM2MEM_VLM2VEC_EMBED_HOST', '127.0.0.1')}:{os.getenv('EM2MEM_VLM2VEC_EMBED_PORT', '18091')}"
         ).rstrip("/")
-        self.remote_timeout = float(os.getenv("WORLDMM_VLM2VEC_EMBED_TIMEOUT_SECONDS", "300") or 300)
+        self.remote_timeout = float(os.getenv("EM2MEM_VLM2VEC_EMBED_TIMEOUT_SECONDS", "300") or 300)
         self._embedding_model = None
         self._session: requests.Session | None = None
 
@@ -92,14 +92,14 @@ class VLM2VecRuntime:
         if self.backend == "vlm2vec" and not Path(self.model_path).exists():
             raise FileNotFoundError(
                 f"VLM2Vec model path not found: {self.model_path}. "
-                "Set WORLDMM_VLM2VEC_MODEL_PATH or use --backend mock."
+                "Set EM2MEM_VLM2VEC_MODEL_PATH or use --backend mock."
             )
 
     @property
     def model(self):
         if self._embedding_model is None:
             _configure_hf_local_first()
-            from worldmm.embedding import EmbeddingModel
+            from em2mem.embedding import EmbeddingModel
 
             self._embedding_model = EmbeddingModel(vis_model_name=self.model_path, device=self.device)
             self._embedding_model.load_model(model_type="vision")
@@ -128,7 +128,7 @@ class VLM2VecRuntime:
     def ping_remote(self) -> dict:
         import time
 
-        deadline = time.monotonic() + float(os.getenv("WORLDMM_VLM2VEC_EMBED_READY_TIMEOUT_SECONDS", "900") or 900)
+        deadline = time.monotonic() + float(os.getenv("EM2MEM_VLM2VEC_EMBED_READY_TIMEOUT_SECONDS", "900") or 900)
         last_error: BaseException | None = None
         while True:
             try:
@@ -139,7 +139,7 @@ class VLM2VecRuntime:
                 last_error = exc
                 if time.monotonic() >= deadline:
                     break
-                time.sleep(float(os.getenv("WORLDMM_VLM2VEC_EMBED_READY_POLL_SECONDS", "2") or 2))
+                time.sleep(float(os.getenv("EM2MEM_VLM2VEC_EMBED_READY_POLL_SECONDS", "2") or 2))
         raise RuntimeError(f"VLM2Vec embedding service is not ready at {self.remote_url}: {last_error}")
 
     def _mock_vector(self, text: str) -> np.ndarray:
@@ -221,11 +221,11 @@ def get_global_vlm2vec_runtime(
 ) -> VLM2VecRuntime:
     global _GLOBAL_RUNTIME, _GLOBAL_RUNTIME_KEY
     key = (
-        backend or os.getenv("WORLDMM_VISUAL_BACKEND") or "vlm2vec",
+        backend or os.getenv("EM2MEM_VISUAL_BACKEND") or "vlm2vec",
         _resolve_model_path(model_path),
-        device or os.getenv("WORLDMM_VLM2VEC_DEVICE") or "cuda",
-        dtype or os.getenv("WORLDMM_VLM2VEC_DTYPE") or "float16",
-        int(batch_size or os.getenv("WORLDMM_VISUAL_BATCH_SIZE") or 8),
+        device or os.getenv("EM2MEM_VLM2VEC_DEVICE") or "cuda",
+        dtype or os.getenv("EM2MEM_VLM2VEC_DTYPE") or "float16",
+        int(batch_size or os.getenv("EM2MEM_VISUAL_BATCH_SIZE") or 8),
         normalize,
     )
     if _GLOBAL_RUNTIME is None or _GLOBAL_RUNTIME_KEY != key:

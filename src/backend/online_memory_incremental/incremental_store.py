@@ -9,12 +9,12 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any
 
-from online_memory.evidence_to_worldmm import (
+from online_memory.evidence_to_em2mem import (
     build_multiscale_caption_items,
     evidence_doc_to_caption_item,
     load_online_evidence,
 )
-from online_memory.worldmm_layout import WorldMMOnlineLayout, ensure_worldmm_layout, seconds_to_hhmmssff
+from online_memory.em2mem_layout import Em2MemOnlineLayout, ensure_em2mem_layout, seconds_to_hhmmssff
 from online_preprocess.io_utils import ensure_dir, read_json, relative_to_session, utc_now_iso, write_json_atomic
 
 from .append_log import MemoryAppendLog
@@ -36,7 +36,7 @@ for _path in (PROJECT_ROOT / "src", PROJECT_ROOT / "src" / "HippoRAG" / "src"):
 class IncrementalAppendResult:
     status: str
     session_id: str
-    worldmm_update_mode: str
+    em2mem_update_mode: str
     fast_memory_version: int | None
     appended_episode_ids: list[str]
     skipped_episode_ids: list[str]
@@ -155,10 +155,10 @@ class IncrementalMemoryAppender:
         self.sessions_root = Path(sessions_root)
         self.session_dir = self.sessions_root / session_id
         self.project_root = Path(project_root) if project_root else Path(__file__).resolve().parents[1]
-        self.model_name = model_name or os.getenv("WORLDMM_MEMORY_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-5.4"
+        self.model_name = model_name or os.getenv("EM2MEM_MEMORY_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-5.4"
         self.verbose = verbose
-        self.layout = WorldMMOnlineLayout(session_dir=self.session_dir, session_id=session_id)
-        self.incremental_root = self.session_dir / "worldmm" / "incremental"
+        self.layout = Em2MemOnlineLayout(session_dir=self.session_dir, session_id=session_id)
+        self.incremental_root = self.session_dir / "em2mem" / "incremental"
         self.append_log = MemoryAppendLog(self.incremental_root / "memory_append_log.jsonl")
         self.dirty_manager = DirtyWindowManager(self.session_dir)
 
@@ -210,14 +210,14 @@ class IncrementalMemoryAppender:
         return data if isinstance(data, dict) else {}
 
     def _ensure_base_layout(self) -> None:
-        ensure_worldmm_layout(self.layout)
+        ensure_em2mem_layout(self.layout)
         ensure_dir(self.incremental_root)
         ensure_dir(self.incremental_root / "graph" / "deltas")
         ensure_dir(self.incremental_root / "semantic" / "deltas")
         ensure_dir(self.incremental_root / "visual")
 
     def load_mst_episodes(self) -> list[dict[str, Any]]:
-        return _load_json_list(self.session_dir / "worldmm" / "mst_episodic" / "mst_30sec_episodes.json")
+        return _load_json_list(self.session_dir / "em2mem" / "mst_episodic" / "mst_30sec_episodes.json")
 
     def _episode_filter(self, episode_ids: list[str] | None) -> set[str] | None:
         if not episode_ids:
@@ -302,17 +302,17 @@ class IncrementalMemoryAppender:
         return clean_ids
 
     def _maybe_rewrite_dirty_windows_with_llm(self, rebuilt_dirty: dict[str, dict[str, Any]], caption_30s: list[dict[str, Any]], level: str) -> None:
-        backend = (os.getenv("WORLDMM_INCREMENTAL_DIRTY_MULTISCALE_BACKEND") or os.getenv("WORLDMM_MEMORY_GENERATION_BACKEND") or "llm").strip().lower()
+        backend = (os.getenv("EM2MEM_INCREMENTAL_DIRTY_MULTISCALE_BACKEND") or os.getenv("EM2MEM_MEMORY_GENERATION_BACKEND") or "llm").strip().lower()
         if backend != "llm" or not rebuilt_dirty:
             for item in rebuilt_dirty.values():
                 item["generation_backend"] = item.get("generation_backend") or "rule_incremental_dirty_window"
             return
-        max_windows = _safe_int(os.getenv("WORLDMM_INCREMENTAL_DIRTY_LLM_MAX_WINDOWS"), 4)
+        max_windows = _safe_int(os.getenv("EM2MEM_INCREMENTAL_DIRTY_LLM_MAX_WINDOWS"), 4)
         if max_windows <= 0:
             return
-        from worldmm.llm import LLMModel
+        from em2mem.llm import LLMModel
 
-        llm = LLMModel(model_name=self.model_name, max_retries=_safe_int(os.getenv("WORLDMM_MEMORY_LLM_RETRIES"), 2))
+        llm = LLMModel(model_name=self.model_name, max_retries=_safe_int(os.getenv("EM2MEM_MEMORY_LLM_RETRIES"), 2))
         for idx, item in enumerate(rebuilt_dirty.values()):
             if idx >= max_windows:
                 item["generation_backend"] = item.get("generation_backend") or "rule_incremental_dirty_window_over_limit"
@@ -365,7 +365,7 @@ class IncrementalMemoryAppender:
                 },
             ]
             try:
-                response = llm.generate(prompt, max_tokens=_safe_int(os.getenv("WORLDMM_INCREMENTAL_DIRTY_LLM_MAX_TOKENS"), 900))
+                response = llm.generate(prompt, max_tokens=_safe_int(os.getenv("EM2MEM_INCREMENTAL_DIRTY_LLM_MAX_TOKENS"), 900))
                 data = _extract_json_object(response)
                 rewritten_text = re.sub(r"\s+", " ", str(data.get("text") or "")).strip()
                 if rewritten_text:
@@ -397,9 +397,9 @@ class IncrementalMemoryAppender:
         )
 
     def _refresh_hipporag_cache_isolated(self, *, force: bool = False) -> dict[str, Any]:
-        if not _env_bool("WORLDMM_INCREMENTAL_REFRESH_HIPPORAG_CACHE", True):
+        if not _env_bool("EM2MEM_INCREMENTAL_REFRESH_HIPPORAG_CACHE", True):
             return {"status": "disabled", "healthy": None}
-        if not _env_bool("WORLDMM_INCREMENTAL_HIPPORAG_REFRESH_SUBPROCESS", True):
+        if not _env_bool("EM2MEM_INCREMENTAL_HIPPORAG_REFRESH_SUBPROCESS", True):
             return refresh_hipporag_cache(
                 session_dir=self.session_dir,
                 project_root=self.project_root,
@@ -466,18 +466,18 @@ class IncrementalMemoryAppender:
                 "latest_fast_ready_version": version,
                 "building_memory_version": None,
                 "memory_build_state": "ready",
-                "worldmm_update_mode": "incremental_append",
-                "pipeline_mode": os.getenv("WORLDMM_PIPELINE_MODE", "mst"),
+                "em2mem_update_mode": "incremental_append",
+                "pipeline_mode": os.getenv("EM2MEM_PIPELINE_MODE", "mst"),
                 "active_30s_source": "mst_session_30sec_captioned",
-                "worldmm_30s_input_source": "mst_session_30sec_captioned",
+                "em2mem_30s_input_source": "mst_session_30sec_captioned",
                 "episodic_source": "mst_micro_events",
                 "mst_episodic_ready": True,
                 "legacy_evidence_used": False,
                 "legacy_evidence_fallback_used": False,
-                "caption_root": "worldmm/caption_root",
-                "sidecar_root": "worldmm/sidecar_root",
-                "semantic_root": "worldmm/semantic_root",
-                "visual_root": config.get("visual_root") or "worldmm/visual",
+                "caption_root": "em2mem/caption_root",
+                "sidecar_root": "em2mem/sidecar_root",
+                "semantic_root": "em2mem/semantic_root",
+                "visual_root": config.get("visual_root") or "em2mem/visual",
                 "evidence_path": "evidence/mst_session_evidence.json",
                 "captioned_30sec_path": "captions/mst_session_30sec_captioned.json",
                 "mst_captioned_30sec_path": "captions/mst_session_30sec_captioned.json",
@@ -519,13 +519,13 @@ class IncrementalMemoryAppender:
                     "respond_model": config.get("query_rag_args", {}).get("respond_model") if isinstance(config.get("query_rag_args"), dict) else self.model_name,
                     "until_date": "DAY1",
                     "until_time": _max_end_hhmmss(caption_30s),
-                    "episodic_caption_root": "worldmm/caption_root",
-                    "episodic_sidecar_root": "worldmm/sidecar_root",
-                    "semantic_root": "worldmm/semantic_root",
-                    "visual_root": config.get("query_rag_args", {}).get("visual_root", "worldmm/embeddings") if isinstance(config.get("query_rag_args"), dict) else "worldmm/embeddings",
-                    "visual_evidence_file": "worldmm/visual_root/session_visual_evidence.json",
+                    "episodic_caption_root": "em2mem/caption_root",
+                    "episodic_sidecar_root": "em2mem/sidecar_root",
+                    "semantic_root": "em2mem/semantic_root",
+                    "visual_root": config.get("query_rag_args", {}).get("visual_root", "em2mem/embeddings") if isinstance(config.get("query_rag_args"), dict) else "em2mem/embeddings",
+                    "visual_evidence_file": "em2mem/visual_root/session_visual_evidence.json",
                 },
-                "worldmm_files": {
+                "em2mem_files": {
                     "caption_30sec": relative_to_session(self.layout.caption_30sec_path, self.session_dir),
                     "caption_3min": relative_to_session(self.layout.caption_3min_path, self.session_dir) if self.layout.caption_3min_path.exists() else None,
                     "caption_10min": relative_to_session(self.layout.caption_10min_path, self.session_dir) if self.layout.caption_10min_path.exists() else None,
@@ -562,7 +562,7 @@ class IncrementalMemoryAppender:
             return IncrementalAppendResult(
                 status="dry_run",
                 session_id=self.session_id,
-                worldmm_update_mode="incremental_append",
+                em2mem_update_mode="incremental_append",
                 fast_memory_version=None,
                 appended_episode_ids=sorted(candidates),
                 skipped_episode_ids=skipped_ids,
@@ -578,7 +578,7 @@ class IncrementalMemoryAppender:
         if not candidates:
             state = self.append_log.write_state(self.append_state_path, self.session_id)
             hipporag_health = inspect_hipporag_cache_health(self.session_dir, self.project_root)
-            if not hipporag_health.get("healthy") and _env_bool("WORLDMM_INCREMENTAL_REFRESH_HIPPORAG_CACHE_ON_NOOP", False):
+            if not hipporag_health.get("healthy") and _env_bool("EM2MEM_INCREMENTAL_REFRESH_HIPPORAG_CACHE_ON_NOOP", False):
                 try:
                     hipporag_health = self._refresh_hipporag_cache_isolated(force=False).get("after", hipporag_health)
                 except Exception as exc:
@@ -586,7 +586,7 @@ class IncrementalMemoryAppender:
             return IncrementalAppendResult(
                 status="ok",
                 session_id=self.session_id,
-                worldmm_update_mode="incremental_append",
+                em2mem_update_mode="incremental_append",
                 fast_memory_version=_safe_int(self.load_memory_config().get("latest_fast_ready_version") or self.load_memory_config().get("latest_ready_memory_version"), 0),
                 appended_episode_ids=[],
                 skipped_episode_ids=skipped_ids,
@@ -637,7 +637,7 @@ class IncrementalMemoryAppender:
         self.dirty_manager.mark_clean(clean_ids)
 
         visual_task_path = None
-        if _env_bool("WORLDMM_AUTO_VISUAL_EMBEDDING", True):
+        if _env_bool("EM2MEM_AUTO_VISUAL_EMBEDDING", True):
             _log_stage(self.session_id, "visual_enqueue", target_version=target_version, keyframe_count=len(keyframe_paths))
             visual_task_path = self._write_visual_task(
                 episode_ids=[str(ep.get("episode_id")) for ep in episodes],
@@ -651,7 +651,7 @@ class IncrementalMemoryAppender:
                 visual_task_path=str(visual_task_path) if visual_task_path else None,
             )
         else:
-            _log_stage(self.session_id, "visual_skip", reason="WORLDMM_AUTO_VISUAL_EMBEDDING=0", target_version=target_version, keyframe_count=len(keyframe_paths))
+            _log_stage(self.session_id, "visual_skip", reason="EM2MEM_AUTO_VISUAL_EMBEDDING=0", target_version=target_version, keyframe_count=len(keyframe_paths))
         visual_lagging = visual_task_path is not None
 
         # Publish the fast episodic snapshot before slow graph/semantic/cache work.
@@ -813,7 +813,7 @@ class IncrementalMemoryAppender:
         return IncrementalAppendResult(
             status="ok",
             session_id=self.session_id,
-            worldmm_update_mode="incremental_append",
+            em2mem_update_mode="incremental_append",
             fast_memory_version=target_version,
             appended_episode_ids=appended_ids,
             skipped_episode_ids=skipped_ids,

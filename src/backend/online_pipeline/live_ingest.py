@@ -40,12 +40,12 @@ def choose_live_source_url(live_source: dict[str, Any]) -> str:
 def choose_effective_live_pull_url(live_source: dict[str, Any], fallback_url: str = "") -> tuple[str, str, bool]:
     """Return the worker-only pull URL and its source.
 
-    `WORLDMM_LIVE_PULL_BASE_URL` lets isolated compute nodes pull via a local
+    `EM2MEM_LIVE_PULL_BASE_URL` lets isolated compute nodes pull via a local
     tunnel, e.g. rtmp://127.0.0.1:11935/live/<stream_name>, without mutating
     live_source.json or frontend-facing public URLs.
     """
     stream_name = str(live_source.get("stream_name") or "").strip()
-    base_override = str(os.getenv("WORLDMM_LIVE_PULL_BASE_URL") or "").strip()
+    base_override = str(os.getenv("EM2MEM_LIVE_PULL_BASE_URL") or "").strip()
     if base_override and stream_name:
         return f"{base_override.rstrip('/')}/{stream_name}", "env_override", True
     internal = str(live_source.get("pull_url_internal") or "").strip()

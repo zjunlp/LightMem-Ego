@@ -164,7 +164,7 @@ def _process_upload_task(
     )
     processing_chunks = [dict(item) for item in upload.get("processing_chunks", []) if isinstance(item, dict)]
     asr_task_path = None
-    stream_asr_enabled = os.getenv("WORLDMM_STREAM_ASR_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"}
+    stream_asr_enabled = os.getenv("EM2MEM_STREAM_ASR_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"}
     if processing_chunks and stream_asr_enabled:
         asr_task_path = enqueue_stream_asr_task(
             project_root=project_root,
@@ -176,7 +176,7 @@ def _process_upload_task(
             processing_chunks=processing_chunks,
             global_start_time=float(upload.get("stream_start_time", processing_chunks[0].get("start_time", 0.0)) or 0.0),
             global_end_time=float(upload.get("stream_end_time", processing_chunks[-1].get("end_time", 0.0)) or 0.0),
-            asr_backend=os.getenv("WORLDMM_STREAM_ASR_BACKEND", "whisperx"),
+            asr_backend=os.getenv("EM2MEM_STREAM_ASR_BACKEND", "whisperx"),
             reason="stream_upload_chunk",
         )
         append_timeline_event(
@@ -346,7 +346,7 @@ def run_worker(args: argparse.Namespace) -> None:
                         "last_session_id": session_id,
                         **_runtime_extra(last_result),
                     },
-                    interval_env="WORLDMM_STREAM_HEARTBEAT_SECONDS",
+                    interval_env="EM2MEM_STREAM_HEARTBEAT_SECONDS",
                 ):
                     if task_type == "stream_end":
                         result = _process_end_task(project_root=project_root, sessions_root=sessions_root, task=task)

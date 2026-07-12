@@ -33,6 +33,6 @@ source "$ROOT_DIR/scripts/env_ffmpeg.sh"
 
 LOG_PATH="logs/api/server.log"
 
-nohup setsid python -m uvicorn api_server:app --host "${WORLDMM_API_HOST:-127.0.0.1}" --port "${WORLDMM_API_PORT:-8000}" > "$LOG_PATH" 2>&1 &
+nohup setsid python -m uvicorn api_server:app --host "${EM2MEM_API_HOST:-127.0.0.1}" --port "${EM2MEM_API_PORT:-8000}" > "$LOG_PATH" 2>&1 &
 echo "$!" > "$PID_PATH"
 echo "[start_api] API server pid=$(cat "$PID_PATH") log=${LOG_PATH}"

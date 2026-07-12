@@ -19,9 +19,9 @@ fi
 # shellcheck disable=SC1091
 source "$ROOT_DIR/scripts/env_ffmpeg.sh"
 
-export WORLDMM_PIPELINE_MODE="${WORLDMM_PIPELINE_MODE:-mst}"
+export EM2MEM_PIPELINE_MODE="${EM2MEM_PIPELINE_MODE:-mst}"
 
-echo "[start_online_stream_worker] WORLDMM_PIPELINE_MODE=${WORLDMM_PIPELINE_MODE}"
+echo "[start_online_stream_worker] EM2MEM_PIPELINE_MODE=${EM2MEM_PIPELINE_MODE}"
 echo "[start_online_stream_worker] task_queue_root=online_tasks/stream_chunk"
 
 exec python online_stream_worker.py "$@"

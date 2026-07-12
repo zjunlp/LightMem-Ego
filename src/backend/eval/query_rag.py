@@ -6,9 +6,9 @@ import logging
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
-from worldmm.embedding import EmbeddingModel
-from worldmm.llm import LLMModel, PromptTemplateManager
-from worldmm.memory import WorldMemory, transform_timestamp
+from em2mem.embedding import EmbeddingModel
+from em2mem.llm import LLMModel, PromptTemplateManager
+from em2mem.memory import EM2Memory, transform_timestamp
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -159,11 +159,11 @@ def build_until_timestamp(day: str, time_code: str) -> int:
     return int(day_digit + str(time_code).zfill(8))
 
 
-def summarize_selected_events(world_memory: WorldMemory, doc_ids: List[str]) -> List[Dict[str, Any]]:
+def summarize_selected_events(em2mem_memory: EM2Memory, doc_ids: List[str]) -> List[Dict[str, Any]]:
     summaries: List[Dict[str, Any]] = []
     for doc_id in doc_ids:
-        entry = world_memory.episodic_memory.get_caption_by_doc_id(doc_id, "30sec")
-        visual_entry = world_memory.visual_memory.get_clip_by_doc_id(doc_id)
+        entry = em2mem_memory.episodic_memory.get_caption_by_doc_id(doc_id, "30sec")
+        visual_entry = em2mem_memory.visual_memory.get_clip_by_doc_id(doc_id)
         if entry is None:
             continue
         summaries.append({
@@ -181,10 +181,10 @@ def summarize_selected_events(world_memory: WorldMemory, doc_ids: List[str]) -> 
     return summaries
 
 
-def summarize_semantic_facts(world_memory: WorldMemory, fact_ids: List[str]) -> List[Dict[str, Any]]:
+def summarize_semantic_facts(em2mem_memory: EM2Memory, fact_ids: List[str]) -> List[Dict[str, Any]]:
     summaries: List[Dict[str, Any]] = []
     for fact_id in fact_ids:
-        entry = world_memory.semantic_memory.triple_id_to_entry.get(fact_id)
+        entry = em2mem_memory.semantic_memory.triple_id_to_entry.get(fact_id)
         if entry is None:
             continue
         summaries.append({
@@ -193,7 +193,7 @@ def summarize_semantic_facts(world_memory: WorldMemory, fact_ids: List[str]) -> 
             "semantic_summary": getattr(entry, "semantic_summary", ""),
             "confidence": float(getattr(entry, "confidence", 0.0)),
             "support_count": int(getattr(entry, "support_count", 0)),
-            "support_event_ids": list(world_memory.semantic_memory.get_support_event_ids(entry, limit=10)),
+            "support_event_ids": list(em2mem_memory.semantic_memory.get_support_event_ids(entry, limit=10)),
             "provenance_root_ids": list(getattr(entry, "provenance_root_ids", []) or []),
         })
     return summaries
@@ -217,7 +217,7 @@ def summarize_retrieved_items(qa_result) -> List[Dict[str, Any]]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run a single RAG query with WorldMemory.")
+    parser = argparse.ArgumentParser(description="Run a single RAG query with EM2Memory.")
     parser.add_argument("--subject", type=str, default="A1_JAKE")
     parser.add_argument("--retriever-model", type=str, default="gpt-5")
     parser.add_argument("--respond-model", type=str, default="gpt-5")
@@ -246,7 +246,7 @@ def main() -> None:
     prompt_template_manager = PromptTemplateManager()
 
     episodic_cache_tag = os.path.basename(os.path.normpath(args.episodic_caption_root))
-    world_memory = WorldMemory(
+    em2mem_memory = EM2Memory(
         embedding_model=embedding_model,
         retriever_llm_model=retriever_llm_model,
         respond_llm_model=respond_llm_model,
@@ -255,7 +255,7 @@ def main() -> None:
         max_errors=3,
         episodic_cache_tag=episodic_cache_tag,
     )
-    world_memory.set_retrieval_top_k(
+    em2mem_memory.set_retrieval_top_k(
         episodic=args.episodic_top_k,
         semantic=args.semantic_top_k,
         visual=args.visual_top_k,
@@ -290,29 +290,29 @@ def main() -> None:
             if os.path.exists(candidate_visual_path):
                 visual_embeddings_path = candidate_visual_path
 
-        world_memory.load_episodic_captions(caption_files=episodic_caption_files)
+        em2mem_memory.load_episodic_captions(caption_files=episodic_caption_files)
         if episodic_triplet_files or episodic_graph_files:
-            world_memory.load_episodic_sidecar(
+            em2mem_memory.load_episodic_sidecar(
                 triplet_files=episodic_triplet_files,
                 graph_files=episodic_graph_files,
             )
-        world_memory.load_semantic_triples(data=semantic_results)
-        world_memory.load_visual_clips(
+        em2mem_memory.load_semantic_triples(data=semantic_results)
+        em2mem_memory.load_visual_clips(
             embeddings_path=visual_embeddings_path,
             clips_data=visual_evidence_data,
         )
 
         until_time = build_until_timestamp(args.until_date, args.until_time)
         choices = parse_choices(args)
-        qa_result = world_memory.answer(
+        qa_result = em2mem_memory.answer(
             query=args.query,
             choices=choices,
             until_time=until_time,
             answer_mode=args.answer_mode,
         )
 
-        selected_events = summarize_selected_events(world_memory, qa_result.selected_doc_ids)
-        supporting_semantic_facts = summarize_semantic_facts(world_memory, qa_result.semantic_fact_ids)
+        selected_events = summarize_selected_events(em2mem_memory, qa_result.selected_doc_ids)
+        supporting_semantic_facts = summarize_semantic_facts(em2mem_memory, qa_result.semantic_fact_ids)
         retrieved_items_summary = summarize_retrieved_items(qa_result)
 
         result = {
@@ -355,7 +355,7 @@ def main() -> None:
                 json.dump(result, f, ensure_ascii=False, indent=2)
     finally:
         try:
-            world_memory.cleanup()
+            em2mem_memory.cleanup()
         except Exception:
             pass
 

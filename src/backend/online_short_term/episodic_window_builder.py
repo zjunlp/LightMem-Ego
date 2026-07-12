@@ -80,9 +80,9 @@ def _normalize_reasoning_effort(value: Any) -> str:
 
 
 def _reasoning_effort_kwargs() -> dict[str, Any]:
-    if os.getenv("WORLDMM_OPENAI_DISABLE_REASONING", "1").strip().lower() in {"1", "true", "yes", "on"}:
+    if os.getenv("EM2MEM_OPENAI_DISABLE_REASONING", "1").strip().lower() in {"1", "true", "yes", "on"}:
         return {"reasoning_effort": "none"}
-    effort = os.getenv("WORLDMM_CHAT_REASONING_EFFORT") or os.getenv("WORLDMM_OPENAI_REASONING_EFFORT") or "none"
+    effort = os.getenv("EM2MEM_CHAT_REASONING_EFFORT") or os.getenv("EM2MEM_OPENAI_REASONING_EFFORT") or "none"
     return {"reasoning_effort": _normalize_reasoning_effort(effort)}
 
 
@@ -184,10 +184,10 @@ class MSTEpisodicWindowBuilder:
         timeout: float | None = None,
         retries: int | None = None,
     ) -> None:
-        self.backend = (backend or os.getenv("WORLDMM_MST_EPISODIC_BACKEND", "openai")).strip().lower()
-        self.model = model or os.getenv("WORLDMM_MST_EPISODIC_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-5.4"
-        self.timeout = float(timeout or os.getenv("WORLDMM_MST_EPISODIC_TIMEOUT", "120"))
-        self.retries = int(retries if retries is not None else os.getenv("WORLDMM_MST_EPISODIC_RETRIES", "3"))
+        self.backend = (backend or os.getenv("EM2MEM_MST_EPISODIC_BACKEND", "openai")).strip().lower()
+        self.model = model or os.getenv("EM2MEM_MST_EPISODIC_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-5.4"
+        self.timeout = float(timeout or os.getenv("EM2MEM_MST_EPISODIC_TIMEOUT", "120"))
+        self.retries = int(retries if retries is not None else os.getenv("EM2MEM_MST_EPISODIC_RETRIES", "3"))
         self._client = None
 
     def build_episode(
@@ -371,7 +371,7 @@ class MSTEpisodicWindowBuilder:
         try:
             from openai import OpenAI
         except ImportError as exc:
-            raise RuntimeError("openai package is required for WORLDMM_MST_EPISODIC_BACKEND=openai") from exc
+            raise RuntimeError("openai package is required for EM2MEM_MST_EPISODIC_BACKEND=openai") from exc
         if self._client is None:
             self._client = OpenAI(
                 api_key=os.getenv("OPENAI_API_KEY"),

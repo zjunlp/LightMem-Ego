@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CONTAINER_NAME="${WORLDMM_SRS_CONTAINER_NAME:-worldmm-srs}"
+CONTAINER_NAME="${EM2MEM_SRS_CONTAINER_NAME:-em2mem-srs}"
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "docker is not installed." >&2

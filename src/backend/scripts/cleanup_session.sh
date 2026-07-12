@@ -47,7 +47,7 @@ if [[ ! "$SESSION_ID" =~ ^[A-Za-z0-9_-]+$ ]]; then
 fi
 
 # Backend project root
-PROJECT_ROOT="${PROJECT_ROOT:-/zjunlp/chenyijun/worldmm-online-server-release}"
+PROJECT_ROOT="${PROJECT_ROOT:-/zjunlp/chenyijun/lightmem_ego-online-server-release}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
 if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then

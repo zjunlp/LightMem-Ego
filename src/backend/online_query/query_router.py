@@ -132,14 +132,14 @@ class QueryRouter:
     ]
 
     def __init__(self, backend: str | None = None) -> None:
-        self.backend = backend or os.getenv("WORLDMM_QUERY_ROUTER_BACKEND", "rule")
-        self.default_retrieval_mode = os.getenv("WORLDMM_QUERY_ROUTER_DEFAULT_RETRIEVAL_MODE", "auto")
-        self.default_use_image = os.getenv("WORLDMM_QUERY_ROUTER_DEFAULT_USE_IMAGE", "auto")
-        self.max_image_evidence = _env_int("WORLDMM_QUERY_ROUTER_MAX_IMAGE_EVIDENCE", 3)
-        self.text_evidence_k = _env_int("WORLDMM_QUERY_ROUTER_TEXT_EVIDENCE_K", 5)
-        self.final_evidence_k = _env_int("WORLDMM_QUERY_ROUTER_FINAL_EVIDENCE_K", 4)
-        self.evidence_frames_k = _env_int("WORLDMM_QUERY_ROUTER_EVIDENCE_FRAMES_K", 5)
-        self.visual_top_k = _env_int("WORLDMM_QUERY_ROUTER_VISUAL_TOP_K", 8)
+        self.backend = backend or os.getenv("EM2MEM_QUERY_ROUTER_BACKEND", "rule")
+        self.default_retrieval_mode = os.getenv("EM2MEM_QUERY_ROUTER_DEFAULT_RETRIEVAL_MODE", "auto")
+        self.default_use_image = os.getenv("EM2MEM_QUERY_ROUTER_DEFAULT_USE_IMAGE", "auto")
+        self.max_image_evidence = _env_int("EM2MEM_QUERY_ROUTER_MAX_IMAGE_EVIDENCE", 3)
+        self.text_evidence_k = _env_int("EM2MEM_QUERY_ROUTER_TEXT_EVIDENCE_K", 5)
+        self.final_evidence_k = _env_int("EM2MEM_QUERY_ROUTER_FINAL_EVIDENCE_K", 4)
+        self.evidence_frames_k = _env_int("EM2MEM_QUERY_ROUTER_EVIDENCE_FRAMES_K", 5)
+        self.visual_top_k = _env_int("EM2MEM_QUERY_ROUTER_VISUAL_TOP_K", 8)
 
     def route(
         self,

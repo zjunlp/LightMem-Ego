@@ -68,11 +68,11 @@ def _resolve_compute_type(compute_type: str, device: str) -> str:
 
 
 def _default_model_dir() -> Path:
-    return Path(os.getenv("WORLDMM_WHISPERX_MODEL_DIR", str(DEFAULT_WHISPERX_MODEL_DIR)))
+    return Path(os.getenv("EM2MEM_WHISPERX_MODEL_DIR", str(DEFAULT_WHISPERX_MODEL_DIR)))
 
 
 def _default_align_model_dir() -> Path:
-    return Path(os.getenv("WORLDMM_WHISPERX_ALIGN_MODEL_DIR", str(DEFAULT_WHISPERX_ALIGN_MODEL_DIR)))
+    return Path(os.getenv("EM2MEM_WHISPERX_ALIGN_MODEL_DIR", str(DEFAULT_WHISPERX_ALIGN_MODEL_DIR)))
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -219,7 +219,7 @@ class WhisperXRuntime:
                 local_align_model = _resolve_align_model_name_or_path(key, self.align_model_dir)
                 if local_align_model:
                     align_kwargs["model_name"] = local_align_model
-                elif not _env_bool("WORLDMM_WHISPERX_ALLOW_ALIGN_DOWNLOAD", False):
+                elif not _env_bool("EM2MEM_WHISPERX_ALLOW_ALIGN_DOWNLOAD", False):
                     return None
                 self.align_models[key] = self.whisperx.load_align_model(**align_kwargs)
             return self.align_models[key]

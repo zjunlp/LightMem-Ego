@@ -34,21 +34,21 @@ class RetrievalPlanner:
         cache_context = cache_context or {}
         query_type = str(memory_decision.get("query_type") or "general_qa")
         memory_route = dict(memory_decision.get("memory_route") or {})
-        top_k = _coerce_positive_int(request_options.get("top_k"), _env_int("WORLDMM_QUERY_ROUTER_TEXT_EVIDENCE_K", 5))
+        top_k = _coerce_positive_int(request_options.get("top_k"), _env_int("EM2MEM_QUERY_ROUTER_TEXT_EVIDENCE_K", 5))
         budgets = self._candidate_budgets(query_type=query_type, base_top_k=top_k)
         mst_top_k = budgets["M_st"]
         mlt_top_k = budgets["M_lt"]
         if request_options.get("text_top_k") is not None:
             mlt_top_k = _coerce_positive_int(request_options.get("text_top_k"), mlt_top_k)
         text_top_k = mlt_top_k
-        visual_top_k = int(request_options.get("visual_top_k") or _env_int("WORLDMM_QUERY_ROUTER_VISUAL_TOP_K", 8))
+        visual_top_k = int(request_options.get("visual_top_k") or _env_int("EM2MEM_QUERY_ROUTER_VISUAL_TOP_K", 8))
         requested_final_k = _coerce_positive_int(
             request_options.get("final_evidence_k"),
-            _env_int("WORLDMM_FINAL_TEXT_EVIDENCE_K", _env_int("WORLDMM_QUERY_ROUTER_FINAL_EVIDENCE_K", 4)),
+            _env_int("EM2MEM_FINAL_TEXT_EVIDENCE_K", _env_int("EM2MEM_QUERY_ROUTER_FINAL_EVIDENCE_K", 4)),
         )
         final_k = self._final_evidence_budget(query_type=query_type, requested=requested_final_k)
-        frames_k = _env_int("WORLDMM_FINAL_EVIDENCE_FRAMES_K", _env_int("WORLDMM_QUERY_ROUTER_EVIDENCE_FRAMES_K", 5))
-        max_images_default = _env_int("WORLDMM_FINAL_MAX_IMAGE_EVIDENCE", _env_int("WORLDMM_QUERY_ROUTER_MAX_IMAGE_EVIDENCE", 3))
+        frames_k = _env_int("EM2MEM_FINAL_EVIDENCE_FRAMES_K", _env_int("EM2MEM_QUERY_ROUTER_EVIDENCE_FRAMES_K", 5))
+        max_images_default = _env_int("EM2MEM_FINAL_MAX_IMAGE_EVIDENCE", _env_int("EM2MEM_QUERY_ROUTER_MAX_IMAGE_EVIDENCE", 3))
 
         mlt_mode = self._default_mlt_mode(query_type)
         retrieval_mode_source = "auto"
@@ -142,14 +142,14 @@ class RetrievalPlanner:
         return "hybrid"
 
     def _candidate_budgets(self, *, query_type: str, base_top_k: int) -> dict[str, int]:
-        mcur = _env_int("WORLDMM_UNIFIED_MCUR_TOP_K", 1)
-        mcache = _env_int("WORLDMM_UNIFIED_MCACHE_TOP_K", 3)
-        mst = max(base_top_k, _env_int("WORLDMM_UNIFIED_MST_TOP_K", 8))
-        mlt = max(base_top_k, _env_int("WORLDMM_UNIFIED_MLT_TOP_K", 8))
+        mcur = _env_int("EM2MEM_UNIFIED_MCUR_TOP_K", 1)
+        mcache = _env_int("EM2MEM_UNIFIED_MCACHE_TOP_K", 3)
+        mst = max(base_top_k, _env_int("EM2MEM_UNIFIED_MST_TOP_K", 8))
+        mlt = max(base_top_k, _env_int("EM2MEM_UNIFIED_MLT_TOP_K", 8))
         if query_type == "current_perception":
             return {"M_cur": max(1, mcur), "M_st": min(mst, 2), "M_lt": min(mlt, 2), "M_cache": min(mcache, 2)}
         if query_type == "temporal_count":
-            temporal_top_k = _env_int("WORLDMM_TEMPORAL_COUNT_TOP_K", 12)
+            temporal_top_k = _env_int("EM2MEM_TEMPORAL_COUNT_TOP_K", 12)
             return {"M_cur": max(1, mcur), "M_st": max(mst, temporal_top_k), "M_lt": max(mlt, temporal_top_k), "M_cache": max(mcache, 3)}
         if query_type in {"recent_recall", "followup"}:
             return {"M_cur": max(1, mcur), "M_st": max(mst, 8), "M_lt": max(mlt, 8), "M_cache": max(mcache, 4)}
@@ -159,12 +159,12 @@ class RetrievalPlanner:
 
     def _final_evidence_budget(self, *, query_type: str, requested: int) -> int:
         if query_type == "current_perception":
-            return min(max(1, requested), _env_int("WORLDMM_CURRENT_FINAL_EVIDENCE_K", 4))
-        default_cap = _env_int("WORLDMM_UNIFIED_FINAL_EVIDENCE_K", 10)
+            return min(max(1, requested), _env_int("EM2MEM_CURRENT_FINAL_EVIDENCE_K", 4))
+        default_cap = _env_int("EM2MEM_UNIFIED_FINAL_EVIDENCE_K", 10)
         if query_type == "temporal_count":
-            default_cap = _env_int("WORLDMM_TEMPORAL_COUNT_FINAL_EVIDENCE_K", 12)
+            default_cap = _env_int("EM2MEM_TEMPORAL_COUNT_FINAL_EVIDENCE_K", 12)
         elif query_type in {"recent_recall", "followup"}:
-            default_cap = _env_int("WORLDMM_RECENT_FINAL_EVIDENCE_K", 10)
+            default_cap = _env_int("EM2MEM_RECENT_FINAL_EVIDENCE_K", 10)
         elif query_type == "long_term_summary":
-            default_cap = _env_int("WORLDMM_SUMMARY_FINAL_EVIDENCE_K", 10)
+            default_cap = _env_int("EM2MEM_SUMMARY_FINAL_EVIDENCE_K", 10)
         return max(requested, default_cap)

@@ -161,7 +161,7 @@ def build_stream_status(project_root: Path, session_dir: Path) -> dict[str, Any]
             "latency": {},
         }
     pipeline_state = read_json(session_dir / "pipeline_state.json", default={})
-    memory_config = read_json(session_dir / "worldmm" / "memory_config.json", default={})
+    memory_config = read_json(session_dir / "em2mem" / "memory_config.json", default={})
     transcript_state = read_json(session_dir / "stream" / "transcript" / "partial_transcript_state.json", default={})
     stream_state = read_json(session_dir / "stream" / "stream_state.json", default={})
     if not isinstance(pipeline_state, dict):
@@ -307,8 +307,8 @@ def build_stream_status(project_root: Path, session_dir: Path) -> dict[str, Any]
         "audio_stream": audio_stream,
         "frame_mst": frame_mst,
         "asr": {
-            "enabled": _as_bool(os.getenv("WORLDMM_STREAM_ASR_ENABLED"), True),
-            "backend": os.getenv("WORLDMM_STREAM_ASR_BACKEND", "whisperx"),
+            "enabled": _as_bool(os.getenv("EM2MEM_STREAM_ASR_ENABLED"), True),
+            "backend": os.getenv("EM2MEM_STREAM_ASR_BACKEND", "whisperx"),
             "pending": asr_pending,
             "done": asr_done,
             "failed": asr_failed,

@@ -7,7 +7,7 @@ This update separates the public Rokid Glass API from the phone/web stream API a
 The default is now:
 
 ```bash
-WORLDMM_SINGLE_ACTIVE_SESSION=0
+EM2MEM_SINGLE_ACTIVE_SESSION=0
 ```
 
 In this mode:
@@ -20,7 +20,7 @@ In this mode:
 To temporarily return to old single-user demo behavior:
 
 ```bash
-WORLDMM_SINGLE_ACTIVE_SESSION=1
+EM2MEM_SINGLE_ACTIVE_SESSION=1
 ```
 
 ## Phone/Web API

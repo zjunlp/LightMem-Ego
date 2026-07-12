@@ -2,7 +2,7 @@
 set -euo pipefail
 
 URL="${1:-rtmp://localhost/live/test_stream}"
-OUTPUT="${2:-/tmp/worldmm_rtmp_frame.jpg}"
+OUTPUT="${2:-/tmp/em2mem_rtmp_frame.jpg}"
 
 if ! command -v ffmpeg >/dev/null 2>&1; then
   echo "ffmpeg is not installed." >&2

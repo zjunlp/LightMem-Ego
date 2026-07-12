@@ -62,9 +62,9 @@ class MSTStore:
         self.refine_dir = self.short_term_dir / "refine"
         self.refine_state_path = self.refine_dir / "refine_state.json"
         self.ready_windows_path = self.refine_dir / "refined_ready_windows.json"
-        self.recent_window_seconds = recent_window_seconds or env_float("WORLDMM_MST_RECENT_WINDOW_SECONDS", 1800.0)
-        self.max_events = max_events or env_int("WORLDMM_MST_MAX_EVENTS", 1000)
-        self.archive_max_events = archive_max_events if archive_max_events is not None else env_int("WORLDMM_MST_ARCHIVE_MAX_EVENTS", 0)
+        self.recent_window_seconds = recent_window_seconds or env_float("EM2MEM_MST_RECENT_WINDOW_SECONDS", 1800.0)
+        self.max_events = max_events or env_int("EM2MEM_MST_MAX_EVENTS", 1000)
+        self.archive_max_events = archive_max_events if archive_max_events is not None else env_int("EM2MEM_MST_ARCHIVE_MAX_EVENTS", 0)
 
     @classmethod
     def from_session(cls, session_id: str, sessions_root: str | Path = DEFAULT_SESSIONS_ROOT) -> "MSTStore":

@@ -64,11 +64,11 @@ def is_auto_refine_eligible(
         return True
     if status != "refine_failed":
         return False
-    max_attempts = _env_int("WORLDMM_MST_REFINE_MAX_ATTEMPTS", 3) if max_attempts is None else int(max_attempts)
+    max_attempts = _env_int("EM2MEM_MST_REFINE_MAX_ATTEMPTS", 3) if max_attempts is None else int(max_attempts)
     if max_attempts >= 0 and refine_attempts(event) >= max_attempts:
         return False
     retry_backoff_seconds = (
-        _env_float("WORLDMM_MST_REFINE_RETRY_BACKOFF_SECONDS", 300.0)
+        _env_float("EM2MEM_MST_REFINE_RETRY_BACKOFF_SECONDS", 300.0)
         if retry_backoff_seconds is None
         else float(retry_backoff_seconds)
     )
@@ -138,7 +138,7 @@ def refine_session(
         force_refine=force_refine,
     )
     refined = []
-    max_concurrency = max(1, int(os.getenv("WORLDMM_REFINE_MAX_CONCURRENCY", "1") or 1))
+    max_concurrency = max(1, int(os.getenv("EM2MEM_REFINE_MAX_CONCURRENCY", "1") or 1))
 
     def _refine_one(event: dict) -> dict:
         return MicroEventRefiner(backend=backend).refine_event(
@@ -200,7 +200,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Refine provisional M_st micro-events asynchronously.")
     parser.add_argument("--session-id", required=True)
     parser.add_argument("--sessions-root", default=str(DEFAULT_SESSIONS_ROOT))
-    parser.add_argument("--backend", default=os.getenv("WORLDMM_MST_REFINE_BACKEND", "openai"), choices=["mock", "openai"])
+    parser.add_argument("--backend", default=os.getenv("EM2MEM_MST_REFINE_BACKEND", "openai"), choices=["mock", "openai"])
     parser.add_argument("--limit-events", type=int, default=10)
     parser.add_argument("--event-id", default=None)
     parser.add_argument("--force-refine", action="store_true")

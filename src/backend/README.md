@@ -1,6 +1,6 @@
-# WorldMM Online Server
+# Em2Mem Online Server
 
-WorldMM Online Server is an online long-video and realtime multimodal memory QA server. It accepts uploaded videos, chunked stream fallback input, direct frame/audio realtime input, and live media ingest sources, then builds current, short-term, and long-term multimodal memories for query-time evidence retrieval and answer generation.
+Em2Mem Online Server is an online long-video and realtime multimodal memory QA server. It accepts uploaded videos, chunked stream fallback input, direct frame/audio realtime input, and live media ingest sources, then builds current, short-term, and long-term multimodal memories for query-time evidence retrieval and answer generation.
 
 ## Key Features
 
@@ -59,10 +59,10 @@ Answer + Evidence
 - `online_streaming/`: partial transcript and ASR backfill.
 - `online_pipeline/`: realtime ingest, live source, backpressure, runtime state.
 - `online_preprocess/`: video segmentation, keyframe sampling, ASR, evidence creation.
-- `online_memory/` and `online_memory_incremental/`: WorldMM layout, incremental updates, HippoRAG cache handling.
+- `online_memory/` and `online_memory_incremental/`: Em2Mem layout, incremental updates, HippoRAG cache handling.
 - `online_query/`: query planning, routing, retrieval, evidence packing, and answer generation.
 - `online_visual/`: visual index and VLM2Vec runtime integration.
-- `src/worldmm/`: runtime WorldMM memory, LLM, and embedding components used by the server.
+- `src/em2mem/`: runtime Em2Mem memory, LLM, and embedding components used by the server.
 - `src/HippoRAG/`: vendored runtime subset needed by long-term retrieval.
 - `scripts/`: server, worker, RTMP/SRS, and realtime input helper scripts.
 - `deploy/srs/srs.conf`: minimal SRS configuration for local live ingest experiments.
@@ -70,7 +70,7 @@ Answer + Evidence
 ## Requirements
 
 - Python 3.10 or newer.
-- `ffmpeg` and `ffprobe` on `PATH`, or explicit `WORLDMM_FFMPEG_BIN` / `WORLDMM_FFPROBE_BIN`.
+- `ffmpeg` and `ffprobe` on `PATH`, or explicit `EM2MEM_FFMPEG_BIN` / `EM2MEM_FFPROBE_BIN`.
 - Optional CUDA GPU for ASR, visual embeddings, and local model inference.
 - OpenAI-compatible API access for LLM-backed captioning, refinement, memory construction, and answering.
 - Optional local model weights for WhisperX, Qwen embedding models, VLM2Vec, and VLM captioning. Model weights are not included in this release.
@@ -103,7 +103,7 @@ scripts/start_online_all_workers.sh
 For a lighter local structure test, use mock visual embeddings:
 
 ```bash
-WORLDMM_VISUAL_BACKEND=mock scripts/start_online_query_worker.sh
+EM2MEM_VISUAL_BACKEND=mock scripts/start_online_query_worker.sh
 ```
 
 ## Environment Variables
@@ -111,23 +111,23 @@ WORLDMM_VISUAL_BACKEND=mock scripts/start_online_query_worker.sh
 The release includes `.env.example` with placeholders only. Common variables:
 
 ```bash
-WORLDMM_API_HOST=127.0.0.1
-WORLDMM_API_PORT=8000
-WORLDMM_CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
-WORLDMM_AUTO_PREPROCESS=1
-WORLDMM_FRAME_STREAM_MAX_BYTES=8388608
-WORLDMM_AUDIO_CHUNK_MAX_BYTES=8388608
-WORLDMM_AUDIO_ASR_WINDOW_MS=5000
-WORLDMM_AUDIO_ASR_HOP_MS=5000
-WORLDMM_AUDIO_ASR_MIN_WINDOW_MS=4500
-WORLDMM_AUDIO_ASR_FLUSH_MIN_MS=2000
-WORLDMM_LIVE_RTMP_ENABLED=0
-WORLDMM_WEBRTC_WHIP_ENABLED=0
-WORLDMM_FFMPEG_BIN=ffmpeg
-WORLDMM_FFPROBE_BIN=ffprobe
-WORLDMM_WHISPERX_MODEL_DIR=/path/to/whisperx
-WORLDMM_VLM2VEC_MODEL_PATH=/path/to/VLM2Vec-V2.0
-WORLDMM_VISUAL_BACKEND=vlm2vec
+EM2MEM_API_HOST=127.0.0.1
+EM2MEM_API_PORT=8000
+EM2MEM_CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+EM2MEM_AUTO_PREPROCESS=1
+EM2MEM_FRAME_STREAM_MAX_BYTES=8388608
+EM2MEM_AUDIO_CHUNK_MAX_BYTES=8388608
+EM2MEM_AUDIO_ASR_WINDOW_MS=5000
+EM2MEM_AUDIO_ASR_HOP_MS=5000
+EM2MEM_AUDIO_ASR_MIN_WINDOW_MS=4500
+EM2MEM_AUDIO_ASR_FLUSH_MIN_MS=2000
+EM2MEM_LIVE_RTMP_ENABLED=0
+EM2MEM_WEBRTC_WHIP_ENABLED=0
+EM2MEM_FFMPEG_BIN=ffmpeg
+EM2MEM_FFPROBE_BIN=ffprobe
+EM2MEM_WHISPERX_MODEL_DIR=/path/to/whisperx
+EM2MEM_VLM2VEC_MODEL_PATH=/path/to/VLM2Vec-V2.0
+EM2MEM_VISUAL_BACKEND=vlm2vec
 OPENAI_API_KEY=<your-key>
 OPENAI_BASE_URL=<optional-openai-compatible-base-url>
 ```
@@ -201,7 +201,7 @@ scripts/start_online_all_workers.sh
 To start multiple refine workers with one command:
 
 ```bash
-WORLDMM_MST_REFINE_WORKER_COUNT=4 scripts/start_online_all_workers.sh
+EM2MEM_MST_REFINE_WORKER_COUNT=4 scripts/start_online_all_workers.sh
 ```
 
 ## Realtime Input Modes
@@ -237,4 +237,4 @@ No secrets, `.env` files, private certificates, tokens, model weights, or server
 
 ## Citation And Acknowledgements
 
-If you use this code in a paper or artifact, cite the associated WorldMM work when available and acknowledge the external model and retrieval components used in your deployment. This release does not claim any acceptance venue or benchmark result by itself.
+If you use this code in a paper or artifact, cite the associated Em2Mem work when available and acknowledge the external model and retrieval components used in your deployment. This release does not claim any acceptance venue or benchmark result by itself.

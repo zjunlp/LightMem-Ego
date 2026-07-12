@@ -41,7 +41,7 @@ def _vectors_payload(vectors: np.ndarray, elapsed_ms: int) -> dict[str, Any]:
 
 
 def create_app(runtime: VLM2VecRuntime, *, preload: bool) -> FastAPI:
-    app = FastAPI(title="WorldMM VLM2Vec Embedding Service")
+    app = FastAPI(title="Em2Mem VLM2Vec Embedding Service")
 
     if preload:
         _ = runtime.model
@@ -88,14 +88,14 @@ def create_app(runtime: VLM2VecRuntime, *, preload: bool) -> FastAPI:
 
 
 def main() -> None:
-    logging.basicConfig(level=os.getenv("WORLDMM_VLM2VEC_EMBED_LOG_LEVEL", "INFO").upper())
-    parser = argparse.ArgumentParser(description="WorldMM VLM2Vec embedding HTTP service.")
-    parser.add_argument("--host", default=os.getenv("WORLDMM_VLM2VEC_EMBED_HOST", "127.0.0.1"))
-    parser.add_argument("--port", type=int, default=int(os.getenv("WORLDMM_VLM2VEC_EMBED_PORT", "18091")))
-    parser.add_argument("--model-path", default=os.getenv("WORLDMM_VLM2VEC_MODEL_PATH"))
-    parser.add_argument("--device", default=os.getenv("WORLDMM_VLM2VEC_DEVICE", "cuda"))
-    parser.add_argument("--dtype", default=os.getenv("WORLDMM_VLM2VEC_DTYPE", "float16"))
-    parser.add_argument("--batch-size", type=int, default=int(os.getenv("WORLDMM_VISUAL_BATCH_SIZE", "8")))
+    logging.basicConfig(level=os.getenv("EM2MEM_VLM2VEC_EMBED_LOG_LEVEL", "INFO").upper())
+    parser = argparse.ArgumentParser(description="Em2Mem VLM2Vec embedding HTTP service.")
+    parser.add_argument("--host", default=os.getenv("EM2MEM_VLM2VEC_EMBED_HOST", "127.0.0.1"))
+    parser.add_argument("--port", type=int, default=int(os.getenv("EM2MEM_VLM2VEC_EMBED_PORT", "18091")))
+    parser.add_argument("--model-path", default=os.getenv("EM2MEM_VLM2VEC_MODEL_PATH"))
+    parser.add_argument("--device", default=os.getenv("EM2MEM_VLM2VEC_DEVICE", "cuda"))
+    parser.add_argument("--dtype", default=os.getenv("EM2MEM_VLM2VEC_DTYPE", "float16"))
+    parser.add_argument("--batch-size", type=int, default=int(os.getenv("EM2MEM_VISUAL_BATCH_SIZE", "8")))
     parser.add_argument("--no-preload", action="store_true")
     args = parser.parse_args()
 
@@ -111,7 +111,7 @@ def main() -> None:
 
     import uvicorn
 
-    uvicorn.run(app, host=args.host, port=args.port, log_level=os.getenv("WORLDMM_VLM2VEC_EMBED_LOG_LEVEL", "info"))
+    uvicorn.run(app, host=args.host, port=args.port, log_level=os.getenv("EM2MEM_VLM2VEC_EMBED_LOG_LEVEL", "info"))
 
 
 if __name__ == "__main__":

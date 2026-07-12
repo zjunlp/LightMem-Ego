@@ -11,7 +11,7 @@ def _write_json(path: Path, data: object) -> None:
 
 def _install_lightweight_import_stubs() -> None:
     online_memory = sys.modules.get("online_memory") or types.ModuleType("online_memory")
-    online_memory.build_online_worldmm_memory = lambda **kwargs: kwargs["sessions_root"] / kwargs["session_id"] / "worldmm" / "memory_config.json"
+    online_memory.build_online_em2mem_memory = lambda **kwargs: kwargs["sessions_root"] / kwargs["session_id"] / "em2mem" / "memory_config.json"
     sys.modules["online_memory"] = online_memory
 
     online_preprocess = sys.modules.get("online_preprocess") or types.ModuleType("online_preprocess")
@@ -36,9 +36,9 @@ def _write_ready_child_outputs(child_dir: Path) -> None:
     _write_json(child_dir / "status.json", {"status": "done", "stage": "visual_embedding_ready"})
     _write_json(child_dir / "short_term" / "refine" / "refine_state.json", {"pending_event_count": 0})
     _write_json(child_dir / "short_term" / "consolidation_state.json", {"pending_ready_window_count": 0})
-    _write_json(child_dir / "worldmm" / "incremental" / "append_state.json", {"pending_count": 0, "failed_count": 0})
+    _write_json(child_dir / "em2mem" / "incremental" / "append_state.json", {"pending_count": 0, "failed_count": 0})
     _write_json(
-        child_dir / "worldmm" / "mst_episodic" / "mst_30sec_episodes.json",
+        child_dir / "em2mem" / "mst_episodic" / "mst_30sec_episodes.json",
         [{"episode_id": "ep1", "start": 60.0, "end": 90.0, "text": "opened the laptop"}],
     )
     _write_json(
@@ -70,7 +70,7 @@ def test_merge_writes_display_time_fields_into_parent_memory(tmp_path: Path) -> 
         ),
     }
     _write_json(child_dir / "metadata.json", {"session_id": "parent1__day0002", **child_metadata_patch(run)})
-    _write_json(parent_dir / "worldmm" / "mst_episodic" / "mst_30sec_episodes.json", [])
+    _write_json(parent_dir / "em2mem" / "mst_episodic" / "mst_30sec_episodes.json", [])
     _write_json(parent_dir / "evidence" / "mst_session_evidence.json", [])
     _write_json(parent_dir / "captions" / "mst_session_30sec_captioned.json", [])
     _write_ready_child_outputs(child_dir)
@@ -85,7 +85,7 @@ def test_merge_writes_display_time_fields_into_parent_memory(tmp_path: Path) -> 
     )
 
     assert result["status"] == "done"
-    episode = json.loads((parent_dir / "worldmm" / "mst_episodic" / "mst_30sec_episodes.json").read_text(encoding="utf-8"))[0]
+    episode = json.loads((parent_dir / "em2mem" / "mst_episodic" / "mst_30sec_episodes.json").read_text(encoding="utf-8"))[0]
     evidence = json.loads((parent_dir / "evidence" / "mst_session_evidence.json").read_text(encoding="utf-8"))[0]
     caption = json.loads((parent_dir / "captions" / "mst_session_30sec_captioned.json").read_text(encoding="utf-8"))[0]
 

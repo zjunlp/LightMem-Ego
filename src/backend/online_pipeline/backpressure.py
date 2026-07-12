@@ -56,7 +56,7 @@ def compute_backpressure(
     project_root: Path,
     stream_latency: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    enabled = _env_bool("WORLDMM_BACKPRESSURE_ENABLED", False)
+    enabled = _env_bool("EM2MEM_BACKPRESSURE_ENABLED", False)
     counts = queue_counts(Path(project_root))
     stream_pending = int(counts.get("stream_chunk_queued", 0) or 0) + int(counts.get("stream_chunk_in_progress", 0) or 0)
     asr_pending = int(counts.get("stream_asr_queued", 0) or 0) + int(counts.get("stream_asr_in_progress", 0) or 0)
@@ -64,10 +64,10 @@ def compute_backpressure(
     refine_pending = int(counts.get("mst_refine_queued", 0) or 0) + int(counts.get("mst_refine_in_progress", 0) or 0)
     consolidation_pending = int(counts.get("mst_consolidation_queued", 0) or 0) + int(counts.get("mst_consolidation_in_progress", 0) or 0)
 
-    stream_high = _env_int("WORLDMM_BACKPRESSURE_STREAM_PENDING_HIGH", 10)
-    asr_high = _env_int("WORLDMM_BACKPRESSURE_ASR_PENDING_HIGH", 5)
-    memory_high = _env_int("WORLDMM_BACKPRESSURE_MEMORY_PENDING_HIGH", 3)
-    latency_high = _env_float("WORLDMM_BACKPRESSURE_LATENCY_HIGH_SECONDS", 30.0)
+    stream_high = _env_int("EM2MEM_BACKPRESSURE_STREAM_PENDING_HIGH", 10)
+    asr_high = _env_int("EM2MEM_BACKPRESSURE_ASR_PENDING_HIGH", 5)
+    memory_high = _env_int("EM2MEM_BACKPRESSURE_MEMORY_PENDING_HIGH", 3)
+    latency_high = _env_float("EM2MEM_BACKPRESSURE_LATENCY_HIGH_SECONDS", 30.0)
     max_latency = _max_latency_seconds(stream_latency)
 
     reasons: list[str] = []

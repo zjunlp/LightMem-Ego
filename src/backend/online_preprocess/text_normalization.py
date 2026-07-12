@@ -108,7 +108,7 @@ _COMMON_TRADITIONAL_TO_SIMPLIFIED = str.maketrans(
 
 
 def _normalization_enabled() -> bool:
-    value = os.getenv("WORLDMM_NORMALIZE_SIMPLIFIED_CHINESE", "1").strip().lower()
+    value = os.getenv("EM2MEM_NORMALIZE_SIMPLIFIED_CHINESE", "1").strip().lower()
     return value not in {"0", "false", "no", "off"}
 
 

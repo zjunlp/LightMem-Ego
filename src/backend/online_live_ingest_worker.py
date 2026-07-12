@@ -56,8 +56,8 @@ def _rtmp_video_only(input_mode: Any) -> bool:
 
 def _live_ingest_rw_timeout_us(input_mode: Any) -> int:
     if _is_rokid_live_rtmp(input_mode):
-        return _env_int("WORLDMM_ROKID_LIVE_INGEST_RW_TIMEOUT_US", 30_000_000)
-    return _env_int("WORLDMM_LIVE_INGEST_RW_TIMEOUT_US", 30_000_000)
+        return _env_int("EM2MEM_ROKID_LIVE_INGEST_RW_TIMEOUT_US", 30_000_000)
+    return _env_int("EM2MEM_LIVE_INGEST_RW_TIMEOUT_US", 30_000_000)
 
 
 def _ffmpeg_input_options(source_url: str, input_mode: Any) -> list[str]:
@@ -125,7 +125,7 @@ def _media_binary(tool_name: str) -> str:
     try:
         return resolver()
     except Exception as exc:
-        env_name = f"WORLDMM_{tool_name.upper()}_BIN"
+        env_name = f"EM2MEM_{tool_name.upper()}_BIN"
         raise RuntimeError(
             f"{tool_name} executable was not found; set {env_name} to a valid absolute path "
             f"or add {tool_name} to PATH: {exc}"
@@ -636,19 +636,19 @@ def process_live_ingest_task(task: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("live_ingest task has no effective pull URL")
     print(f"[live_ingest_worker] effective pull url source={pull_url_source} url={source_url}", flush=True)
     rtmp_video_only = _rtmp_video_only(input_mode)
-    frame_fps = _env_float("WORLDMM_LIVE_INGEST_FRAME_FPS", 1.0)
-    audio_segment_ms = _env_int("WORLDMM_LIVE_INGEST_AUDIO_SEGMENT_MS", 1500)
-    probe_timeout_seconds = _env_float("WORLDMM_LIVE_INGEST_PROBE_TIMEOUT_SECONDS", 10.0)
-    probe_retry_seconds = _env_float("WORLDMM_LIVE_INGEST_PROBE_RETRY_SECONDS", 2.0)
-    attempt_no_output_seconds = _env_float("WORLDMM_LIVE_INGEST_ATTEMPT_NO_OUTPUT_SECONDS", 25.0)
-    total_no_output_seconds = _env_float("WORLDMM_LIVE_INGEST_TOTAL_WAIT_SECONDS", 90.0)
+    frame_fps = _env_float("EM2MEM_LIVE_INGEST_FRAME_FPS", 1.0)
+    audio_segment_ms = _env_int("EM2MEM_LIVE_INGEST_AUDIO_SEGMENT_MS", 1500)
+    probe_timeout_seconds = _env_float("EM2MEM_LIVE_INGEST_PROBE_TIMEOUT_SECONDS", 10.0)
+    probe_retry_seconds = _env_float("EM2MEM_LIVE_INGEST_PROBE_RETRY_SECONDS", 2.0)
+    attempt_no_output_seconds = _env_float("EM2MEM_LIVE_INGEST_ATTEMPT_NO_OUTPUT_SECONDS", 25.0)
+    total_no_output_seconds = _env_float("EM2MEM_LIVE_INGEST_TOTAL_WAIT_SECONDS", 90.0)
     rokid_recovery_no_output_seconds = 0.0
     if rtmp_video_only:
         total_no_output_seconds = _env_float(
-            "WORLDMM_ROKID_LIVE_INGEST_STARTUP_WAIT_SECONDS",
+            "EM2MEM_ROKID_LIVE_INGEST_STARTUP_WAIT_SECONDS",
             max(120.0, total_no_output_seconds),
         )
-        rokid_recovery_no_output_seconds = _env_float("WORLDMM_ROKID_LIVE_INGEST_RECOVERY_WAIT_SECONDS", 0.0)
+        rokid_recovery_no_output_seconds = _env_float("EM2MEM_ROKID_LIVE_INGEST_RECOVERY_WAIT_SECONDS", 0.0)
     frame_interval_ms = int(round(1000.0 / max(0.1, frame_fps)))
     base_dir = session_dir / "stream" / "live_ingest"
     frame_dir = base_dir / "video_frames"
@@ -849,7 +849,7 @@ def process_live_ingest_task(task: dict[str, Any]) -> dict[str, Any]:
                     else:
                         attempt_error = f"ffmpeg exited and produced no output files for {attempt_no_output_seconds:.0f}s"
                     break
-                time.sleep(_env_float("WORLDMM_LIVE_INGEST_POLL_SECONDS", 0.25))
+                time.sleep(_env_float("EM2MEM_LIVE_INGEST_POLL_SECONDS", 0.25))
 
             _stop_process(video_proc)
             _stop_process(audio_proc)
@@ -920,7 +920,7 @@ def process_live_ingest_task(task: dict[str, Any]) -> dict[str, Any]:
 
 
 def main() -> None:
-    poll_seconds = _env_float("WORLDMM_LIVE_INGEST_WORKER_POLL_SECONDS", 1.0)
+    poll_seconds = _env_float("EM2MEM_LIVE_INGEST_WORKER_POLL_SECONDS", 1.0)
     _mark_stale_live_ingest_sessions()
     print("[live_ingest_worker] started", flush=True)
     while True:
@@ -958,7 +958,7 @@ def main() -> None:
                     status="busy",
                     queue_pending=lambda: len(list_queued_live_ingest_tasks(PROJECT_ROOT)),
                     extra_fn=lambda session_id=session_id: _live_ingest_runtime_extra(session_id),
-                    interval_env="WORLDMM_LIVE_INGEST_HEARTBEAT_SECONDS",
+                    interval_env="EM2MEM_LIVE_INGEST_HEARTBEAT_SECONDS",
                 ):
                     result = process_live_ingest_task(task)
                 finish_live_ingest_task(PROJECT_ROOT, claimed_path, task, "done", result=result)

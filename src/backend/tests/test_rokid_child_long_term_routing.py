@@ -57,8 +57,8 @@ def test_warmup_loads_parent_long_term_for_rokid_child(monkeypatch, tmp_path: Pa
     parent_dir = tmp_path / parent_id
     child_dir = tmp_path / child_id
     _write_day_child_metadata(child_dir, parent_id=parent_id, child_id=child_id)
-    _write_json(parent_dir / "worldmm" / "memory_config.json", {"status": "memory_ready", "latest_ready_memory_version": 1})
-    _write_json(child_dir / "worldmm" / "memory_config.json", {"status": "memory_ready", "latest_ready_memory_version": 2})
+    _write_json(parent_dir / "em2mem" / "memory_config.json", {"status": "memory_ready", "latest_ready_memory_version": 1})
+    _write_json(child_dir / "em2mem" / "memory_config.json", {"status": "memory_ready", "latest_ready_memory_version": 2})
 
     loaded: list[str] = []
 
@@ -104,7 +104,7 @@ def test_warmup_loads_parent_long_term_for_rokid_child(monkeypatch, tmp_path: Pa
     assert result["is_rokid_day_child"] is True
     assert loaded == [parent_id]
 
-    state = json.loads((child_dir / "worldmm" / "query_warmup_state.json").read_text(encoding="utf-8"))
+    state = json.loads((child_dir / "em2mem" / "query_warmup_state.json").read_text(encoding="utf-8"))
     assert state["session_id"] == child_id
     assert state["long_term_session_id"] == parent_id
     assert state["steps"][-1]["loaded_session_id"] == parent_id
@@ -118,7 +118,7 @@ def test_warmup_falls_back_to_child_long_term_when_parent_not_ready(monkeypatch,
     child_dir = tmp_path / child_id
     parent_dir.mkdir(parents=True)
     _write_day_child_metadata(child_dir, parent_id=parent_id, child_id=child_id)
-    _write_json(child_dir / "worldmm" / "memory_config.json", {"status": "memory_ready", "latest_ready_memory_version": 2})
+    _write_json(child_dir / "em2mem" / "memory_config.json", {"status": "memory_ready", "latest_ready_memory_version": 2})
 
     loaded: list[str] = []
 
@@ -161,7 +161,7 @@ def test_warmup_falls_back_to_child_long_term_when_parent_not_ready(monkeypatch,
     assert result["long_term_selection"]["selected_role"] == "current_child"
     assert loaded == [child_id]
 
-    state = json.loads((child_dir / "worldmm" / "query_warmup_state.json").read_text(encoding="utf-8"))
+    state = json.loads((child_dir / "em2mem" / "query_warmup_state.json").read_text(encoding="utf-8"))
     assert state["long_term_session_id"] == child_id
     assert state["steps"][-1]["loaded_session_id"] == child_id
 
@@ -176,14 +176,14 @@ def test_stream_query_context_uses_parent_for_long_term_readiness(monkeypatch, t
 
     _write_json(child_dir / "stream" / "stream_state.json", {"status": "running", "upload_chunks": [{"chunk_index": 3}]})
     _write_json(child_dir / "pipeline_state.json", {"current": {"ready": True}, "short_term": {"ready": True}, "long_term": {"long_term_partial_ready": False}})
-    _write_json(child_dir / "worldmm" / "memory_config.json", {"latest_ready_memory_version": 9})
+    _write_json(child_dir / "em2mem" / "memory_config.json", {"latest_ready_memory_version": 9})
     _write_json(child_dir / "stream" / "transcript" / "partial_transcript_state.json", {"segment_count": 1, "last_asr_chunk_index": 3})
     _write_json(child_dir / "stream" / "frame_state.json", {"ready": True})
     _write_json(child_dir / "stream" / "frame_event_state.json", {})
     _write_json(child_dir / "current" / "current_state.json", {"current_text_ready": True})
 
     _write_json(parent_dir / "pipeline_state.json", {"long_term": {"long_term_partial_ready": False, "long_term_full_ready": False}})
-    _write_json(parent_dir / "worldmm" / "memory_config.json", {"latest_ready_memory_version": 1, "latest_fast_ready_version": 1})
+    _write_json(parent_dir / "em2mem" / "memory_config.json", {"latest_ready_memory_version": 1, "latest_fast_ready_version": 1})
     _write_json(tmp_path / "online_tasks" / "query_runtime.json", {"loaded_sessions": [{"session_id": parent_id, "active_query_memory_version": 1}]})
 
     stream_query_context = _load_module("stream_query_context_under_test", "online_query/stream_query_context.py")
@@ -219,7 +219,7 @@ def test_stream_query_context_uses_child_when_parent_not_ready(monkeypatch, tmp_
 
     _write_json(child_dir / "stream" / "stream_state.json", {"status": "running", "upload_chunks": [{"chunk_index": 3}]})
     _write_json(child_dir / "pipeline_state.json", {"current": {"ready": True}, "short_term": {"ready": True}})
-    _write_json(child_dir / "worldmm" / "memory_config.json", {"latest_ready_memory_version": 9, "latest_fast_ready_version": 9})
+    _write_json(child_dir / "em2mem" / "memory_config.json", {"latest_ready_memory_version": 9, "latest_fast_ready_version": 9})
     _write_json(child_dir / "stream" / "transcript" / "partial_transcript_state.json", {"segment_count": 1, "last_asr_chunk_index": 3})
     _write_json(child_dir / "stream" / "frame_state.json", {"ready": True})
     _write_json(child_dir / "stream" / "frame_event_state.json", {})

@@ -11,10 +11,10 @@ import numpy as np
 from collections import defaultdict
 import re
 
-from worldmm.llm import LLMModel, PromptTemplateManager
-from worldmm.embedding import EmbeddingModel
-from worldmm.memory.episodic.openie import OpenIE
-from worldmm.memory.episodic.utils import NerOutput, TripleOutput
+from em2mem.llm import LLMModel, PromptTemplateManager
+from em2mem.embedding import EmbeddingModel
+from em2mem.memory.episodic.openie import OpenIE
+from em2mem.memory.episodic.utils import NerOutput, TripleOutput
 
 from .embedding_store import EmbeddingStore
 from .evaluation.retrieval_eval import RetrievalRecall

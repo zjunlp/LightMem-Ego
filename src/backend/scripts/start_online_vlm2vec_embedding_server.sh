@@ -16,23 +16,23 @@ if [[ -f ".env" ]]; then
   set +a
 fi
 
-export WORLDMM_ALLOW_HF_DOWNLOAD="${WORLDMM_ALLOW_HF_DOWNLOAD:-0}"
-if [[ "${WORLDMM_ALLOW_HF_DOWNLOAD}" != "1" ]]; then
+export EM2MEM_ALLOW_HF_DOWNLOAD="${EM2MEM_ALLOW_HF_DOWNLOAD:-0}"
+if [[ "${EM2MEM_ALLOW_HF_DOWNLOAD}" != "1" ]]; then
   export TRANSFORMERS_OFFLINE="${TRANSFORMERS_OFFLINE:-1}"
   export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
   export HF_DATASETS_OFFLINE="${HF_DATASETS_OFFLINE:-1}"
 fi
 
-export WORLDMM_VLM2VEC_EMBED_HOST="${WORLDMM_VLM2VEC_EMBED_HOST:-127.0.0.1}"
-export WORLDMM_VLM2VEC_EMBED_PORT="${WORLDMM_VLM2VEC_EMBED_PORT:-18091}"
-export WORLDMM_VLM2VEC_EMBED_URL="${WORLDMM_VLM2VEC_EMBED_URL:-http://${WORLDMM_VLM2VEC_EMBED_HOST}:${WORLDMM_VLM2VEC_EMBED_PORT}}"
+export EM2MEM_VLM2VEC_EMBED_HOST="${EM2MEM_VLM2VEC_EMBED_HOST:-127.0.0.1}"
+export EM2MEM_VLM2VEC_EMBED_PORT="${EM2MEM_VLM2VEC_EMBED_PORT:-18091}"
+export EM2MEM_VLM2VEC_EMBED_URL="${EM2MEM_VLM2VEC_EMBED_URL:-http://${EM2MEM_VLM2VEC_EMBED_HOST}:${EM2MEM_VLM2VEC_EMBED_PORT}}"
 
-echo "[start_online_vlm2vec_embedding_server] WORLDMM_VLM2VEC_MODEL_PATH=${WORLDMM_VLM2VEC_MODEL_PATH:-}"
-echo "[start_online_vlm2vec_embedding_server] WORLDMM_VLM2VEC_DEVICE=${WORLDMM_VLM2VEC_DEVICE:-cuda}"
-echo "[start_online_vlm2vec_embedding_server] WORLDMM_VLM2VEC_EMBED_HOST=${WORLDMM_VLM2VEC_EMBED_HOST}"
-echo "[start_online_vlm2vec_embedding_server] WORLDMM_VLM2VEC_EMBED_PORT=${WORLDMM_VLM2VEC_EMBED_PORT}"
+echo "[start_online_vlm2vec_embedding_server] EM2MEM_VLM2VEC_MODEL_PATH=${EM2MEM_VLM2VEC_MODEL_PATH:-}"
+echo "[start_online_vlm2vec_embedding_server] EM2MEM_VLM2VEC_DEVICE=${EM2MEM_VLM2VEC_DEVICE:-cuda}"
+echo "[start_online_vlm2vec_embedding_server] EM2MEM_VLM2VEC_EMBED_HOST=${EM2MEM_VLM2VEC_EMBED_HOST}"
+echo "[start_online_vlm2vec_embedding_server] EM2MEM_VLM2VEC_EMBED_PORT=${EM2MEM_VLM2VEC_EMBED_PORT}"
 
-if python - "$WORLDMM_VLM2VEC_EMBED_URL" <<'PY'
+if python - "$EM2MEM_VLM2VEC_EMBED_URL" <<'PY'
 import json
 import sys
 import urllib.request
@@ -50,7 +50,7 @@ except Exception:
 raise SystemExit(1)
 PY
 then
-  echo "[start_online_vlm2vec_embedding_server] existing healthy service found at ${WORLDMM_VLM2VEC_EMBED_URL}; reuse it"
+  echo "[start_online_vlm2vec_embedding_server] existing healthy service found at ${EM2MEM_VLM2VEC_EMBED_URL}; reuse it"
   exit 0
 fi
 

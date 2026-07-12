@@ -36,13 +36,13 @@ class FrameStreamMicroEventBuilder:
         self.diff_records_path = self.stream_dir / "frame_diff_records.jsonl"
         self.detector = FrameDiffEventDetector(
             self.session_dir,
-            diff_threshold=env_float("WORLDMM_FRAME_STREAM_DIFF_THRESHOLD", env_float("WORLDMM_MST_DIFF_THRESHOLD", 0.40)),
-            min_event_duration=env_float("WORLDMM_FRAME_STREAM_MIN_EVENT_SECONDS", 1.0),
-            max_event_duration=env_float("WORLDMM_FRAME_STREAM_MAX_EVENT_SECONDS", 10.0),
-            min_boundary_gap=env_float("WORLDMM_FRAME_STREAM_MIN_BOUNDARY_GAP_SECONDS", 1.0),
+            diff_threshold=env_float("EM2MEM_FRAME_STREAM_DIFF_THRESHOLD", env_float("EM2MEM_MST_DIFF_THRESHOLD", 0.40)),
+            min_event_duration=env_float("EM2MEM_FRAME_STREAM_MIN_EVENT_SECONDS", 1.0),
+            max_event_duration=env_float("EM2MEM_FRAME_STREAM_MAX_EVENT_SECONDS", 10.0),
+            min_boundary_gap=env_float("EM2MEM_FRAME_STREAM_MIN_BOUNDARY_GAP_SECONDS", 1.0),
         )
         self.store = MSTStore(self.session_dir)
-        self.max_keyframes = env_int("WORLDMM_FRAME_STREAM_MAX_KEYFRAMES_PER_EVENT", 8)
+        self.max_keyframes = env_int("EM2MEM_FRAME_STREAM_MAX_KEYFRAMES_PER_EVENT", 8)
 
     @contextmanager
     def lock(self) -> Iterator[None]:
@@ -73,12 +73,12 @@ class FrameStreamMicroEventBuilder:
             closed_events, state, opened_events = self._update_state_with_frame(state, frame, diff_record)
             appended = self.store.append_events(closed_events)
             refine_task_paths: list[str] = []
-            if appended and enqueue_refine and project_root is not None and _env_bool("WORLDMM_FRAME_STREAM_ENQUEUE_REFINE", True):
+            if appended and enqueue_refine and project_root is not None and _env_bool("EM2MEM_FRAME_STREAM_ENQUEUE_REFINE", True):
                 task_path = enqueue_mst_refine_task(
                     project_root=Path(project_root),
                     session_id=self.session_id,
-                    backend=os.getenv("WORLDMM_MST_REFINE_BACKEND", "openai"),
-                    limit_events=max(1, int(os.getenv("WORLDMM_MST_REFINE_LIMIT_EVENTS", "10") or 10)),
+                    backend=os.getenv("EM2MEM_MST_REFINE_BACKEND", "openai"),
+                    limit_events=max(1, int(os.getenv("EM2MEM_MST_REFINE_LIMIT_EVENTS", "10") or 10)),
                     event_id=None,
                     force_refine=False,
                     reason="frame_stream_batch",
@@ -145,7 +145,7 @@ class FrameStreamMicroEventBuilder:
             if not open_event:
                 return self._empty_result(status="no_open_event")
             duration = self._open_event_duration(open_event) or 0.0
-            if duration < env_float("WORLDMM_FRAME_STREAM_MIN_EVENT_SECONDS", 1.0):
+            if duration < env_float("EM2MEM_FRAME_STREAM_MIN_EVENT_SECONDS", 1.0):
                 state["open_event"] = None
                 state["ignored_short_event_count"] = int(state.get("ignored_short_event_count", 0) or 0) + 1
                 state["updated_at"] = utc_now_iso()
@@ -165,12 +165,12 @@ class FrameStreamMicroEventBuilder:
                 state["latest_event_id"] = appended[-1].get("event_id")
                 state["latest_event_time_range"] = [appended[-1].get("start_time"), appended[-1].get("end_time")]
             refine_task_paths: list[str] = []
-            if appended and enqueue_refine and project_root is not None and _env_bool("WORLDMM_FRAME_STREAM_ENQUEUE_REFINE", True):
+            if appended and enqueue_refine and project_root is not None and _env_bool("EM2MEM_FRAME_STREAM_ENQUEUE_REFINE", True):
                 task_path = enqueue_mst_refine_task(
                     project_root=Path(project_root),
                     session_id=self.session_id,
-                    backend=os.getenv("WORLDMM_MST_REFINE_BACKEND", "openai"),
-                    limit_events=max(1, int(os.getenv("WORLDMM_MST_REFINE_LIMIT_EVENTS", "10") or 10)),
+                    backend=os.getenv("EM2MEM_MST_REFINE_BACKEND", "openai"),
+                    limit_events=max(1, int(os.getenv("EM2MEM_MST_REFINE_LIMIT_EVENTS", "10") or 10)),
                     event_id=None,
                     force_refine=False,
                     reason="frame_stream_batch",
@@ -471,7 +471,7 @@ def public_frame_mst_status_block(session_dir: Path, *, state: dict[str, Any] | 
     state = state if isinstance(state, dict) else load_frame_mst_state(Path(session_dir))
     mode = input_mode if input_mode is not None else state.get("input_mode")
     normalized_mode = frame_stream_input_mode(mode)
-    enabled = _env_bool("WORLDMM_FRAME_STREAM_ENABLE_MST", True) and is_frame_stream_mode(mode)
+    enabled = _env_bool("EM2MEM_FRAME_STREAM_ENABLE_MST", True) and is_frame_stream_mode(mode)
     mst_state = MSTStore(Path(session_dir)).get_state()
     open_event = state.get("open_event") if isinstance(state.get("open_event"), dict) else None
     duration = None

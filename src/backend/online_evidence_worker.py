@@ -104,7 +104,7 @@ def run_worker(args: argparse.Namespace) -> None:
                     warmup_done=True,
                     queue_pending=lambda: len(list_queued_evidence_tasks(project_root)),
                     extra={"session_id": session_id},
-                    interval_env="WORLDMM_EVIDENCE_HEARTBEAT_SECONDS",
+                    interval_env="EM2MEM_EVIDENCE_HEARTBEAT_SECONDS",
                 ):
                     build_session_evidence(
                         session_id=session_id,
@@ -116,13 +116,13 @@ def run_worker(args: argparse.Namespace) -> None:
                         limit_segments=int(limit_segments) if limit_segments is not None else args.limit_segments,
                         dry_run=False,
                     )
-                if _env_bool("WORLDMM_AUTO_MEMORY", False):
+                if _env_bool("EM2MEM_AUTO_MEMORY", False):
                     enqueue_memory_task(
                         project_root=project_root,
                         session_id=session_id,
                         force=bool(task.get("force", args.force)),
-                        skip_visual_embedding=_env_bool("WORLDMM_SKIP_VISUAL_EMBEDDING", True),
-                        skip_semantic=_env_bool("WORLDMM_SKIP_SEMANTIC_MEMORY", False),
+                        skip_visual_embedding=_env_bool("EM2MEM_SKIP_VISUAL_EMBEDDING", True),
+                        skip_semantic=_env_bool("EM2MEM_SKIP_SEMANTIC_MEMORY", False),
                         limit_segments=int(limit_segments) if limit_segments is not None else args.limit_segments,
                     )
                     write_status(
@@ -167,12 +167,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Persistent worker for online evidence tasks.")
     parser.add_argument("--project-root", default=str(PROJECT_ROOT))
     parser.add_argument("--sessions-root", default=str(DEFAULT_SESSIONS_ROOT))
-    parser.add_argument("--backend", default=os.getenv("WORLDMM_EVIDENCE_CAPTION_BACKEND", "mock"), choices=["mock", "openai", "local"])
-    parser.add_argument("--model", default=os.getenv("WORLDMM_VLM_MODEL"))
-    parser.add_argument("--max-keyframes", type=int, default=int(os.getenv("WORLDMM_VLM_MAX_KEYFRAMES", "8")))
+    parser.add_argument("--backend", default=os.getenv("EM2MEM_EVIDENCE_CAPTION_BACKEND", "mock"), choices=["mock", "openai", "local"])
+    parser.add_argument("--model", default=os.getenv("EM2MEM_VLM_MODEL"))
+    parser.add_argument("--max-keyframes", type=int, default=int(os.getenv("EM2MEM_VLM_MAX_KEYFRAMES", "8")))
     parser.add_argument("--limit-segments", type=int, default=None)
     parser.add_argument("--poll-interval", type=float, default=2.0)
-    parser.add_argument("--force", action="store_true", default=_env_bool("WORLDMM_FORCE_EVIDENCE", False))
+    parser.add_argument("--force", action="store_true", default=_env_bool("EM2MEM_FORCE_EVIDENCE", False))
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
     run_worker(args)

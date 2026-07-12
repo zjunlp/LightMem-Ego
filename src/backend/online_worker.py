@@ -38,10 +38,10 @@ def _env_bool(name: str, default: bool) -> bool:
 def _auto_legacy_evidence_enabled() -> bool:
     mode = get_pipeline_mode()
     if mode == "legacy":
-        return _env_bool("WORLDMM_AUTO_EVIDENCE", True)
+        return _env_bool("EM2MEM_AUTO_EVIDENCE", True)
     if mode == "hybrid":
-        return _env_bool("WORLDMM_ENABLE_LEGACY_EVIDENCE_WORKER", True) and _env_bool("WORLDMM_AUTO_EVIDENCE", True)
-    return _env_bool("WORLDMM_ENABLE_LEGACY_EVIDENCE_WORKER", False) and _env_bool("WORLDMM_AUTO_EVIDENCE", False)
+        return _env_bool("EM2MEM_ENABLE_LEGACY_EVIDENCE_WORKER", True) and _env_bool("EM2MEM_AUTO_EVIDENCE", True)
+    return _env_bool("EM2MEM_ENABLE_LEGACY_EVIDENCE_WORKER", False) and _env_bool("EM2MEM_AUTO_EVIDENCE", False)
 
 
 def _split_languages(value: str) -> list[str]:
@@ -77,7 +77,7 @@ def run_worker(args: argparse.Namespace) -> None:
             "preload_align_languages": args.preload_align_languages,
             "pipeline_mode": get_pipeline_mode(),
             "auto_legacy_evidence": _auto_legacy_evidence_enabled(),
-            "stream_asr_enabled": _env_bool("WORLDMM_STREAM_ASR_ENABLED", True),
+            "stream_asr_enabled": _env_bool("EM2MEM_STREAM_ASR_ENABLED", True),
             "stream_asr_queue_pending": len(list_queued_stream_asr_tasks(project_root)),
             "stream_asr_processed_count": stream_asr_processed_count,
             "last_stream_asr_task_id": last_stream_asr_task_id,
@@ -104,7 +104,7 @@ def run_worker(args: argparse.Namespace) -> None:
             "preload_align_languages": args.preload_align_languages,
             "pipeline_mode": get_pipeline_mode(),
             "auto_legacy_evidence": _auto_legacy_evidence_enabled(),
-            "stream_asr_enabled": _env_bool("WORLDMM_STREAM_ASR_ENABLED", True),
+            "stream_asr_enabled": _env_bool("EM2MEM_STREAM_ASR_ENABLED", True),
             "stream_asr_queue_pending": len(list_queued_stream_asr_tasks(project_root)),
             "stream_asr_processed_count": stream_asr_processed_count,
             "last_stream_asr_task_id": last_stream_asr_task_id,
@@ -122,7 +122,7 @@ def run_worker(args: argparse.Namespace) -> None:
     )
 
     while True:
-        stream_asr_tasks = list_queued_stream_asr_tasks(project_root) if _env_bool("WORLDMM_STREAM_ASR_ENABLED", True) else []
+        stream_asr_tasks = list_queued_stream_asr_tasks(project_root) if _env_bool("EM2MEM_STREAM_ASR_ENABLED", True) else []
         if stream_asr_tasks:
             for task_path in stream_asr_tasks:
                 claimed = claim_stream_asr_task(project_root, task_path)
@@ -177,7 +177,7 @@ def run_worker(args: argparse.Namespace) -> None:
                         warmup_done=True,
                         queue_pending=_queue_pending,
                         extra_fn=lambda session_id=session_id: _runtime_extra(session_id),
-                        interval_env="WORLDMM_PREPROCESS_HEARTBEAT_SECONDS",
+                        interval_env="EM2MEM_PREPROCESS_HEARTBEAT_SECONDS",
                     ):
                         result = process_stream_asr_task(
                             project_root=project_root,
@@ -262,7 +262,7 @@ def run_worker(args: argparse.Namespace) -> None:
                     "compute_type": runtime.compute_type,
                     "pipeline_mode": get_pipeline_mode(),
                     "auto_legacy_evidence": _auto_legacy_evidence_enabled(),
-                    "stream_asr_enabled": _env_bool("WORLDMM_STREAM_ASR_ENABLED", True),
+                    "stream_asr_enabled": _env_bool("EM2MEM_STREAM_ASR_ENABLED", True),
                     "stream_asr_queue_pending": len(list_queued_stream_asr_tasks(project_root)),
                     "stream_asr_processed_count": stream_asr_processed_count,
                     "last_stream_asr_task_id": last_stream_asr_task_id,
@@ -299,7 +299,7 @@ def run_worker(args: argparse.Namespace) -> None:
                         "session_id": session_id,
                         "pipeline_mode": get_pipeline_mode(),
                         "auto_legacy_evidence": _auto_legacy_evidence_enabled(),
-                        "stream_asr_enabled": _env_bool("WORLDMM_STREAM_ASR_ENABLED", True),
+                        "stream_asr_enabled": _env_bool("EM2MEM_STREAM_ASR_ENABLED", True),
                         "stream_asr_queue_pending": len(list_queued_stream_asr_tasks(project_root)),
                         "stream_asr_processed_count": stream_asr_processed_count,
                         "last_stream_asr_task_id": last_stream_asr_task_id,
@@ -320,7 +320,7 @@ def run_worker(args: argparse.Namespace) -> None:
                     warmup_done=True,
                     queue_pending=_queue_pending,
                     extra_fn=lambda session_id=session_id: _runtime_extra(session_id),
-                    interval_env="WORLDMM_PREPROCESS_HEARTBEAT_SECONDS",
+                    interval_env="EM2MEM_PREPROCESS_HEARTBEAT_SECONDS",
                 ):
                     process_session(
                         session_id=session_id,
@@ -340,7 +340,7 @@ def run_worker(args: argparse.Namespace) -> None:
                         project_root=project_root,
                         session_id=session_id,
                         force=bool(task.get("force", args.force)),
-                        backend=os.getenv("WORLDMM_EVIDENCE_CAPTION_BACKEND"),
+                        backend=os.getenv("EM2MEM_EVIDENCE_CAPTION_BACKEND"),
                         pipeline_mode=get_pipeline_mode(),
                         role="legacy_optional" if get_pipeline_mode() != "legacy" else "main",
                     )
@@ -387,19 +387,19 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Persistent compute-node worker for online preprocessing tasks.")
     parser.add_argument("--project-root", default=str(PROJECT_ROOT))
     parser.add_argument("--sessions-root", default=str(DEFAULT_SESSIONS_ROOT))
-    parser.add_argument("--whisperx-model", default=os.getenv("WORLDMM_WHISPERX_MODEL", "medium"))
-    parser.add_argument("--device", default=os.getenv("WORLDMM_WHISPERX_DEVICE", "cuda"))
-    parser.add_argument("--compute-type", default=os.getenv("WORLDMM_WHISPERX_COMPUTE_TYPE", "float16"))
-    parser.add_argument("--language", default=os.getenv("WORLDMM_WHISPERX_LANGUAGE") or None)
-    parser.add_argument("--model-dir", default=os.getenv("WORLDMM_WHISPERX_MODEL_DIR", str(DEFAULT_WHISPERX_MODEL_DIR)))
+    parser.add_argument("--whisperx-model", default=os.getenv("EM2MEM_WHISPERX_MODEL", "medium"))
+    parser.add_argument("--device", default=os.getenv("EM2MEM_WHISPERX_DEVICE", "cuda"))
+    parser.add_argument("--compute-type", default=os.getenv("EM2MEM_WHISPERX_COMPUTE_TYPE", "float16"))
+    parser.add_argument("--language", default=os.getenv("EM2MEM_WHISPERX_LANGUAGE") or None)
+    parser.add_argument("--model-dir", default=os.getenv("EM2MEM_WHISPERX_MODEL_DIR", str(DEFAULT_WHISPERX_MODEL_DIR)))
     parser.add_argument(
         "--align-model-dir",
-        default=os.getenv("WORLDMM_WHISPERX_ALIGN_MODEL_DIR", str(DEFAULT_WHISPERX_ALIGN_MODEL_DIR)),
+        default=os.getenv("EM2MEM_WHISPERX_ALIGN_MODEL_DIR", str(DEFAULT_WHISPERX_ALIGN_MODEL_DIR)),
     )
-    parser.add_argument("--preload-align-languages", default=os.getenv("WORLDMM_WHISPERX_ALIGN_LANGS", "zh,en"))
+    parser.add_argument("--preload-align-languages", default=os.getenv("EM2MEM_WHISPERX_ALIGN_LANGS", "zh,en"))
     parser.add_argument("--poll-interval", type=float, default=2.0)
-    parser.add_argument("--skip-asr", action="store_true", default=_env_bool("WORLDMM_SKIP_ASR", False))
-    parser.add_argument("--force", action="store_true", default=_env_bool("WORLDMM_FORCE_PREPROCESS", False))
+    parser.add_argument("--skip-asr", action="store_true", default=_env_bool("EM2MEM_SKIP_ASR", False))
+    parser.add_argument("--force", action="store_true", default=_env_bool("EM2MEM_FORCE_PREPROCESS", False))
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
 

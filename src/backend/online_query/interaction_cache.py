@@ -57,7 +57,7 @@ def _normalize_frame_timestamp(value: Any, path: str | None = None) -> float | N
 
 
 def _cache_root_for_session(session_dir: Path) -> Path:
-    return session_dir / "worldmm" / "cache"
+    return session_dir / "em2mem" / "cache"
 
 
 class InteractionCache:
@@ -78,11 +78,11 @@ class InteractionCache:
         self.session_id = session_id
         self.session_dir = session_dir
         self.cache_path = cache_path or (_cache_root_for_session(session_dir) / "interaction_cache.json")
-        self.max_interactions = max_interactions or _env_int("WORLDMM_INTERACTION_CACHE_MAX_TURNS", 20)
-        self.ttl_seconds = ttl_seconds or _env_int("WORLDMM_INTERACTION_CACHE_TTL_SECONDS", 3600)
-        self.max_hot_entities = _env_int("WORLDMM_CACHE_MAX_HOT_ENTITIES", 50)
-        self.max_hot_time_ranges = _env_int("WORLDMM_CACHE_MAX_HOT_TIME_RANGES", 20)
-        self.max_hot_memories = _env_int("WORLDMM_CACHE_MAX_HOT_MEMORIES", 50)
+        self.max_interactions = max_interactions or _env_int("EM2MEM_INTERACTION_CACHE_MAX_TURNS", 20)
+        self.ttl_seconds = ttl_seconds or _env_int("EM2MEM_INTERACTION_CACHE_TTL_SECONDS", 3600)
+        self.max_hot_entities = _env_int("EM2MEM_CACHE_MAX_HOT_ENTITIES", 50)
+        self.max_hot_time_ranges = _env_int("EM2MEM_CACHE_MAX_HOT_TIME_RANGES", 20)
+        self.max_hot_memories = _env_int("EM2MEM_CACHE_MAX_HOT_MEMORIES", 50)
         self._lock = threading.RLock()
         self._last_loaded_mtime = 0.0
         self.data = self._empty()

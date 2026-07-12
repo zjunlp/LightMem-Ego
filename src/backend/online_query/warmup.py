@@ -26,7 +26,7 @@ def _env_float(name: str, default: float) -> float:
 
 def _write_warmup_state(session_dir: Path, payload: dict[str, Any]) -> None:
     try:
-        target = session_dir / "worldmm" / "query_warmup_state.json"
+        target = session_dir / "em2mem" / "query_warmup_state.json"
         target.parent.mkdir(parents=True, exist_ok=True)
         write_json_atomic(target, payload)
     except Exception:
@@ -71,8 +71,8 @@ def warm_query_session(
     long_term_session_dir = sessions_root / long_term_session_id
     cache = cache or GLOBAL_SESSION_ENGINE_CACHE
     long_term_retrieval_scheme = normalize_long_term_retrieval_scheme(long_term_retrieval_scheme)
-    timeout_seconds = _env_float("WORLDMM_QUERY_WARMUP_WAIT_MEMORY_SECONDS", 900.0) if timeout_seconds is None else float(timeout_seconds)
-    poll_interval = _env_float("WORLDMM_QUERY_WARMUP_POLL_SECONDS", 2.0) if poll_interval is None else float(poll_interval)
+    timeout_seconds = _env_float("EM2MEM_QUERY_WARMUP_WAIT_MEMORY_SECONDS", 900.0) if timeout_seconds is None else float(timeout_seconds)
+    poll_interval = _env_float("EM2MEM_QUERY_WARMUP_POLL_SECONDS", 2.0) if poll_interval is None else float(poll_interval)
     deadline = time.time() + max(0.0, timeout_seconds)
     payload: dict[str, Any] = {
         "status": "running",
@@ -101,12 +101,12 @@ def warm_query_session(
             raise FileNotFoundError(f"session not found: {session_dir}")
 
         # Build lazy singletons used by current-frame answers before the first ask.
-        if _env_bool("WORLDMM_QUERY_WARMUP_CURRENT_MODEL", True):
+        if _env_bool("EM2MEM_QUERY_WARMUP_CURRENT_MODEL", True):
             _get_short_term_answer_model()
             _step("current_answer_model")
 
         # Ping remote VLM2Vec once so backend health/connectivity is resolved early.
-        if _env_bool("WORLDMM_QUERY_WARMUP_VLM2VEC", True):
+        if _env_bool("EM2MEM_QUERY_WARMUP_VLM2VEC", True):
             runtime = get_global_vlm2vec_runtime()
             info = runtime.info()
             if getattr(runtime, "backend", None) == "remote":

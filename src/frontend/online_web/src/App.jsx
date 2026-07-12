@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import AskPanel from './components/AskPanel.jsx'
 import LiveView from './components/LiveView.jsx'
-import { buildEvidenceFrameUrl } from './api/worldmmApi.js'
-import { useAskWorldMM } from './hooks/useAskWorldMM.js'
+import { buildEvidenceFrameUrl } from './api/lightmem_egoApi.js'
+import { useAskLightMemEgo } from './hooks/useAskLightMemEgo.js'
 import { useRealtimeStream } from './hooks/useRealtimeStream.js'
 
 const DEMO_TEST_AUTO_QUESTIONS = [
@@ -55,7 +55,7 @@ const DEMO_TEST_AUTO_QUESTIONS = [
 export default function App() {
   const [activePanel, setActivePanel] = useState('live')
   const stream = useRealtimeStream()
-  const ask = useAskWorldMM(stream.sessionId, {
+  const ask = useAskLightMemEgo(stream.sessionId, {
     syncBeforeAsk: stream.syncBeforeAsk,
     isDemoMode: stream.isDemoMode,
     askBaseUrl: stream.askBaseUrl,

@@ -80,7 +80,7 @@ def answer_generation_ms(latency: dict[str, Any], trace: dict[str, Any] | None) 
         value = (trace.get("stage_durations_ms") or {}).get("answer_generation_ms")
         if value is not None:
             return int(float(value))
-    for key in ("answer_generation_ms", "final_generation_ms", "generation_ms", "worldmm_answer_ms"):
+    for key in ("answer_generation_ms", "final_generation_ms", "generation_ms", "em2mem_answer_ms"):
         if latency.get(key) is not None:
             return int(float(latency[key]))
     return None

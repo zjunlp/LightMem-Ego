@@ -38,7 +38,7 @@ ACTIVE_TASK_DIRS = {
 
 
 def single_active_session_enabled() -> bool:
-    value = os.getenv("WORLDMM_SINGLE_ACTIVE_SESSION")
+    value = os.getenv("EM2MEM_SINGLE_ACTIVE_SESSION")
     if value is None:
         return False
     return value.strip().lower() in {"1", "true", "yes", "on"}

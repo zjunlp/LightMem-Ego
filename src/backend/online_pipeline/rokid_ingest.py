@@ -115,7 +115,7 @@ def public_rokid_start_block(metadata: dict[str, Any] | None = None, *, input_mo
             "preferred_format": "wav",
             "accepted_formats": ROKID_ACCEPTED_AUDIO_FORMATS,
             "recommended_chunk_ms": 1000,
-            "asr_window_ms": _env_int("WORLDMM_AUDIO_ASR_WINDOW_MS", 5000),
+            "asr_window_ms": _env_int("EM2MEM_AUDIO_ASR_WINDOW_MS", 5000),
         },
         "timestamp": {
             "required": "relative_ts_ms",
@@ -284,7 +284,7 @@ def public_rokid_status_block(session_dir: Path, *, input_mode: Any = None) -> d
         "audio_chunks_received": max(int(audio_state.get("received_count", rokid_state.get("audio_chunks_received", 0)) or 0), int(live_ingest_state.get("audio_chunks_ingested", 0) or 0)),
         "latest_frame_relative_ts_ms": frame_state.get("latest_relative_ts_ms", rokid_state.get("latest_frame_relative_ts_ms")) or live_ingest_state.get("latest_frame_relative_ts_ms"),
         "latest_audio_relative_ts_ms": audio_state.get("latest_relative_ts_ms", rokid_state.get("latest_audio_relative_ts_ms")) or live_ingest_state.get("latest_audio_relative_ts_ms"),
-        "audio_asr_window_ms": asr_state.get("window_ms") or _env_int("WORLDMM_AUDIO_ASR_WINDOW_MS", 5000),
+        "audio_asr_window_ms": asr_state.get("window_ms") or _env_int("EM2MEM_AUDIO_ASR_WINDOW_MS", 5000),
         "timestamp_mode": rokid_state.get("timestamp_mode") or ROKID_TIMESTAMP_MODE,
         "timestamp_warnings": int(rokid_state.get("timestamp_warnings", 0) or 0),
         "warnings": warnings,

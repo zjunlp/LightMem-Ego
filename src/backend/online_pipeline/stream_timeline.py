@@ -168,7 +168,7 @@ def build_stream_metrics(project_root: Path, session_dir: Path) -> dict[str, Any
     samples = _latency_samples_from_stream_state(session_dir)
     summary_status = status.get("upload") if isinstance(status.get("upload"), dict) else {}
     transcript_state = read_json(session_dir / "stream" / "transcript" / "partial_transcript_state.json", default={})
-    append_state = read_json(session_dir / "worldmm" / "incremental" / "append_state.json", default={})
+    append_state = read_json(session_dir / "em2mem" / "incremental" / "append_state.json", default={})
     if not isinstance(transcript_state, dict):
         transcript_state = {}
     if not isinstance(append_state, dict):

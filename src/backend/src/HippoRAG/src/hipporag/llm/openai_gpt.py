@@ -42,11 +42,11 @@ def _normalize_reasoning_effort(value: Any) -> str:
 
 
 def _reasoning_effort_kwargs() -> Dict[str, Any]:
-    if _env_bool("WORLDMM_OPENAI_DISABLE_REASONING", True):
+    if _env_bool("EM2MEM_OPENAI_DISABLE_REASONING", True):
         return {"reasoning_effort": "none"}
     effort = (
-        os.getenv("WORLDMM_CHAT_REASONING_EFFORT")
-        or os.getenv("WORLDMM_OPENAI_REASONING_EFFORT")
+        os.getenv("EM2MEM_CHAT_REASONING_EFFORT")
+        or os.getenv("EM2MEM_OPENAI_REASONING_EFFORT")
         or "none"
     )
     return {"reasoning_effort": _normalize_reasoning_effort(effort)}

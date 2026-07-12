@@ -282,7 +282,7 @@ class TranscriptBackfiller:
         task_path = enqueue_mst_refine_task(
             project_root=self.project_root,
             session_id=self.session_id,
-            backend=os.getenv("WORLDMM_MST_REFINE_BACKEND", "openai"),
+            backend=os.getenv("EM2MEM_MST_REFINE_BACKEND", "openai"),
             limit_events=len(normalized_event_ids),
             event_ids=normalized_event_ids,
             force_refine=True,
@@ -313,8 +313,8 @@ class TranscriptBackfiller:
             task_path = enqueue_mst_consolidation_task(
                 project_root=self.project_root,
                 session_id=self.session_id,
-                backend=os.getenv("WORLDMM_MST_EPISODIC_BACKEND", "openai"),
-                update_worldmm=os.getenv("WORLDMM_MST_CONSOLIDATE_UPDATE_WORLDMM", "1").strip().lower() in {"1", "true", "yes", "on"},
+                backend=os.getenv("EM2MEM_MST_EPISODIC_BACKEND", "openai"),
+                update_em2mem=os.getenv("EM2MEM_MST_CONSOLIDATE_UPDATE_EM2MEM", "1").strip().lower() in {"1", "true", "yes", "on"},
                 force=True,
                 limit_windows=1,
                 window_start=start,

@@ -22,11 +22,11 @@ def main() -> None:
 
     session_dir = Path(args.sessions_root) / args.session_id
     appender = IncrementalMemoryAppender(session_id=args.session_id, sessions_root=Path(args.sessions_root), project_root=PROJECT_ROOT)
-    memory_config = read_json(session_dir / "worldmm" / "memory_config.json", default={})
-    append_state = read_json(session_dir / "worldmm" / "incremental" / "append_state.json", default={})
-    dirty_windows = read_json(session_dir / "worldmm" / "incremental" / "dirty_windows.json", default={})
-    graph_state = read_json(session_dir / "worldmm" / "incremental" / "graph" / "graph_state.json", default={})
-    semantic_state = read_json(session_dir / "worldmm" / "incremental" / "semantic" / "semantic_state.json", default={})
+    memory_config = read_json(session_dir / "em2mem" / "memory_config.json", default={})
+    append_state = read_json(session_dir / "em2mem" / "incremental" / "append_state.json", default={})
+    dirty_windows = read_json(session_dir / "em2mem" / "incremental" / "dirty_windows.json", default={})
+    graph_state = read_json(session_dir / "em2mem" / "incremental" / "graph" / "graph_state.json", default={})
+    semantic_state = read_json(session_dir / "em2mem" / "incremental" / "semantic" / "semantic_state.json", default={})
     reconcile_result = None
     if args.reconcile_component_versions:
         reconcile_result = reconcile_component_versions(session_dir)
@@ -34,7 +34,7 @@ def main() -> None:
         "status": "ok",
         "session_id": args.session_id,
         "memory_config_versions": {
-            "worldmm_update_mode": memory_config.get("worldmm_update_mode") if isinstance(memory_config, dict) else None,
+            "em2mem_update_mode": memory_config.get("em2mem_update_mode") if isinstance(memory_config, dict) else None,
             "latest_ready_memory_version": memory_config.get("latest_ready_memory_version") if isinstance(memory_config, dict) else None,
             "latest_fast_ready_version": memory_config.get("latest_fast_ready_version") if isinstance(memory_config, dict) else None,
             "latest_visual_ready_version": memory_config.get("latest_visual_ready_version") if isinstance(memory_config, dict) else None,

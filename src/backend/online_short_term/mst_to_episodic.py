@@ -124,13 +124,13 @@ def _evidence_doc_from_episode(episode: dict[str, Any]) -> dict[str, Any]:
 
 
 def _write_outputs(session_dir: Path, episodes: list[dict[str, Any]], result: dict[str, Any]) -> dict[str, Path]:
-    worldmm_dir = session_dir / "worldmm" / "mst_episodic"
+    em2mem_dir = session_dir / "em2mem" / "mst_episodic"
     captions_dir = session_dir / "captions"
     evidence_dir = session_dir / "evidence"
-    episodes_path = worldmm_dir / "mst_30sec_episodes.json"
-    episodes_jsonl_path = worldmm_dir / "mst_30sec_episodes.jsonl"
-    mapping_path = worldmm_dir / "mst_to_episode_mapping.json"
-    state_path = worldmm_dir / "mst_episodic_state.json"
+    episodes_path = em2mem_dir / "mst_30sec_episodes.json"
+    episodes_jsonl_path = em2mem_dir / "mst_30sec_episodes.jsonl"
+    mapping_path = em2mem_dir / "mst_to_episode_mapping.json"
+    state_path = em2mem_dir / "mst_episodic_state.json"
     captioned_path = captions_dir / "mst_session_30sec_captioned.json"
     evidence_path = evidence_dir / "mst_session_evidence.json"
 
@@ -171,7 +171,7 @@ def _write_outputs(session_dir: Path, episodes: list[dict[str, Any]], result: di
 
 
 def _update_memory_config_metadata(session_dir: Path, update_mode: str | None = None) -> None:
-    memory_config_path = session_dir / "worldmm" / "memory_config.json"
+    memory_config_path = session_dir / "em2mem" / "memory_config.json"
     if not memory_config_path.exists() and update_mode is None:
         return
     config = read_json(memory_config_path, default={})
@@ -182,16 +182,16 @@ def _update_memory_config_metadata(session_dir: Path, update_mode: str | None = 
         {
             "episodic_source": "mst_micro_events",
             "mst_episodic_ready": True,
-            "mst_episodic_path": "worldmm/mst_episodic/mst_30sec_episodes.json",
+            "mst_episodic_path": "em2mem/mst_episodic/mst_30sec_episodes.json",
             "mst_captioned_30sec_path": "captions/mst_session_30sec_captioned.json",
             "mst_evidence_path": "evidence/mst_session_evidence.json",
-            "worldmm_30s_input_source": "mst_session_30sec_captioned",
+            "em2mem_30s_input_source": "mst_session_30sec_captioned",
             "last_mst_episodic_build_at": now,
         }
     )
     if update_mode:
-        config["worldmm_update_mode"] = update_mode
-        config["last_mst_worldmm_update_at"] = now
+        config["em2mem_update_mode"] = update_mode
+        config["last_mst_em2mem_update_at"] = now
     write_json_atomic(memory_config_path, config)
 
 
@@ -204,7 +204,7 @@ def _update_status_outputs(session_dir: Path, session_id: str) -> None:
     outputs.update(
         {
             "mst_episodic_ready": True,
-            "mst_episodic_path": "worldmm/mst_episodic/mst_30sec_episodes.json",
+            "mst_episodic_path": "em2mem/mst_episodic/mst_30sec_episodes.json",
             "mst_captioned_30sec_path": "captions/mst_session_30sec_captioned.json",
             "mst_evidence_path": "evidence/mst_session_evidence.json",
         }
@@ -258,7 +258,7 @@ def build_episodic_from_mst(
     events_by_id = {str(event.get("event_id")): event for event in archive_events if event.get("event_id")}
     state = load_consolidation_state(session_dir, session_id)
     window_to_episode = dict(state.get("window_to_episode", {}) or {})
-    existing_path = session_dir / "worldmm" / "mst_episodic" / "mst_30sec_episodes.json"
+    existing_path = session_dir / "em2mem" / "mst_episodic" / "mst_30sec_episodes.json"
     existing_episodes = _load_existing_episodes(existing_path)
 
     ready_windows = []
@@ -302,8 +302,8 @@ def build_episodic_from_mst(
         "generated_episode_count": 0,
         "generated_episode_ids": [],
         "skipped_windows": skipped,
-        "updated_worldmm": False,
-        "worldmm_update_mode": None,
+        "updated_em2mem": False,
+        "em2mem_update_mode": None,
         "outputs": {},
     }
     if dry_run:
@@ -374,6 +374,6 @@ def build_episodic_from_mst(
     return result
 
 
-def update_mst_worldmm_metadata(session_dir: Path, update_mode: str) -> None:
+def update_mst_em2mem_metadata(session_dir: Path, update_mode: str) -> None:
     _update_memory_config_metadata(session_dir, update_mode=update_mode)
     _update_status_outputs(session_dir, session_dir.name)

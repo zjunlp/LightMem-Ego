@@ -32,13 +32,13 @@ def _env_int(name: str, default: int) -> int:
 
 
 def live_rtmp_config() -> dict[str, Any]:
-    scheme = _env_str("WORLDMM_LIVE_RTMP_SCHEME", "rtmp").lower()
-    domain = _env_str("WORLDMM_LIVE_RTMP_DOMAIN", "localhost")
-    public_port = _env_int("WORLDMM_LIVE_RTMP_PUBLIC_PORT", 1935)
-    app = _env_str("WORLDMM_LIVE_RTMP_APP", "live").strip("/")
-    internal_pull_base = _env_str("WORLDMM_LIVE_RTMP_INTERNAL_PULL_BASE", f"{scheme}://{domain}/{app}").rstrip("/")
+    scheme = _env_str("EM2MEM_LIVE_RTMP_SCHEME", "rtmp").lower()
+    domain = _env_str("EM2MEM_LIVE_RTMP_DOMAIN", "localhost")
+    public_port = _env_int("EM2MEM_LIVE_RTMP_PUBLIC_PORT", 1935)
+    app = _env_str("EM2MEM_LIVE_RTMP_APP", "live").strip("/")
+    internal_pull_base = _env_str("EM2MEM_LIVE_RTMP_INTERNAL_PULL_BASE", f"{scheme}://{domain}/{app}").rstrip("/")
     return {
-        "enabled": _env_bool("WORLDMM_LIVE_RTMP_ENABLED", False),
+        "enabled": _env_bool("EM2MEM_LIVE_RTMP_ENABLED", False),
         "scheme": scheme,
         "domain": domain,
         "public_port": public_port,
@@ -48,17 +48,17 @@ def live_rtmp_config() -> dict[str, Any]:
 
 
 def webrtc_whip_config() -> dict[str, Any]:
-    scheme = _env_str("WORLDMM_WEBRTC_WHIP_SCHEME", "http").lower()
-    domain = _env_str("WORLDMM_WEBRTC_WHIP_DOMAIN", "localhost")
-    public_port = _env_int("WORLDMM_WEBRTC_WHIP_PUBLIC_PORT", 443)
-    path = _env_str("WORLDMM_WEBRTC_WHIP_PATH", "/rtc/v1/whip/")
-    app = _env_str("WORLDMM_WEBRTC_WHIP_APP", "live").strip("/")
+    scheme = _env_str("EM2MEM_WEBRTC_WHIP_SCHEME", "http").lower()
+    domain = _env_str("EM2MEM_WEBRTC_WHIP_DOMAIN", "localhost")
+    public_port = _env_int("EM2MEM_WEBRTC_WHIP_PUBLIC_PORT", 443)
+    path = _env_str("EM2MEM_WEBRTC_WHIP_PATH", "/rtc/v1/whip/")
+    app = _env_str("EM2MEM_WEBRTC_WHIP_APP", "live").strip("/")
     if not path.startswith("/"):
         path = f"/{path}"
-    preferred_video_codec = _env_str("WORLDMM_WEBRTC_PREFERRED_VIDEO_CODEC", "h264")
-    preferred_audio_codec = _env_str("WORLDMM_WEBRTC_PREFERRED_AUDIO_CODEC", "opus")
+    preferred_video_codec = _env_str("EM2MEM_WEBRTC_PREFERRED_VIDEO_CODEC", "h264")
+    preferred_audio_codec = _env_str("EM2MEM_WEBRTC_PREFERRED_AUDIO_CODEC", "opus")
     return {
-        "enabled": _env_bool("WORLDMM_WEBRTC_WHIP_ENABLED", False),
+        "enabled": _env_bool("EM2MEM_WEBRTC_WHIP_ENABLED", False),
         "scheme": scheme,
         "domain": domain,
         "public_port": public_port,
@@ -69,15 +69,15 @@ def webrtc_whip_config() -> dict[str, Any]:
     }
 
 def webrtc_play_config() -> dict[str, Any]:
-    scheme = _env_str("WORLDMM_WEBRTC_PLAY_SCHEME", "https").lower()
-    domain = _env_str("WORLDMM_WEBRTC_PLAY_DOMAIN", "localhost")
-    public_port = _env_int("WORLDMM_WEBRTC_PLAY_PUBLIC_PORT", 443)
-    path = _env_str("WORLDMM_WEBRTC_PLAY_PATH", "/rtc/v1/play/")
-    app = _env_str("WORLDMM_WEBRTC_PLAY_APP", _env_str("WORLDMM_LIVE_RTMP_APP", "live")).strip("/")
+    scheme = _env_str("EM2MEM_WEBRTC_PLAY_SCHEME", "https").lower()
+    domain = _env_str("EM2MEM_WEBRTC_PLAY_DOMAIN", "localhost")
+    public_port = _env_int("EM2MEM_WEBRTC_PLAY_PUBLIC_PORT", 443)
+    path = _env_str("EM2MEM_WEBRTC_PLAY_PATH", "/rtc/v1/play/")
+    app = _env_str("EM2MEM_WEBRTC_PLAY_APP", _env_str("EM2MEM_LIVE_RTMP_APP", "live")).strip("/")
     if not path.startswith("/"):
         path = f"/{path}"
     return {
-        "enabled": _env_bool("WORLDMM_WEBRTC_PLAY_ENABLED", False),
+        "enabled": _env_bool("EM2MEM_WEBRTC_PLAY_ENABLED", False),
         "scheme": scheme,
         "domain": domain,
         "public_port": public_port,

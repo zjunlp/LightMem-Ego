@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from online_memory import build_online_worldmm_memory
+from online_memory import build_online_em2mem_memory
 from online_memory_incremental import IncrementalMemoryAppender
 from online_pipeline.runtime_state import WorkerTaskHeartbeat, get_pipeline_mode, refresh_session_pipeline_state, write_worker_runtime
 from online_pipeline.stream_timeline import append_timeline_event
@@ -34,7 +34,7 @@ def _log_stage(session_id: str, stage: str, **fields: object) -> None:
 
 
 def _mark_component_lagging(session_dir: Path, *, component: str, error: str, task_id: str | None = None) -> None:
-    memory_config_path = session_dir / "worldmm" / "memory_config.json"
+    memory_config_path = session_dir / "em2mem" / "memory_config.json"
     config = read_json(memory_config_path, default={})
     if not isinstance(config, dict):
         return
@@ -61,13 +61,13 @@ def _build_retrieval_artifacts(
     sessions_root: Path,
     long_term_retrieval_scheme: str | None = None,
 ) -> None:
-    if not _env_bool("WORLDMM_MEMORY_BUILD_RETRIEVAL_ARTIFACTS", True):
+    if not _env_bool("EM2MEM_MEMORY_BUILD_RETRIEVAL_ARTIFACTS", True):
         return
     long_term_retrieval_scheme = normalize_long_term_retrieval_scheme(long_term_retrieval_scheme)
-    old_strict = os.environ.get("WORLDMM_QUERY_STRICT_LOAD_ONLY")
-    old_cached = os.environ.get("WORLDMM_QUERY_USE_CACHED_HIPPORAG")
-    os.environ["WORLDMM_QUERY_STRICT_LOAD_ONLY"] = "0"
-    os.environ["WORLDMM_QUERY_USE_CACHED_HIPPORAG"] = "0"
+    old_strict = os.environ.get("EM2MEM_QUERY_STRICT_LOAD_ONLY")
+    old_cached = os.environ.get("EM2MEM_QUERY_USE_CACHED_HIPPORAG")
+    os.environ["EM2MEM_QUERY_STRICT_LOAD_ONLY"] = "0"
+    os.environ["EM2MEM_QUERY_USE_CACHED_HIPPORAG"] = "0"
     try:
         from online_query.query_engine import load_query_engine
 
@@ -77,7 +77,7 @@ def _build_retrieval_artifacts(
             long_term_retrieval_scheme=long_term_retrieval_scheme,
         )
         engine.close()
-        memory_config_path = sessions_root / session_id / "worldmm" / "memory_config.json"
+        memory_config_path = sessions_root / session_id / "em2mem" / "memory_config.json"
         config = read_json(memory_config_path, default={})
         if isinstance(config, dict):
             config["hipporag_cache_ready"] = True
@@ -92,13 +92,13 @@ def _build_retrieval_artifacts(
             write_json(memory_config_path, config)
     finally:
         if old_strict is None:
-            os.environ.pop("WORLDMM_QUERY_STRICT_LOAD_ONLY", None)
+            os.environ.pop("EM2MEM_QUERY_STRICT_LOAD_ONLY", None)
         else:
-            os.environ["WORLDMM_QUERY_STRICT_LOAD_ONLY"] = old_strict
+            os.environ["EM2MEM_QUERY_STRICT_LOAD_ONLY"] = old_strict
         if old_cached is None:
-            os.environ.pop("WORLDMM_QUERY_USE_CACHED_HIPPORAG", None)
+            os.environ.pop("EM2MEM_QUERY_USE_CACHED_HIPPORAG", None)
         else:
-            os.environ["WORLDMM_QUERY_USE_CACHED_HIPPORAG"] = old_cached
+            os.environ["EM2MEM_QUERY_USE_CACHED_HIPPORAG"] = old_cached
 
 
 def _build_retrieval_artifacts_isolated(
@@ -107,12 +107,12 @@ def _build_retrieval_artifacts_isolated(
     project_root: Path,
     long_term_retrieval_scheme: str | None = None,
 ) -> dict:
-    if not _env_bool("WORLDMM_MEMORY_BUILD_RETRIEVAL_ARTIFACTS", True):
+    if not _env_bool("EM2MEM_MEMORY_BUILD_RETRIEVAL_ARTIFACTS", True):
         return {"status": "disabled"}
     long_term_retrieval_scheme = normalize_long_term_retrieval_scheme(long_term_retrieval_scheme)
     script = project_root / "memory_worker_subprocess.py"
     if not script.exists():
-        if not _env_bool("WORLDMM_MEMORY_ALLOW_INPROCESS_RETRIEVAL_BUILD", False):
+        if not _env_bool("EM2MEM_MEMORY_ALLOW_INPROCESS_RETRIEVAL_BUILD", False):
             return {"status": "skipped", "reason": "memory_worker_subprocess.py missing"}
         _build_retrieval_artifacts(
             session_id=session_id,
@@ -149,7 +149,7 @@ def _build_retrieval_artifacts_isolated(
 
 
 def _memory_update_mode(task: dict, args: argparse.Namespace) -> str:
-    mode = str(task.get("update_mode") or os.getenv("WORLDMM_MEMORY_UPDATE_MODE") or "incremental_append").strip().lower()
+    mode = str(task.get("update_mode") or os.getenv("EM2MEM_MEMORY_UPDATE_MODE") or "incremental_append").strip().lower()
     if mode in {"incremental", "append"}:
         return "incremental_append"
     if mode in {"full", "full_rebuild", "full_rebuild_fallback"}:
@@ -158,7 +158,7 @@ def _memory_update_mode(task: dict, args: argparse.Namespace) -> str:
 
 
 def _full_rebuild_allowed() -> bool:
-    return _env_bool("WORLDMM_ALLOW_FULL_REBUILD_FALLBACK", False)
+    return _env_bool("EM2MEM_ALLOW_FULL_REBUILD_FALLBACK", False)
 
 
 def _parse_iso_datetime(value: object) -> datetime | None:
@@ -183,12 +183,12 @@ def _recover_stale_memory_tasks(project_root: Path) -> dict:
 
     By default stale tasks are marked failed instead of requeued. This prevents a
     broken semantic/NER task from being retried forever and consuming API quota.
-    Set WORLDMM_MEMORY_REQUEUE_STALE_IN_PROGRESS=1 to requeue them.
+    Set EM2MEM_MEMORY_REQUEUE_STALE_IN_PROGRESS=1 to requeue them.
     """
 
-    stale_seconds = float(os.getenv("WORLDMM_MEMORY_TASK_STALE_SECONDS", "300"))
-    requeue = _env_bool("WORLDMM_MEMORY_REQUEUE_STALE_IN_PROGRESS", False)
-    retry_limit = int(os.getenv("WORLDMM_MEMORY_STALE_RETRY_LIMIT", "1"))
+    stale_seconds = float(os.getenv("EM2MEM_MEMORY_TASK_STALE_SECONDS", "300"))
+    requeue = _env_bool("EM2MEM_MEMORY_REQUEUE_STALE_IN_PROGRESS", False)
+    retry_limit = int(os.getenv("EM2MEM_MEMORY_STALE_RETRY_LIMIT", "1"))
     dirs = ensure_queue_dirs(project_root)
     recovered: list[dict] = []
     now = datetime.now(timezone.utc)
@@ -319,13 +319,13 @@ def run_worker(args: argparse.Namespace) -> None:
             "visual_backend": args.visual_backend,
             "pipeline_mode": get_pipeline_mode(),
             "memory_source": args.source,
-            "default_update_mode": os.getenv("WORLDMM_MEMORY_UPDATE_MODE", "incremental_append"),
+            "default_update_mode": os.getenv("EM2MEM_MEMORY_UPDATE_MODE", "incremental_append"),
         }
     write_worker_runtime(
         project_root,
         "memory",
         status="ready",
-        backend=os.getenv("WORLDMM_MEMORY_GENERATION_BACKEND", "llm"),
+        backend=os.getenv("EM2MEM_MEMORY_GENERATION_BACKEND", "llm"),
         model_name=args.model,
         client_loaded=True,
         warmup_done=True,
@@ -337,7 +337,7 @@ def run_worker(args: argparse.Namespace) -> None:
             "visual_backend": args.visual_backend,
             "pipeline_mode": get_pipeline_mode(),
             "memory_source": args.source,
-            "default_update_mode": os.getenv("WORLDMM_MEMORY_UPDATE_MODE", "incremental_append"),
+            "default_update_mode": os.getenv("EM2MEM_MEMORY_UPDATE_MODE", "incremental_append"),
             "stale_task_recovery": stale_recovery,
             "queued_task_dedupe": queued_dedupe,
         },
@@ -350,7 +350,7 @@ def run_worker(args: argparse.Namespace) -> None:
                 project_root,
                 "memory",
                 status="ready",
-                backend=os.getenv("WORLDMM_MEMORY_GENERATION_BACKEND", "llm"),
+                backend=os.getenv("EM2MEM_MEMORY_GENERATION_BACKEND", "llm"),
                 model_name=args.model,
                 client_loaded=True,
                 warmup_done=True,
@@ -362,7 +362,7 @@ def run_worker(args: argparse.Namespace) -> None:
                     "visual_backend": args.visual_backend,
                     "pipeline_mode": get_pipeline_mode(),
                     "memory_source": args.source,
-                    "default_update_mode": os.getenv("WORLDMM_MEMORY_UPDATE_MODE", "incremental_append"),
+                    "default_update_mode": os.getenv("EM2MEM_MEMORY_UPDATE_MODE", "incremental_append"),
                 },
             )
             if args.once:
@@ -382,7 +382,7 @@ def run_worker(args: argparse.Namespace) -> None:
                     project_root,
                     "memory",
                     status="busy",
-                    backend=os.getenv("WORLDMM_MEMORY_GENERATION_BACKEND", "llm"),
+                    backend=os.getenv("EM2MEM_MEMORY_GENERATION_BACKEND", "llm"),
                     model_name=args.model,
                     client_loaded=True,
                     warmup_done=True,
@@ -408,13 +408,13 @@ def run_worker(args: argparse.Namespace) -> None:
                     task=task,
                     claimed_path=claimed_path,
                     status="busy",
-                    backend=os.getenv("WORLDMM_MEMORY_GENERATION_BACKEND", "llm"),
+                    backend=os.getenv("EM2MEM_MEMORY_GENERATION_BACKEND", "llm"),
                     model_name=args.model,
                     client_loaded=True,
                     warmup_done=True,
                     queue_pending=_queue_pending,
                     extra=heartbeat_extra,
-                    interval_env="WORLDMM_MEMORY_HEARTBEAT_SECONDS",
+                    interval_env="EM2MEM_MEMORY_HEARTBEAT_SECONDS",
                 ):
                     if update_mode == "incremental_append" and source in {"auto", "mst_episodic", "mst", "mst_micro_events"}:
                         _log_stage(session_id, "fast_append", task_id=str(task.get("task_id") or claimed_path.stem), update_mode=update_mode)
@@ -434,10 +434,10 @@ def run_worker(args: argparse.Namespace) -> None:
                     else:
                         if update_mode == "full_rebuild_fallback" and not _full_rebuild_allowed():
                             raise RuntimeError(
-                                "full_rebuild_fallback is disabled. Set WORLDMM_ALLOW_FULL_REBUILD_FALLBACK=1 to run a full rebuild."
+                                "full_rebuild_fallback is disabled. Set EM2MEM_ALLOW_FULL_REBUILD_FALLBACK=1 to run a full rebuild."
                             )
                         _log_stage(session_id, "fast_append", task_id=str(task.get("task_id") or claimed_path.stem), update_mode=update_mode)
-                        build_online_worldmm_memory(
+                        build_online_em2mem_memory(
                             session_id=session_id,
                             sessions_root=sessions_root,
                             force=bool(task.get("force", args.force)),
@@ -476,7 +476,7 @@ def run_worker(args: argparse.Namespace) -> None:
                             backend=args.visual_backend,
                             force=bool(task.get("force_visual_embedding", True)),
                         )
-                        memory_config_path = session_dir / "worldmm" / "memory_config.json"
+                        memory_config_path = session_dir / "em2mem" / "memory_config.json"
                         config = read_json(memory_config_path, default={})
                         if isinstance(config, dict):
                             config["visual_embedding_ready"] = False
@@ -512,13 +512,13 @@ def run_worker(args: argparse.Namespace) -> None:
                         task=graph_task,
                         claimed_path=claimed_path,
                         status="busy",
-                        backend=os.getenv("WORLDMM_MEMORY_GENERATION_BACKEND", "llm"),
+                        backend=os.getenv("EM2MEM_MEMORY_GENERATION_BACKEND", "llm"),
                         model_name=args.model,
                         client_loaded=True,
                         warmup_done=True,
                         queue_pending=_queue_pending,
                         extra=heartbeat_extra,
-                        interval_env="WORLDMM_MEMORY_HEARTBEAT_SECONDS",
+                        interval_env="EM2MEM_MEMORY_HEARTBEAT_SECONDS",
                     ):
                         _log_stage(session_id, "graph_build", mode="retrieval_artifacts_subprocess")
                         long_term_retrieval_scheme = normalize_long_term_retrieval_scheme(None)
@@ -542,7 +542,7 @@ def run_worker(args: argparse.Namespace) -> None:
                     status="done",
                     result=incremental_result.to_dict() if incremental_result is not None else None,
                 )
-                if _env_bool("WORLDMM_AUTO_QUERY_WARMUP_ON_MEMORY_READY", True):
+                if _env_bool("EM2MEM_AUTO_QUERY_WARMUP_ON_MEMORY_READY", True):
                     try:
                         warmup_task_path = enqueue_query_warmup_task(
                             project_root,
@@ -570,7 +570,7 @@ def run_worker(args: argparse.Namespace) -> None:
                 )
                 refresh_session_pipeline_state(session_dir)
             except Exception as exc:
-                memory_config_path = session_dir / "worldmm" / "memory_config.json"
+                memory_config_path = session_dir / "em2mem" / "memory_config.json"
                 if memory_config_path.exists():
                     config = read_json(memory_config_path, default={})
                     if isinstance(config, dict):
@@ -604,7 +604,7 @@ def run_worker(args: argparse.Namespace) -> None:
                     project_root,
                     "memory",
                     status="error",
-                    backend=os.getenv("WORLDMM_MEMORY_GENERATION_BACKEND", "llm"),
+                    backend=os.getenv("EM2MEM_MEMORY_GENERATION_BACKEND", "llm"),
                     model_name=args.model,
                     client_loaded=True,
                     warmup_done=True,
@@ -619,19 +619,19 @@ def run_worker(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Persistent worker for online WorldMM memory tasks.")
+    parser = argparse.ArgumentParser(description="Persistent worker for online Em2Mem memory tasks.")
     parser.add_argument("--project-root", default=str(PROJECT_ROOT))
     parser.add_argument("--sessions-root", default=str(DEFAULT_SESSIONS_ROOT))
     parser.add_argument("--poll-interval", type=float, default=2.0)
-    parser.add_argument("--force", action="store_true", default=_env_bool("WORLDMM_FORCE_MEMORY", False))
-    parser.add_argument("--skip-visual-embedding", action="store_true", default=_env_bool("WORLDMM_SKIP_VISUAL_EMBEDDING", True))
-    parser.add_argument("--skip-semantic", action="store_true", default=_env_bool("WORLDMM_SKIP_SEMANTIC_MEMORY", False))
-    parser.add_argument("--auto-visual-embedding", action=argparse.BooleanOptionalAction, default=_env_bool("WORLDMM_AUTO_VISUAL_EMBEDDING", True))
-    parser.add_argument("--visual-backend", default=os.getenv("WORLDMM_VISUAL_BACKEND", "vlm2vec"))
-    parser.add_argument("--visual-batch-size", type=int, default=int(os.getenv("WORLDMM_VISUAL_BATCH_SIZE", "8")))
+    parser.add_argument("--force", action="store_true", default=_env_bool("EM2MEM_FORCE_MEMORY", False))
+    parser.add_argument("--skip-visual-embedding", action="store_true", default=_env_bool("EM2MEM_SKIP_VISUAL_EMBEDDING", True))
+    parser.add_argument("--skip-semantic", action="store_true", default=_env_bool("EM2MEM_SKIP_SEMANTIC_MEMORY", False))
+    parser.add_argument("--auto-visual-embedding", action=argparse.BooleanOptionalAction, default=_env_bool("EM2MEM_AUTO_VISUAL_EMBEDDING", True))
+    parser.add_argument("--visual-backend", default=os.getenv("EM2MEM_VISUAL_BACKEND", "vlm2vec"))
+    parser.add_argument("--visual-batch-size", type=int, default=int(os.getenv("EM2MEM_VISUAL_BATCH_SIZE", "8")))
     parser.add_argument("--limit-segments", type=int, default=None)
-    parser.add_argument("--model", default=os.getenv("WORLDMM_MEMORY_MODEL") or os.getenv("OPENAI_MODEL"))
-    parser.add_argument("--source", default=os.getenv("WORLDMM_MEMORY_SOURCE", "auto"), choices=["auto", "online_evidence", "legacy_evidence", "mst_episodic"])
+    parser.add_argument("--model", default=os.getenv("EM2MEM_MEMORY_MODEL") or os.getenv("OPENAI_MODEL"))
+    parser.add_argument("--source", default=os.getenv("EM2MEM_MEMORY_SOURCE", "auto"), choices=["auto", "online_evidence", "legacy_evidence", "mst_episodic"])
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()

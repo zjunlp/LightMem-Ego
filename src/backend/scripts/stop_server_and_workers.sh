@@ -17,7 +17,7 @@ usage() {
   cat <<'EOF'
 Usage: scripts/stop_online_backend_processes.sh [--dry-run] [--force] [--timeout SECONDS] [--no-start]
 
-Stops OmniSpark backend API and online worker processes matched by pgrep, then starts
+Stops lightmem_ego backend API and online worker processes matched by pgrep, then starts
 scripts/start_online_all_workers.sh and scripts/start_api.sh.
 The VLM2Vec and Qwen3 embedding APIs are protected and are not stopped by this script.
 

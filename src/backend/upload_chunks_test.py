@@ -41,7 +41,7 @@ def _post_json(url: str, payload: dict) -> dict:
 
 
 def _post_multipart(url: str, fields: dict[str, object], file_path: Path) -> dict:
-    boundary = "----worldmm" + uuid.uuid4().hex
+    boundary = "----em2mem" + uuid.uuid4().hex
     parts: list[bytes] = []
     for key, value in fields.items():
         parts.append(f"--{boundary}\r\n".encode())
@@ -106,7 +106,7 @@ def main() -> None:
     duration = _probe_duration(input_video)
     print(json.dumps({"stream_start": start_resp}, ensure_ascii=False, indent=2))
 
-    with tempfile.TemporaryDirectory(prefix="worldmm_stream_chunks_") as tmp:
+    with tempfile.TemporaryDirectory(prefix="em2mem_stream_chunks_") as tmp:
         tmp_dir = Path(tmp)
         start = 0.0
         idx = 0

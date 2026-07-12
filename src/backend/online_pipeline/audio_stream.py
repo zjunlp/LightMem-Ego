@@ -240,7 +240,7 @@ class AudioStreamStore:
             }
             chunks = [item for item in state.get("chunks", []) or [] if isinstance(item, dict)]
             chunks.append(record)
-            state["chunks"] = chunks[-max(1, _env_int("WORLDMM_AUDIO_STREAM_STATE_HISTORY", 500)) :]
+            state["chunks"] = chunks[-max(1, _env_int("EM2MEM_AUDIO_STREAM_STATE_HISTORY", 500)) :]
             state["accepted_count"] = int(state.get("accepted_count", 0) or 0) + 1
             state["latest_audio_index"] = int(audio_index)
             state["latest_relative_ts_ms"] = rel_ms
@@ -277,13 +277,13 @@ class AudioStreamStore:
 
     def maybe_enqueue_asr_windows(self, *, project_root: Path, stream_id: str | None = None) -> dict[str, Any]:
         """Create rolling ASR tasks without doing ASR in the request path."""
-        enabled = _env_bool("WORLDMM_AUDIO_ASR_ENABLED", True)
+        enabled = _env_bool("EM2MEM_AUDIO_ASR_ENABLED", True)
         with self.lock():
             asr_state = self._load_asr_state_unlocked()
             if not asr_state:
                 asr_state = self._empty_asr_state(stream_id=stream_id or "")
             asr_state["enabled"] = bool(enabled)
-            asr_state["backend"] = os.getenv("WORLDMM_AUDIO_ASR_BACKEND", asr_state.get("backend", "whisperx"))
+            asr_state["backend"] = os.getenv("EM2MEM_AUDIO_ASR_BACKEND", asr_state.get("backend", "whisperx"))
             if not enabled:
                 asr_state["asr_status"] = "not_started"
                 asr_state["updated_at"] = utc_now_iso()
@@ -294,12 +294,12 @@ class AudioStreamStore:
             if not isinstance(buffer_state, dict):
                 buffer_state = {}
             latest_end = int(buffer_state.get("window_end_ms", 0) or 0)
-            window_ms = max(1000, _env_int("WORLDMM_AUDIO_ASR_WINDOW_MS", 3000))
-            hop_ms = max(500, _env_int("WORLDMM_AUDIO_ASR_HOP_MS", 3000))
-            min_window_ms = max(500, _env_int("WORLDMM_AUDIO_ASR_MIN_WINDOW_MS", 2000))
-            flush_min_ms = max(0, _env_int("WORLDMM_AUDIO_ASR_FLUSH_MIN_MS", 1000))
-            max_window_ms = max(window_ms, _env_int("WORLDMM_AUDIO_ASR_MAX_WINDOW_MS", 4000))
-            max_pending = max(1, _env_int("WORLDMM_AUDIO_ASR_MAX_PENDING_WINDOWS", 5))
+            window_ms = max(1000, _env_int("EM2MEM_AUDIO_ASR_WINDOW_MS", 3000))
+            hop_ms = max(500, _env_int("EM2MEM_AUDIO_ASR_HOP_MS", 3000))
+            min_window_ms = max(500, _env_int("EM2MEM_AUDIO_ASR_MIN_WINDOW_MS", 2000))
+            flush_min_ms = max(0, _env_int("EM2MEM_AUDIO_ASR_FLUSH_MIN_MS", 1000))
+            max_window_ms = max(window_ms, _env_int("EM2MEM_AUDIO_ASR_MAX_WINDOW_MS", 4000))
+            max_pending = max(1, _env_int("EM2MEM_AUDIO_ASR_MAX_PENDING_WINDOWS", 5))
             asr_state["window_ms"] = window_ms
             asr_state["hop_ms"] = hop_ms
             asr_state["min_window_ms"] = min_window_ms
@@ -370,7 +370,7 @@ class AudioStreamStore:
                 processing_chunks=[],
                 global_start_time=window_start / 1000.0,
                 global_end_time=window_end / 1000.0,
-                asr_backend=str(os.getenv("WORLDMM_AUDIO_ASR_BACKEND") or asr_state.get("backend") or "whisperx"),
+                asr_backend=str(os.getenv("EM2MEM_AUDIO_ASR_BACKEND") or asr_state.get("backend") or "whisperx"),
                 reason="audio_chunk_rolling_asr",
                 source="audio_chunk_window",
                 window_id=window_id,
@@ -400,7 +400,7 @@ class AudioStreamStore:
             }
             windows = [dict(item) for item in asr_state.get("windows", []) or [] if isinstance(item, dict)]
             windows.append(window_record)
-            asr_state["windows"] = windows[-max(1, _env_int("WORLDMM_AUDIO_ASR_STATE_HISTORY", 200)) :]
+            asr_state["windows"] = windows[-max(1, _env_int("EM2MEM_AUDIO_ASR_STATE_HISTORY", 200)) :]
             asr_state["last_enqueued_window_start_ms"] = window_start
             asr_state["last_enqueued_window_end_ms"] = window_end
             asr_state["latest_window_id"] = window_id
@@ -424,7 +424,7 @@ class AudioStreamStore:
 
     def flush_asr_tail(self, *, project_root: Path, stream_id: str | None = None, reason: str = "stream_stop") -> dict[str, Any]:
         """Enqueue a final short ASR window for remaining buffered audio."""
-        enabled = _env_bool("WORLDMM_AUDIO_ASR_ENABLED", True)
+        enabled = _env_bool("EM2MEM_AUDIO_ASR_ENABLED", True)
         with self.lock():
             asr_state = self._load_asr_state_unlocked()
             if not asr_state:
@@ -436,8 +436,8 @@ class AudioStreamStore:
                 buffer_state = {}
             latest_end = int(buffer_state.get("window_end_ms", 0) or 0)
             last_end = int(asr_state.get("last_enqueued_window_end_ms", 0) or 0)
-            flush_min_ms = max(0, _env_int("WORLDMM_AUDIO_ASR_FLUSH_MIN_MS", 1000))
-            max_window_ms = max(1000, _env_int("WORLDMM_AUDIO_ASR_MAX_WINDOW_MS", 4000))
+            flush_min_ms = max(0, _env_int("EM2MEM_AUDIO_ASR_FLUSH_MIN_MS", 1000))
+            max_window_ms = max(1000, _env_int("EM2MEM_AUDIO_ASR_MAX_WINDOW_MS", 4000))
             remaining_ms = max(0, latest_end - last_end)
             asr_state["flush_min_ms"] = flush_min_ms
             asr_state["buffered_audio_ms"] = remaining_ms
@@ -461,7 +461,7 @@ class AudioStreamStore:
                 )
                 return {"enabled": True, "enqueued": [], "reason": "tail_too_short", "remaining_ms": remaining_ms}
             pending_count = self._pending_audio_asr_window_count(project_root)
-            max_pending = max(1, _env_int("WORLDMM_AUDIO_ASR_MAX_PENDING_WINDOWS", 5))
+            max_pending = max(1, _env_int("EM2MEM_AUDIO_ASR_MAX_PENDING_WINDOWS", 5))
             asr_state["max_pending_windows"] = max_pending
             if pending_count >= max_pending:
                 asr_state["asr_status"] = "queued"
@@ -500,7 +500,7 @@ class AudioStreamStore:
                 processing_chunks=[],
                 global_start_time=window_start / 1000.0,
                 global_end_time=window_end / 1000.0,
-                asr_backend=str(os.getenv("WORLDMM_AUDIO_ASR_BACKEND") or asr_state.get("backend") or "whisperx"),
+                asr_backend=str(os.getenv("EM2MEM_AUDIO_ASR_BACKEND") or asr_state.get("backend") or "whisperx"),
                 reason="audio_chunk_rolling_asr_flush",
                 source="audio_chunk_window",
                 window_id=window_id,
@@ -530,7 +530,7 @@ class AudioStreamStore:
             }
             windows = [dict(item) for item in asr_state.get("windows", []) or [] if isinstance(item, dict)]
             windows.append(window_record)
-            asr_state["windows"] = windows[-max(1, _env_int("WORLDMM_AUDIO_ASR_STATE_HISTORY", 200)) :]
+            asr_state["windows"] = windows[-max(1, _env_int("EM2MEM_AUDIO_ASR_STATE_HISTORY", 200)) :]
             asr_state["last_enqueued_window_start_ms"] = window_start
             asr_state["last_enqueued_window_end_ms"] = window_end
             asr_state["latest_window_id"] = window_id
@@ -614,7 +614,7 @@ class AudioStreamStore:
     def public_status(self, *, input_mode: Any = None) -> dict[str, Any]:
         state = self.load()
         mode = frame_stream_input_mode(input_mode or state.get("input_mode"))
-        enabled = _env_bool("WORLDMM_AUDIO_STREAM_ENABLED", True) and is_frame_stream_mode(mode)
+        enabled = _env_bool("EM2MEM_AUDIO_STREAM_ENABLED", True) and is_frame_stream_mode(mode)
         if not state or not enabled:
             return {
                 "enabled": bool(enabled),
@@ -725,14 +725,14 @@ class AudioStreamStore:
         return {
             "session_id": self.session_dir.name,
             "stream_id": stream_id,
-            "enabled": _env_bool("WORLDMM_AUDIO_ASR_ENABLED", True),
-            "backend": os.getenv("WORLDMM_AUDIO_ASR_BACKEND", "whisperx"),
-            "window_ms": _env_int("WORLDMM_AUDIO_ASR_WINDOW_MS", 3000),
-            "hop_ms": _env_int("WORLDMM_AUDIO_ASR_HOP_MS", 3000),
-            "min_window_ms": _env_int("WORLDMM_AUDIO_ASR_MIN_WINDOW_MS", 2000),
-            "flush_min_ms": _env_int("WORLDMM_AUDIO_ASR_FLUSH_MIN_MS", 1000),
-            "max_window_ms": _env_int("WORLDMM_AUDIO_ASR_MAX_WINDOW_MS", 4000),
-            "max_pending_windows": _env_int("WORLDMM_AUDIO_ASR_MAX_PENDING_WINDOWS", 5),
+            "enabled": _env_bool("EM2MEM_AUDIO_ASR_ENABLED", True),
+            "backend": os.getenv("EM2MEM_AUDIO_ASR_BACKEND", "whisperx"),
+            "window_ms": _env_int("EM2MEM_AUDIO_ASR_WINDOW_MS", 3000),
+            "hop_ms": _env_int("EM2MEM_AUDIO_ASR_HOP_MS", 3000),
+            "min_window_ms": _env_int("EM2MEM_AUDIO_ASR_MIN_WINDOW_MS", 2000),
+            "flush_min_ms": _env_int("EM2MEM_AUDIO_ASR_FLUSH_MIN_MS", 1000),
+            "max_window_ms": _env_int("EM2MEM_AUDIO_ASR_MAX_WINDOW_MS", 4000),
+            "max_pending_windows": _env_int("EM2MEM_AUDIO_ASR_MAX_PENDING_WINDOWS", 5),
             "last_enqueued_window_end_ms": 0,
             "last_enqueued_window_start_ms": 0,
             "last_completed_window_end_ms": 0,
@@ -797,7 +797,7 @@ class AudioStreamStore:
                 "decode_ok": record.get("decode_ok", True),
             }
         )
-        window_ms = max(1000, _env_int("WORLDMM_AUDIO_BUFFER_WINDOW_SECONDS", 60) * 1000)
+        window_ms = max(1000, _env_int("EM2MEM_AUDIO_BUFFER_WINDOW_SECONDS", 60) * 1000)
         latest_end = int(record.get("relative_ts_ms", 0) or 0) + int(record.get("duration_ms", 0) or 0)
         window_start = max(0, latest_end - window_ms)
         chunks = [
@@ -805,7 +805,7 @@ class AudioStreamStore:
             for item in chunks
             if int(item.get("relative_ts_ms", 0) or 0) + int(item.get("duration_ms", 0) or 0) >= window_start
         ]
-        kept_chunks = chunks[-max(1, _env_int("WORLDMM_AUDIO_BUFFER_MAX_CHUNKS", 120)) :]
+        kept_chunks = chunks[-max(1, _env_int("EM2MEM_AUDIO_BUFFER_MAX_CHUNKS", 120)) :]
         buffer_state = {
             "chunks": kept_chunks,
             "window_start_ms": window_start,
@@ -928,7 +928,7 @@ class AudioStreamStore:
             if error:
                 payload["error"] = error
             windows.append(payload)
-        state["windows"] = windows[-max(1, _env_int("WORLDMM_AUDIO_ASR_STATE_HISTORY", 200)) :]
+        state["windows"] = windows[-max(1, _env_int("EM2MEM_AUDIO_ASR_STATE_HISTORY", 200)) :]
 
     def _update_asr_window_status(self, window_id: str, *, status: str, event_type: str) -> dict[str, Any]:
         with self.lock():

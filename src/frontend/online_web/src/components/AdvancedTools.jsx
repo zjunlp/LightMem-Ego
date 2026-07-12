@@ -10,7 +10,7 @@ import {
   Wrench
 } from 'lucide-react'
 import { useState } from 'react'
-import { ANSWER_MODES, LONG_TERM_RETRIEVAL_SCHEMES } from '../hooks/useAskWorldMM.js'
+import { ANSWER_MODES, LONG_TERM_RETRIEVAL_SCHEMES } from '../hooks/useAskLightMemEgo.js'
 import { INPUT_MODES } from '../hooks/useRealtimeStream.js'
 
 export default function AdvancedTools({ stream, ask, onReset }) {
@@ -290,7 +290,7 @@ export default function AdvancedTools({ stream, ask, onReset }) {
             <div className="advanced-section-heading">
               <div>
                 <span>Retrieval Scheme</span>
-                <strong>{ask.longTermRetrievalScheme === LONG_TERM_RETRIEVAL_SCHEMES.WORLDMM_LEGACY ? 'WorldMM legacy' : 'EM2Memory'}</strong>
+                <strong>{ask.longTermRetrievalScheme === LONG_TERM_RETRIEVAL_SCHEMES.LIGHTMEM_EGO_LEGACY ? 'LightMemEgo legacy' : 'EM2Memory'}</strong>
               </div>
             </div>
             <div className="input-mode-switcher answer-mode-switcher" role="radiogroup" aria-label="Long-term retrieval scheme">
@@ -305,12 +305,12 @@ export default function AdvancedTools({ stream, ask, onReset }) {
                 <span>EM2Memory</span>
               </button>
               <button
-                className={ask.longTermRetrievalScheme === LONG_TERM_RETRIEVAL_SCHEMES.WORLDMM_LEGACY ? 'active' : ''}
+                className={ask.longTermRetrievalScheme === LONG_TERM_RETRIEVAL_SCHEMES.LIGHTMEM_EGO_LEGACY ? 'active' : ''}
                 type="button"
                 role="radio"
-                aria-checked={ask.longTermRetrievalScheme === LONG_TERM_RETRIEVAL_SCHEMES.WORLDMM_LEGACY}
+                aria-checked={ask.longTermRetrievalScheme === LONG_TERM_RETRIEVAL_SCHEMES.LIGHTMEM_EGO_LEGACY}
                 disabled={ask.loading}
-                onClick={() => ask.setLongTermRetrievalScheme(LONG_TERM_RETRIEVAL_SCHEMES.WORLDMM_LEGACY)}
+                onClick={() => ask.setLongTermRetrievalScheme(LONG_TERM_RETRIEVAL_SCHEMES.LIGHTMEM_EGO_LEGACY)}
               >
                 <span>Legacy</span>
               </button>

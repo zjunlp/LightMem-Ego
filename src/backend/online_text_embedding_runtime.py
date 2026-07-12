@@ -30,7 +30,7 @@ def _is_placeholder_path(value: str | None) -> bool:
 def _resolve_model_path(explicit: str | None = None) -> str:
     for value in (
         explicit,
-        os.getenv("WORLDMM_TEXT_EMBED_MODEL"),
+        os.getenv("EM2MEM_TEXT_EMBED_MODEL"),
         str(PROJECT_ROOT / "models" / "Qwen3-Embedding-4B"),
         "Qwen/Qwen3-Embedding-4B",
     ):
@@ -40,7 +40,7 @@ def _resolve_model_path(explicit: str | None = None) -> str:
 
 
 def _configure_hf_local_first() -> None:
-    allow_download = os.getenv("WORLDMM_ALLOW_HF_DOWNLOAD", "0").strip().lower() in {"1", "true", "yes", "on"}
+    allow_download = os.getenv("EM2MEM_ALLOW_HF_DOWNLOAD", "0").strip().lower() in {"1", "true", "yes", "on"}
     if allow_download:
         return
     os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
@@ -66,8 +66,8 @@ class Qwen3TextEmbeddingRuntime:
         normalize: bool = False,
     ) -> None:
         self.model_path = _resolve_model_path(model_path)
-        self.device = device or os.getenv("WORLDMM_TEXT_EMBED_DEVICE") or os.getenv("WORLDMM_EMBEDDING_DEVICE") or "cuda"
-        self.batch_size = int(batch_size or os.getenv("WORLDMM_TEXT_EMBED_BATCH_SIZE") or 256)
+        self.device = device or os.getenv("EM2MEM_TEXT_EMBED_DEVICE") or os.getenv("EM2MEM_EMBEDDING_DEVICE") or "cuda"
+        self.batch_size = int(batch_size or os.getenv("EM2MEM_TEXT_EMBED_BATCH_SIZE") or 256)
         self.normalize = normalize
         self._embedding_model = None
 
@@ -75,7 +75,7 @@ class Qwen3TextEmbeddingRuntime:
     def model(self):
         if self._embedding_model is None:
             _configure_hf_local_first()
-            from worldmm.embedding.qwen3_embedding import Qwen3EmbeddingModel
+            from em2mem.embedding.qwen3_embedding import Qwen3EmbeddingModel
 
             self._embedding_model = Qwen3EmbeddingModel(model_name=self.model_path, device=self.device)
         return self._embedding_model

@@ -35,10 +35,10 @@ class MCurStore:
         self.frames_path = self.current_dir / "current_frames.jsonl"
         self.transcript_path = self.current_dir / "transcript_partial.jsonl"
         self.open_event_path = self.current_dir / "open_event.json"
-        self.window_seconds = env_float("WORLDMM_MCUR_WINDOW_SECONDS", 30.0)
-        self.core_seconds = env_float("WORLDMM_MCUR_CORE_SECONDS", 10.0)
-        self.max_frames = env_int("WORLDMM_MCUR_MAX_FRAMES", 30)
-        self.stale_seconds = env_float("WORLDMM_MCUR_STALE_SECONDS", 60.0)
+        self.window_seconds = env_float("EM2MEM_MCUR_WINDOW_SECONDS", 30.0)
+        self.core_seconds = env_float("EM2MEM_MCUR_CORE_SECONDS", 10.0)
+        self.max_frames = env_int("EM2MEM_MCUR_MAX_FRAMES", 30)
+        self.stale_seconds = env_float("EM2MEM_MCUR_STALE_SECONDS", 60.0)
 
     def load(self) -> dict[str, Any]:
         state = read_json(self.state_path, default={})

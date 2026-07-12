@@ -9,7 +9,7 @@ from ..utils.logging_utils import get_logger
 from ..utils.llm_utils import fix_broken_generated_json, filter_invalid_triples
 from ..utils.misc_utils import TripleRawOutput, NerRawOutput
 
-from worldmm.llm import LLMModel, PromptTemplateManager
+from em2mem.llm import LLMModel, PromptTemplateManager
 
 logger = get_logger(__name__)
 

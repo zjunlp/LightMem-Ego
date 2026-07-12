@@ -41,7 +41,7 @@ class CoreferenceResolver:
     LATER_KWS = ["后来", "之后", "然后", "接下来", "later", "after that", "then", "next", "then what"]
 
     def __init__(self, followup_window_seconds: int | None = None) -> None:
-        self.followup_window_seconds = followup_window_seconds or int(os.getenv("WORLDMM_CACHE_FOLLOWUP_WINDOW_SECONDS", "60"))
+        self.followup_window_seconds = followup_window_seconds or int(os.getenv("EM2MEM_CACHE_FOLLOWUP_WINDOW_SECONDS", "60"))
 
     def resolve(self, question: str, interaction_cache: InteractionCache) -> dict[str, Any]:
         q = (question or "").strip()

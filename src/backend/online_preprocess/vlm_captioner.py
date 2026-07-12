@@ -90,9 +90,9 @@ def _normalize_reasoning_effort(value: Any) -> str:
 
 
 def _reasoning_effort_kwargs() -> dict[str, Any]:
-    if os.getenv("WORLDMM_OPENAI_DISABLE_REASONING", "1").strip().lower() in {"1", "true", "yes", "on"}:
+    if os.getenv("EM2MEM_OPENAI_DISABLE_REASONING", "1").strip().lower() in {"1", "true", "yes", "on"}:
         return {"reasoning_effort": "none"}
-    effort = os.getenv("WORLDMM_CHAT_REASONING_EFFORT") or os.getenv("WORLDMM_OPENAI_REASONING_EFFORT") or "none"
+    effort = os.getenv("EM2MEM_CHAT_REASONING_EFFORT") or os.getenv("EM2MEM_OPENAI_REASONING_EFFORT") or "none"
     return {"reasoning_effort": _normalize_reasoning_effort(effort)}
 
 
@@ -220,11 +220,11 @@ def build_vlm_captioner(
         return MockVLMCaptioner()
     if backend == "openai":
         return OpenAIVLMCaptioner(
-            model=model or os.getenv("WORLDMM_VLM_MODEL", "gpt-4o-mini"),
+            model=model or os.getenv("EM2MEM_VLM_MODEL", "gpt-4o-mini"),
             session_dir=session_dir,
             max_keyframes=max_keyframes,
-            timeout=float(os.getenv("WORLDMM_VLM_TIMEOUT", "120")),
-            temperature=float(os.getenv("WORLDMM_VLM_TEMPERATURE", "0")),
+            timeout=float(os.getenv("EM2MEM_VLM_TIMEOUT", "120")),
+            temperature=float(os.getenv("EM2MEM_VLM_TEMPERATURE", "0")),
         )
     if backend == "local":
         raise NotImplementedError("Local VLM backend is reserved for a future implementation.")

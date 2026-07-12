@@ -4,22 +4,18 @@ import os
 
 
 DEFAULT_LONG_TERM_RETRIEVAL_SCHEME = "em2memory"
-SUPPORTED_LONG_TERM_RETRIEVAL_SCHEMES = ("em2memory", "worldmm_legacy")
+SUPPORTED_LONG_TERM_RETRIEVAL_SCHEMES = ("em2memory",)
 
 _SCHEME_ALIASES = {
     "em2memory": "em2memory",
+    "em2mem": "em2memory",
     "em2memory_new": "em2memory",
     "em2_memory": "em2memory",
+    "lightmem_ego": "em2memory",
+    "lightmem_ego_legacy": "em2memory",
     "dense": "em2memory",
     "dense_rag": "em2memory",
     "event_dense": "em2memory",
-    "worldmemory_dense": "em2memory",
-    "legacy": "worldmm_legacy",
-    "worldmm_legacy": "worldmm_legacy",
-    "worldmm_original": "worldmm_legacy",
-    "original": "worldmm_legacy",
-    "hipporag": "worldmm_legacy",
-    "hippo_rag": "worldmm_legacy",
 }
 
 
@@ -27,8 +23,8 @@ def normalize_long_term_retrieval_scheme(value: str | None = None) -> str:
     raw = str(value or "").strip().lower().replace("-", "_")
     if raw in {"", "auto", "default"}:
         env_value = (
-            os.getenv("WORLDMM_LONG_TERM_RETRIEVAL_SCHEME")
-            or os.getenv("WORLDMM_RETRIEVAL_SCHEME")
+            os.getenv("EM2MEM_LONG_TERM_RETRIEVAL_SCHEME")
+            or os.getenv("EM2MEM_RETRIEVAL_SCHEME")
             or ""
         )
         env_raw = env_value.strip().lower().replace("-", "_")

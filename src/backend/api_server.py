@@ -39,11 +39,11 @@ ALLOWED_SESSION_FILE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
 ROKID_ACTIVE_SESSION_PATH = Path("runtime") / "active_rokid_session.json"
 
 
-app = FastAPI(title="WorldMM Upload API")
+app = FastAPI(title="Em2Mem Upload API")
 
 
 def _cors_origins() -> list[str]:
-    raw = os.getenv("WORLDMM_CORS_ORIGINS", "").strip()
+    raw = os.getenv("EM2MEM_CORS_ORIGINS", "").strip()
     if raw:
         return [origin.strip() for origin in raw.split(",") if origin.strip()]
     return [
@@ -52,11 +52,11 @@ def _cors_origins() -> list[str]:
     ]
 
 
-WORLDMM_CORS_ORIGINS = _cors_origins()
+EM2MEM_CORS_ORIGINS = _cors_origins()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=WORLDMM_CORS_ORIGINS,
+    allow_origins=EM2MEM_CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -64,12 +64,12 @@ app.add_middleware(
 
 
 def _voice_question_asr_python() -> Path:
-    configured = os.getenv("WORLDMM_VOICE_QUESTION_ASR_PYTHON") or os.getenv("WORLDMM_WHISPERX_PYTHON")
+    configured = os.getenv("EM2MEM_VOICE_QUESTION_ASR_PYTHON") or os.getenv("EM2MEM_WHISPERX_PYTHON")
     return Path(configured) if configured else PROJECT_ROOT / ".venv_whisperx" / "bin" / "python"
 
 
 def _voice_question_model_name_or_path() -> str:
-    configured = os.getenv("WORLDMM_VOICE_QUESTION_MODEL") or os.getenv("WORLDMM_WHISPERX_MODEL") or "faster-whisper-medium"
+    configured = os.getenv("EM2MEM_VOICE_QUESTION_MODEL") or os.getenv("EM2MEM_WHISPERX_MODEL") or "faster-whisper-medium"
     configured_path = Path(configured)
     if configured_path.is_absolute() and configured_path.exists():
         return str(configured_path)
@@ -80,7 +80,7 @@ def _voice_question_model_name_or_path() -> str:
 
 
 def _voice_question_language_arg() -> str:
-    configured = os.getenv("WORLDMM_VOICE_QUESTION_LANGUAGE", "auto")
+    configured = os.getenv("EM2MEM_VOICE_QUESTION_LANGUAGE", "auto")
     language = str(configured or "").strip()
     if language.lower() in {"", "auto", "detect", "auto_detect", "auto-detect", "none", "null"}:
         return ""
@@ -88,7 +88,7 @@ def _voice_question_language_arg() -> str:
 
 
 def _voice_question_initial_prompt(language: str) -> str:
-    configured = os.getenv("WORLDMM_VOICE_QUESTION_INITIAL_PROMPT")
+    configured = os.getenv("EM2MEM_VOICE_QUESTION_INITIAL_PROMPT")
     if not language:
         return ""
     if configured is not None:
@@ -169,11 +169,11 @@ for idx, seg in enumerate(segments, start=1):
 output_srt.write_text("\n".join(srt_lines), encoding="utf-8")
 print(json.dumps({"segments": segments}, ensure_ascii=False))
 '''
-    device = os.getenv("WORLDMM_VOICE_QUESTION_DEVICE") or os.getenv("WORLDMM_WHISPERX_DEVICE") or "cuda"
-    compute_type = os.getenv("WORLDMM_VOICE_QUESTION_COMPUTE_TYPE") or os.getenv("WORLDMM_WHISPERX_COMPUTE_TYPE") or "float16"
+    device = os.getenv("EM2MEM_VOICE_QUESTION_DEVICE") or os.getenv("EM2MEM_WHISPERX_DEVICE") or "cuda"
+    compute_type = os.getenv("EM2MEM_VOICE_QUESTION_COMPUTE_TYPE") or os.getenv("EM2MEM_WHISPERX_COMPUTE_TYPE") or "float16"
     language = _voice_question_language_arg()
-    beam_size = os.getenv("WORLDMM_VOICE_QUESTION_BEAM_SIZE", "1")
-    vad_filter = os.getenv("WORLDMM_VOICE_QUESTION_VAD_FILTER", "0")
+    beam_size = os.getenv("EM2MEM_VOICE_QUESTION_BEAM_SIZE", "1")
+    vad_filter = os.getenv("EM2MEM_VOICE_QUESTION_VAD_FILTER", "0")
     initial_prompt = _voice_question_initial_prompt(language)
     cmd = [
         str(asr_python),
@@ -191,9 +191,9 @@ print(json.dumps({"segments": segments}, ensure_ascii=False))
         initial_prompt,
     ]
 
-    timeout_seconds = int(os.getenv("WORLDMM_VOICE_QUESTION_ASR_TIMEOUT", "60") or 60)
+    timeout_seconds = int(os.getenv("EM2MEM_VOICE_QUESTION_ASR_TIMEOUT", "60") or 60)
     env = os.environ.copy()
-    ffmpeg_bin_dir = os.getenv("WORLDMM_FFMPEG_BIN_DIR", "/zjunlp/chenyijun/miniconda3/bin")
+    ffmpeg_bin_dir = os.getenv("EM2MEM_FFMPEG_BIN_DIR", "/zjunlp/chenyijun/miniconda3/bin")
     env["PATH"] = f"{ffmpeg_bin_dir}:{env.get('PATH', '')}"
     completed = subprocess.run(
         cmd,
@@ -217,9 +217,9 @@ print(json.dumps({"segments": segments}, ensure_ascii=False))
 
 
 def _start_query_warmup_thread(session_id: str, *, reason: str = "stream_start", wait_for_memory: bool = False) -> None:
-    if not _env_bool("WORLDMM_QUERY_WARMUP_ON_STREAM_START", True):
+    if not _env_bool("EM2MEM_QUERY_WARMUP_ON_STREAM_START", True):
         return
-    if _env_bool("WORLDMM_QUERY_WARMUP_VIA_WORKER", True):
+    if _env_bool("EM2MEM_QUERY_WARMUP_VIA_WORKER", True):
         try:
             task_path = enqueue_query_warmup_task(
                 PROJECT_ROOT,
@@ -265,7 +265,7 @@ def _json_response_content(response: JSONResponse) -> dict[str, Any]:
 
 
 def _rokid_day_session_enabled() -> bool:
-    return _env_bool("WORLDMM_ROKID_DAY_SESSION_ENABLED", True)
+    return _env_bool("EM2MEM_ROKID_DAY_SESSION_ENABLED", True)
 
 
 def _sse_event(event: str, data: Any) -> str:
@@ -690,7 +690,7 @@ class RefineShortTermRequest(BaseModel):
 
 class ConsolidateShortTermRequest(BaseModel):
     backend: str = "openai"
-    update_worldmm: bool = True
+    update_em2mem: bool = True
     force: bool = False
     limit_windows: Optional[int] = None
 
@@ -888,7 +888,7 @@ def _sha256_path(path: Path) -> str:
 
 
 def _pipeline_mode() -> str:
-    mode = os.getenv("WORLDMM_PIPELINE_MODE", "mst").strip().lower()
+    mode = os.getenv("EM2MEM_PIPELINE_MODE", "mst").strip().lower()
     return mode if mode in {"mst", "legacy", "hybrid"} else "mst"
 
 
@@ -944,18 +944,18 @@ def _append_qa_history_safe(
         return None
 
 
-def _admin_token_ok(x_worldmm_admin_token: str | None, authorization: str | None) -> bool:
-    expected = os.getenv("WORLDMM_RUNTIME_ADMIN_TOKEN") or os.getenv("WORLDMM_API_ADMIN_TOKEN")
+def _admin_token_ok(x_em2mem_admin_token: str | None, authorization: str | None) -> bool:
+    expected = os.getenv("EM2MEM_RUNTIME_ADMIN_TOKEN") or os.getenv("EM2MEM_API_ADMIN_TOKEN")
     if not expected:
         return False
-    candidates = [x_worldmm_admin_token or ""]
+    candidates = [x_em2mem_admin_token or ""]
     if authorization:
         candidates.append(authorization.removeprefix("Bearer ").strip())
     return any(candidate == expected for candidate in candidates)
 
 
 def _inactive_session_response(session_id: str) -> JSONResponse | None:
-    if not _env_bool("WORLDMM_SINGLE_ACTIVE_SESSION", False):
+    if not _env_bool("EM2MEM_SINGLE_ACTIVE_SESSION", False):
         return None
     try:
         from online_pipeline.active_session import read_active_session_id
@@ -1056,7 +1056,7 @@ def startup_prepare_task_queue() -> None:
 
 @app.get("/ping")
 async def ping() -> dict[str, str]:
-    return {"status": "ok", "message": "WorldMM API is running"}
+    return {"status": "ok", "message": "Em2Mem API is running"}
 
 
 @app.get("/runtime")
@@ -1090,10 +1090,10 @@ async def query_runtime() -> dict[str, object]:
     worker_runtime = read_json(runtime_path, default=None)
     return {
         "status": "ok",
-        "default_ask_mode": _env_str("WORLDMM_ASK_DEFAULT_MODE", "async"),
+        "default_ask_mode": _env_str("EM2MEM_ASK_DEFAULT_MODE", "async"),
         "router": {
             "memory_router_enabled": True,
-            "default_memory_mode": _env_str("WORLDMM_DEFAULT_MEMORY_MODE", "auto"),
+            "default_memory_mode": _env_str("EM2MEM_DEFAULT_MEMORY_MODE", "auto"),
         },
         "loaded_sessions": (
             ((worker_runtime or {}).get("loaded_sessions"))
@@ -1142,10 +1142,10 @@ async def session_memory_versions(session_id: str) -> JSONResponse:
             "status": "ok",
             "session_id": session_id,
             "component_versions": appender.load_versions(),
-            "append_state": read_json(session_dir / "worldmm" / "incremental" / "append_state.json", default={}),
-            "dirty_windows": read_json(session_dir / "worldmm" / "incremental" / "dirty_windows.json", default={}),
-            "graph_state": read_json(session_dir / "worldmm" / "incremental" / "graph" / "graph_state.json", default={}),
-            "semantic_state": read_json(session_dir / "worldmm" / "incremental" / "semantic" / "semantic_state.json", default={}),
+            "append_state": read_json(session_dir / "em2mem" / "incremental" / "append_state.json", default={}),
+            "dirty_windows": read_json(session_dir / "em2mem" / "incremental" / "dirty_windows.json", default={}),
+            "graph_state": read_json(session_dir / "em2mem" / "incremental" / "graph" / "graph_state.json", default={}),
+            "semantic_state": read_json(session_dir / "em2mem" / "incremental" / "semantic" / "semantic_state.json", default={}),
         },
     )
 
@@ -1471,13 +1471,13 @@ async def consolidate_short_term(session_id: str, request: ConsolidateShortTermR
     if backend not in {"openai", "rule", "mock"}:
         return JSONResponse(status_code=400, content={"status": "error", "message": "backend must be openai, rule, or mock"})
     try:
-        from online_mst_to_worldmm import consolidate_short_term_to_worldmm
+        from online_mst_to_em2mem import consolidate_short_term_to_em2mem
 
-        result = consolidate_short_term_to_worldmm(
+        result = consolidate_short_term_to_em2mem(
             session_id=session_id,
             sessions_root=ONLINE_SESSIONS_DIR,
             backend=backend,
-            update_worldmm=bool(request.update_worldmm),
+            update_em2mem=bool(request.update_em2mem),
             force=bool(request.force),
             limit_windows=request.limit_windows,
             verbose=False,
@@ -1500,7 +1500,7 @@ async def start_preprocess(session_id: str) -> JSONResponse:
     task_path = enqueue_preprocess_task(
         project_root=PROJECT_ROOT,
         session_id=session_id,
-        force=_env_bool("WORLDMM_FORCE_PREPROCESS", False),
+        force=_env_bool("EM2MEM_FORCE_PREPROCESS", False),
     )
     write_status(
         session_dir=session_dir,
@@ -1529,8 +1529,8 @@ async def build_evidence(session_id: str) -> JSONResponse:
     task_path = enqueue_evidence_task(
         project_root=PROJECT_ROOT,
         session_id=session_id,
-        force=_env_bool("WORLDMM_FORCE_EVIDENCE", False),
-        backend=os.getenv("WORLDMM_EVIDENCE_CAPTION_BACKEND"),
+        force=_env_bool("EM2MEM_FORCE_EVIDENCE", False),
+        backend=os.getenv("EM2MEM_EVIDENCE_CAPTION_BACKEND"),
     )
     write_status(
         session_dir=session_dir,
@@ -1552,7 +1552,7 @@ async def build_memory(session_id: str) -> JSONResponse:
     mode = _pipeline_mode()
     mst_ready = (session_dir / "captions" / "mst_session_30sec_captioned.json").exists() and (session_dir / "evidence" / "mst_session_evidence.json").exists()
     legacy_ready = (session_dir / "captions" / "session_30sec_captioned.json").exists() and (session_dir / "evidence" / "session_evidence.json").exists()
-    allow_legacy_fallback = _env_bool("WORLDMM_ALLOW_LEGACY_EVIDENCE_FALLBACK", False)
+    allow_legacy_fallback = _env_bool("EM2MEM_ALLOW_LEGACY_EVIDENCE_FALLBACK", False)
     if mode == "legacy":
         source = "legacy_evidence"
         required_ok = legacy_ready
@@ -1574,9 +1574,9 @@ async def build_memory(session_id: str) -> JSONResponse:
     task_path = enqueue_memory_task(
         project_root=PROJECT_ROOT,
         session_id=session_id,
-        force=_env_bool("WORLDMM_FORCE_MEMORY", False),
-        skip_visual_embedding=_env_bool("WORLDMM_SKIP_VISUAL_EMBEDDING", True),
-        skip_semantic=_env_bool("WORLDMM_SKIP_SEMANTIC_MEMORY", False),
+        force=_env_bool("EM2MEM_FORCE_MEMORY", False),
+        skip_visual_embedding=_env_bool("EM2MEM_SKIP_VISUAL_EMBEDDING", True),
+        skip_semantic=_env_bool("EM2MEM_SKIP_SEMANTIC_MEMORY", False),
         source=source,
         update_mode="incremental_append" if source in {"auto", "mst_episodic"} else None,
         append_ready_episodes=True if source in {"auto", "mst_episodic"} else None,
@@ -1939,7 +1939,7 @@ async def _handle_ask_session(
     session_dir = ONLINE_SESSIONS_DIR / realtime_session_id
     short_term_session_dir = ONLINE_SESSIONS_DIR / short_term_session_id
     long_term_session_dir = ONLINE_SESSIONS_DIR / long_term_session_id
-    memory_config = long_term_session_dir / "worldmm" / "memory_config.json"
+    memory_config = long_term_session_dir / "em2mem" / "memory_config.json"
     short_term_ready = False
     current_ready = False
     current_text_ready = False
@@ -2036,7 +2036,7 @@ async def _handle_ask_session(
     if response_mode not in {"legacy", "json", "polling"}:
         return JSONResponse(status_code=400, content={"status": "error", "message": "response_mode must be legacy or stream"})
 
-    mode = (request.mode or _env_str("WORLDMM_ASK_DEFAULT_MODE", "async")).strip().lower()
+    mode = (request.mode or _env_str("EM2MEM_ASK_DEFAULT_MODE", "async")).strip().lower()
     if mode not in {"sync", "async"}:
         return JSONResponse(status_code=400, content={"status": "error", "message": "mode must be sync or async"})
     long_term_retrieval_scheme = normalize_long_term_retrieval_scheme(
@@ -2093,7 +2093,7 @@ async def _handle_ask_session(
             },
         )
 
-    if not _env_bool("WORLDMM_ENABLE_SYNC_ASK", True):
+    if not _env_bool("EM2MEM_ENABLE_SYNC_ASK", True):
         return JSONResponse(
             status_code=403,
             content={
@@ -2260,7 +2260,7 @@ async def get_session_qa_history(session_id: str, limit: Optional[int] = None) -
 
 @app.get("/stream/active")
 async def stream_active() -> JSONResponse:
-    if not _env_bool("WORLDMM_SINGLE_ACTIVE_SESSION", False):
+    if not _env_bool("EM2MEM_SINGLE_ACTIVE_SESSION", False):
         return JSONResponse(
             status_code=200,
             content={
@@ -2325,7 +2325,7 @@ async def query_warmup_status(session_id: str) -> JSONResponse:
     session_dir = ONLINE_SESSIONS_DIR / session_id
     if not session_dir.exists():
         return JSONResponse(status_code=404, content={"status": "error", "message": f"session not found: {session_id}"})
-    payload = read_json(session_dir / "worldmm" / "query_warmup_state.json", default={})
+    payload = read_json(session_dir / "em2mem" / "query_warmup_state.json", default={})
     if not isinstance(payload, dict) or not payload:
         return JSONResponse(status_code=200, content={"status": "not_started", "session_id": session_id})
     return JSONResponse(status_code=200, content=payload)
@@ -2433,7 +2433,7 @@ def _rokid_live_inactive_reason(session_dir: Path, input_mode: str, live_ingest:
         frames_ingested = 0
     last_frame_at = _parse_utc_datetime(state.get("last_frame_at"))
     if frames_ingested > 0 and last_frame_at:
-        stale_seconds = float(os.getenv("WORLDMM_ROKID_ACTIVE_STALE_SECONDS", "45") or 45)
+        stale_seconds = float(os.getenv("EM2MEM_ROKID_ACTIVE_STALE_SECONDS", "45") or 45)
         age_seconds = (datetime.now(timezone.utc) - last_frame_at).total_seconds()
         if age_seconds > stale_seconds:
             return "live_ingest_stale"
@@ -2634,7 +2634,7 @@ async def _start_stream_session(
                 status_code=400,
                 content={
                     "status": "error",
-                    "message": f"{input_mode} is disabled; set WORLDMM_LIVE_RTMP_ENABLED=1 to enable RTMP push URL creation",
+                    "message": f"{input_mode} is disabled; set EM2MEM_LIVE_RTMP_ENABLED=1 to enable RTMP push URL creation",
                     "input_mode": input_mode,
                     "live": {
                         "enabled": False,
@@ -2649,7 +2649,7 @@ async def _start_stream_session(
                 status_code=400,
                 content={
                     "status": "error",
-                    "message": "web_webrtc_whip is disabled; set WORLDMM_WEBRTC_WHIP_ENABLED=1 to enable WHIP URL creation",
+                    "message": "web_webrtc_whip is disabled; set EM2MEM_WEBRTC_WHIP_ENABLED=1 to enable WHIP URL creation",
                     "input_mode": input_mode,
                     "webrtc": {
                         "enabled": False,
@@ -2689,7 +2689,7 @@ async def _start_stream_session(
             session_dir = Path(created["session_dir"])
 
         manager = StreamChunkManager(session_dir)
-        processing_seconds = float(os.getenv("WORLDMM_STREAM_PROCESSING_CHUNK_SECONDS") or request.chunk_duration or 5.0)
+        processing_seconds = float(os.getenv("EM2MEM_STREAM_PROCESSING_CHUNK_SECONDS") or request.chunk_duration or 5.0)
         stream_state = manager.init_stream(
             chunk_duration=max(0.1, processing_seconds),
             metadata=metadata,
@@ -2721,8 +2721,8 @@ async def _start_stream_session(
                     session_dir,
                     stream_id=str(stream_state.get("stream_id") or ""),
                     source_url=str(live_source.get("pull_url_internal") or live_source.get("pull_url_public") or ""),
-                    frame_fps=float(os.getenv("WORLDMM_LIVE_INGEST_FRAME_FPS", "1") or 1),
-                    audio_segment_ms=int(os.getenv("WORLDMM_LIVE_INGEST_AUDIO_SEGMENT_MS", "1500") or 1500),
+                    frame_fps=float(os.getenv("EM2MEM_LIVE_INGEST_FRAME_FPS", "1") or 1),
+                    audio_segment_ms=int(os.getenv("EM2MEM_LIVE_INGEST_AUDIO_SEGMENT_MS", "1500") or 1500),
                     source="srs_webrtc_whip" if input_mode == "web_webrtc_whip" else "srs_rtmp",
                     input_mode=input_mode,
                     status="not_started",
@@ -2780,7 +2780,7 @@ async def _start_stream_session(
             if _is_rokid_glass_stream_state({"input_mode": input_mode, "metadata": metadata}):
                 active_rokid_session = _write_active_rokid_session(session_id, input_mode=input_mode, reason="rokid_stream_start")
         active_cleanup = None
-        if _env_bool("WORLDMM_SINGLE_ACTIVE_SESSION", False):
+        if _env_bool("EM2MEM_SINGLE_ACTIVE_SESSION", False):
             from online_pipeline.active_session import clear_old_session_tasks, write_active_session
 
             write_active_session(PROJECT_ROOT, session_id, reason="stream_start")
@@ -2846,9 +2846,9 @@ async def _start_stream_session(
                 "video_path": str(video_path),
                 "size_bytes": video_path.stat().st_size if video_path.exists() else 0,
                 "preprocess_queued": False,
-                "query_warmup_started": _env_bool("WORLDMM_QUERY_WARMUP_ON_STREAM_START", True),
+                "query_warmup_started": _env_bool("EM2MEM_QUERY_WARMUP_ON_STREAM_START", True),
                 "task_path": None,
-                "single_active_session": _env_bool("WORLDMM_SINGLE_ACTIVE_SESSION", False),
+                "single_active_session": _env_bool("EM2MEM_SINGLE_ACTIVE_SESSION", False),
                 "active_session_cleanup": active_cleanup,
                 "active_rokid_session": active_rokid_session,
                 "can_ask": False,
@@ -3144,8 +3144,8 @@ async def stream_live_ingest_start(session_id: str) -> JSONResponse:
             session_dir,
             stream_id=str(live_source.get("stream_id") or ""),
             source_url=source_url,
-            frame_fps=float(os.getenv("WORLDMM_LIVE_INGEST_FRAME_FPS", "1") or 1),
-            audio_segment_ms=int(os.getenv("WORLDMM_LIVE_INGEST_AUDIO_SEGMENT_MS", "1500") or 1500),
+            frame_fps=float(os.getenv("EM2MEM_LIVE_INGEST_FRAME_FPS", "1") or 1),
+            audio_segment_ms=int(os.getenv("EM2MEM_LIVE_INGEST_AUDIO_SEGMENT_MS", "1500") or 1500),
             source=live_task_source,
             input_mode=live_input_mode,
             status="queued",
@@ -3367,12 +3367,12 @@ async def stream_upload_audio_chunk(
         return JSONResponse(status_code=400, content={"status": "error", "message": "invalid session_id"})
     if int(audio_index) < 0:
         return JSONResponse(status_code=400, content={"status": "error", "message": "audio_index must be >= 0"})
-    if not _env_bool("WORLDMM_AUDIO_STREAM_ENABLED", True):
+    if not _env_bool("EM2MEM_AUDIO_STREAM_ENABLED", True):
         return JSONResponse(
             status_code=409,
             content={
                 "status": "audio_stream_disabled",
-                "message": "audio stream is disabled by WORLDMM_AUDIO_STREAM_ENABLED=0",
+                "message": "audio stream is disabled by EM2MEM_AUDIO_STREAM_ENABLED=0",
                 "session_id": session_id,
             },
         )
@@ -3679,7 +3679,7 @@ async def stream_upload_chunk(
 
 
 def _register_optional_demo_routes() -> None:
-    if not _env_bool("WORLDMM_ENABLE_DEMO_ROUTES", True):
+    if not _env_bool("EM2MEM_ENABLE_DEMO_ROUTES", True):
         return
     try:
         import demo.api  # noqa: F401
@@ -3743,12 +3743,12 @@ def _execute_stream_end(
         try:
             from online_pipeline.frame_stream import frame_stream_input_mode, is_frame_stream_mode
 
-            if request.close_open_event and is_frame_stream_mode(frame_stream_input_mode(state.get("input_mode"))) and _env_bool("WORLDMM_FRAME_STREAM_ENABLE_MST", True):
+            if request.close_open_event and is_frame_stream_mode(frame_stream_input_mode(state.get("input_mode"))) and _env_bool("EM2MEM_FRAME_STREAM_ENABLE_MST", True):
                 from online_short_term.frame_stream_event_builder import FrameStreamMicroEventBuilder
 
                 frame_mst_result = FrameStreamMicroEventBuilder(session_dir).close_open_event(
                     project_root=PROJECT_ROOT,
-                    enqueue_refine=_env_bool("WORLDMM_FRAME_STREAM_ENQUEUE_REFINE", True),
+                    enqueue_refine=_env_bool("EM2MEM_FRAME_STREAM_ENQUEUE_REFINE", True),
                     reason="stream_end",
                 )
                 from online_pipeline.runtime_state import refresh_session_pipeline_state
@@ -3826,7 +3826,7 @@ def _execute_stream_end(
                     }
             except Exception as exc:
                 rokid_day_merge_error = str(exc)
-        if _env_bool("WORLDMM_SINGLE_ACTIVE_SESSION", True):
+        if _env_bool("EM2MEM_SINGLE_ACTIVE_SESSION", True):
             from online_pipeline.active_session import clear_active_session
 
             active_session_cleared = clear_active_session(PROJECT_ROOT, session_id=session_id, reason="stream_end")
@@ -4330,7 +4330,7 @@ async def stream_retry_chunk(session_id: str, request_body: Optional[dict[str, A
                             processing_chunks=processing_chunks,
                             global_start_time=float(upload.get("stream_start_time", processing_chunks[0].get("start_time", 0.0)) or 0.0),
                             global_end_time=float(upload.get("stream_end_time", processing_chunks[-1].get("end_time", 0.0)) or 0.0),
-                            asr_backend=os.getenv("WORLDMM_STREAM_ASR_BACKEND", "whisperx"),
+                            asr_backend=os.getenv("EM2MEM_STREAM_ASR_BACKEND", "whisperx"),
                             reason="retry_chunk",
                             force=True,
                         )
@@ -4426,18 +4426,18 @@ async def stream_retry_chunk(session_id: str, request_body: Optional[dict[str, A
 @app.post("/runtime/clear_old_tasks")
 async def clear_old_tasks_api(
     keep_session_id: str,
-    x_worldmm_admin_token: Optional[str] = Header(default=None, alias="X-WorldMM-Admin-Token"),
+    x_em2mem_admin_token: Optional[str] = Header(default=None, alias="X-Em2Mem-Admin-Token"),
     authorization: Optional[str] = Header(default=None),
 ) -> JSONResponse:
     if not _valid_session_id(keep_session_id):
         return JSONResponse(status_code=400, content={"status": "error", "message": "invalid keep_session_id"})
-    if not _admin_token_ok(x_worldmm_admin_token, authorization):
+    if not _admin_token_ok(x_em2mem_admin_token, authorization):
         return JSONResponse(
             status_code=403,
             content={
                 "status": "error",
                 "message": "runtime admin token required",
-                "token_header": "X-WorldMM-Admin-Token",
+                "token_header": "X-Em2Mem-Admin-Token",
             },
         )
     try:
@@ -4516,13 +4516,13 @@ async def upload_video(
             error=None,
         )
 
-        preprocess_queued = _env_bool("WORLDMM_AUTO_PREPROCESS", True)
+        preprocess_queued = _env_bool("EM2MEM_AUTO_PREPROCESS", True)
         task_path = None
         if preprocess_queued:
             task_path = enqueue_preprocess_task(
                 project_root=PROJECT_ROOT,
                 session_id=session_id,
-                force=_env_bool("WORLDMM_FORCE_PREPROCESS", False),
+                force=_env_bool("EM2MEM_FORCE_PREPROCESS", False),
             )
             write_status(
                 session_dir=session_dir,

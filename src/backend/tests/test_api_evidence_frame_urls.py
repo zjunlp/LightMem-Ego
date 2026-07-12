@@ -11,7 +11,7 @@ if str(ROOT) not in sys.path:
 
 
 def _install_api_import_stubs() -> None:
-    os.environ.setdefault("WORLDMM_ENABLE_DEMO_ROUTES", "0")
+    os.environ.setdefault("EM2MEM_ENABLE_DEMO_ROUTES", "0")
 
     online_preprocess = types.ModuleType("online_preprocess")
     online_preprocess.__path__ = [str(ROOT / "online_preprocess")]
@@ -199,11 +199,11 @@ def test_api_base_url_makes_browser_ready_absolute_image_urls(tmp_path: Path, mo
 def test_historical_ask_bypasses_single_active_session_without_changing_legacy_ask(tmp_path: Path, monkeypatch) -> None:
     project_root = tmp_path / "project"
     sessions_root = project_root / "online_sessions"
-    monkeypatch.setenv("WORLDMM_SINGLE_ACTIVE_SESSION", "true")
+    monkeypatch.setenv("EM2MEM_SINGLE_ACTIVE_SESSION", "true")
     monkeypatch.setattr(api_server, "PROJECT_ROOT", project_root)
     monkeypatch.setattr(api_server, "ONLINE_SESSIONS_DIR", sessions_root)
     _write_json(project_root / "runtime" / "active_session.json", {"active_session_id": "active_session"})
-    _write_json(sessions_root / "old_session" / "worldmm" / "memory_config.json", {"status": "memory_ready"})
+    _write_json(sessions_root / "old_session" / "em2mem" / "memory_config.json", {"status": "memory_ready"})
     _write_json(sessions_root / "old_session" / "status.json", {"stage": "memory_ready", "progress": 100})
 
     legacy_request = api_server.AskRequest(question="what happened?", mode="async")

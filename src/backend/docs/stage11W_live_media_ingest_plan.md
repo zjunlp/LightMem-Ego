@@ -18,12 +18,12 @@ No SRS, WHIP, RTMP, live source, or live ingest worker is required for Rokid dir
 Live/WebRTC/RTMP audio and direct `frame_audio_stream` uploads still enter the backend as short audio chunks. The ASR worker does not transcribe every short chunk directly. Accepted short chunks are buffered and grouped into rolling ASR windows that target about 3 seconds:
 
 ```bash
-WORLDMM_AUDIO_ASR_WINDOW_MS=3000
-WORLDMM_AUDIO_ASR_HOP_MS=3000
-WORLDMM_AUDIO_ASR_MIN_WINDOW_MS=2000
-WORLDMM_AUDIO_ASR_FLUSH_MIN_MS=1000
-WORLDMM_AUDIO_ASR_MAX_WINDOW_MS=4000
-WORLDMM_AUDIO_ASR_MAX_PENDING_WINDOWS=5
+EM2MEM_AUDIO_ASR_WINDOW_MS=3000
+EM2MEM_AUDIO_ASR_HOP_MS=3000
+EM2MEM_AUDIO_ASR_MIN_WINDOW_MS=2000
+EM2MEM_AUDIO_ASR_FLUSH_MIN_MS=1000
+EM2MEM_AUDIO_ASR_MAX_WINDOW_MS=4000
+EM2MEM_AUDIO_ASR_MAX_PENDING_WINDOWS=5
 ```
 
 Normal windows are usually about 2-4 seconds depending on chunk boundaries, and stream stop/finalize may flush a tail window when at least 1 second remains.

@@ -6,7 +6,7 @@ This document explains the frontend changes needed after the backend update that
 
 Backend behavior changed in two important ways:
 
-- The server now runs in multi-session mode by default: `WORLDMM_SINGLE_ACTIVE_SESSION=0`.
+- The server now runs in multi-session mode by default: `EM2MEM_SINGLE_ACTIVE_SESSION=0`.
 - Rokid Glass has its own API namespace: `/rokid/*`.
 
 The frontend must stop treating the backend as having one global active stream. Every browser tab, user, phone stream, Rokid stream, and demo session must keep and use its own `session_id`.
@@ -268,7 +268,7 @@ where the key can be `deviceKind:deviceId` or a backend `session_id`.
 Use this prompt to ask a frontend coding agent to implement the update:
 
 ```text
-You are modifying the frontend for WorldMM Online Server.
+You are modifying the frontend for Em2Mem Online Server.
 
 Backend has changed to multi-session mode and Rokid Glass APIs are now separated from phone/web stream APIs.
 

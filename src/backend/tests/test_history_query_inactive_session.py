@@ -10,7 +10,7 @@ def _read_json(path: Path) -> dict:
 
 
 def test_allow_inactive_query_task_claims_and_finishes_when_session_is_not_active(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("WORLDMM_SINGLE_ACTIVE_SESSION", "true")
+    monkeypatch.setenv("EM2MEM_SINGLE_ACTIVE_SESSION", "true")
     write_active_session(tmp_path, "active_session")
     queued_path = enqueue_query_task(
         tmp_path,
@@ -40,7 +40,7 @@ def test_allow_inactive_query_task_claims_and_finishes_when_session_is_not_activ
 
 
 def test_normal_inactive_query_task_is_still_cancelled_on_claim(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("WORLDMM_SINGLE_ACTIVE_SESSION", "true")
+    monkeypatch.setenv("EM2MEM_SINGLE_ACTIVE_SESSION", "true")
     write_active_session(tmp_path, "active_session")
     queued_path = enqueue_query_task(tmp_path, "old_session", "what happened?")
 
@@ -56,7 +56,7 @@ def test_normal_inactive_query_task_is_still_cancelled_on_claim(tmp_path: Path, 
 
 
 def test_clear_old_session_tasks_preserves_history_query_tasks(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("WORLDMM_SINGLE_ACTIVE_SESSION", "true")
+    monkeypatch.setenv("EM2MEM_SINGLE_ACTIVE_SESSION", "true")
     write_active_session(tmp_path, "active_session")
     preserved_path = enqueue_query_task(
         tmp_path,

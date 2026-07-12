@@ -184,10 +184,10 @@ class SessionEngineCache:
                         "last_accessed_at": engine.last_accessed_at,
                         "query_count": engine.query_count,
                         "pipeline_mode": engine.memory_config.get("pipeline_mode"),
-                        "active_30s_source": engine.memory_config.get("active_30s_source") or engine.memory_config.get("worldmm_30s_input_source"),
+                        "active_30s_source": engine.memory_config.get("active_30s_source") or engine.memory_config.get("em2mem_30s_input_source"),
                         "episodic_source": engine.memory_config.get("episodic_source"),
                         "legacy_evidence_used": bool(engine.memory_config.get("legacy_evidence_used") or engine.memory_config.get("legacy_evidence_fallback_used")),
-                        "worldmm_update_mode": engine.memory_config.get("worldmm_update_mode"),
+                        "em2mem_update_mode": engine.memory_config.get("em2mem_update_mode"),
                         "memory_config_mtime": engine.memory_config_mtime,
                         "strict_load_only": engine.strict_load_only,
                         "preload_status": engine.preload_status,
@@ -221,6 +221,6 @@ class SessionEngineCache:
 
 
 GLOBAL_SESSION_ENGINE_CACHE = SessionEngineCache(
-    max_sessions=int(os.getenv("WORLDMM_QUERY_CACHE_MAX_SESSIONS", "9")),
-    ttl_seconds=int(os.getenv("WORLDMM_QUERY_CACHE_TTL_SECONDS", "3600")),
+    max_sessions=int(os.getenv("EM2MEM_QUERY_CACHE_MAX_SESSIONS", "9")),
+    ttl_seconds=int(os.getenv("EM2MEM_QUERY_CACHE_TTL_SECONDS", "3600")),
 )

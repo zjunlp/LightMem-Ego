@@ -65,7 +65,7 @@ def _query_via_worker(args: argparse.Namespace, question: str, image_option: boo
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Ask a question against one online WorldMM session memory.",
+        description="Ask a question against one online Em2Mem session memory.",
         epilog=(
             "Image evidence flags are switches: use --use-image-evidence to enable, "
             "--no-image-evidence to disable, and omit both to let the router decide. "
@@ -82,7 +82,7 @@ def main() -> None:
         "--retrieval-scheme",
         dest="long_term_retrieval_scheme",
         default=None,
-        help="Long-term retrieval scheme: em2memory (default) or worldmm_legacy.",
+        help="Long-term retrieval scheme: em2memory (default) or em2memory.",
     )
     parser.add_argument("--retriever-model", default=None)
     parser.add_argument("--respond-model", default=None)

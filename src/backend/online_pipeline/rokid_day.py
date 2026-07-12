@@ -427,7 +427,7 @@ def load_rokid_day_child_metadata(session_dir: Path) -> dict[str, Any] | None:
 
 
 def query_memory_ready(session_dir: Path) -> bool:
-    config = read_json(session_dir / "worldmm" / "memory_config.json", default={})
+    config = read_json(session_dir / "em2mem" / "memory_config.json", default={})
     if not isinstance(config, dict):
         return False
     return bool(
@@ -459,7 +459,7 @@ def resolve_query_long_term_candidates(
             "session_id": session,
             "role": role,
             "ready": query_memory_ready(session_dir),
-            "memory_config_exists": (session_dir / "worldmm" / "memory_config.json").exists(),
+            "memory_config_exists": (session_dir / "em2mem" / "memory_config.json").exists(),
             "reason": reason,
         }
 

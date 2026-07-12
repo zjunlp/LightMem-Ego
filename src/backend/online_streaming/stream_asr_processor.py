@@ -425,7 +425,7 @@ def _process_audio_window_asr_task(
     store = AudioStreamStore(session_dir)
     store.mark_asr_window_started(window_id)
     stream_id = str(task.get("stream_id") or "")
-    backend = (os.getenv("WORLDMM_AUDIO_ASR_BACKEND") or str(task.get("asr_backend") or "whisperx")).strip().lower()
+    backend = (os.getenv("EM2MEM_AUDIO_ASR_BACKEND") or str(task.get("asr_backend") or "whisperx")).strip().lower()
     task = {**task, "asr_backend": backend}
     transcript_dir = session_dir / "stream" / "transcript" / window_id
     transcript_dir.mkdir(parents=True, exist_ok=True)
@@ -441,10 +441,10 @@ def _process_audio_window_asr_task(
             model_name=whisperx_model,
             device=device,
             compute_type=compute_type,
-            language=_auto_language(os.getenv("WORLDMM_AUDIO_ASR_LANGUAGE") or language),
+            language=_auto_language(os.getenv("EM2MEM_AUDIO_ASR_LANGUAGE") or language),
             model_dir=model_dir,
             align_model_dir=align_model_dir,
-            batch_size=int(os.getenv("WORLDMM_WHISPERX_BATCH_SIZE", "16") or 16),
+            batch_size=int(os.getenv("EM2MEM_WHISPERX_BATCH_SIZE", "16") or 16),
             force=force,
             runtime=asr_runtime,
         )
@@ -458,8 +458,8 @@ def _process_audio_window_asr_task(
     backfill_result = TranscriptBackfiller(
         session_dir,
         project_root=Path(project_root),
-        enqueue_refine=_env_bool("WORLDMM_STREAM_ASR_ENQUEUE_REFINE", True),
-        enqueue_consolidation=_env_bool("WORLDMM_STREAM_ASR_ENQUEUE_CONSOLIDATION", True),
+        enqueue_refine=_env_bool("EM2MEM_STREAM_ASR_ENQUEUE_REFINE", True),
+        enqueue_consolidation=_env_bool("EM2MEM_STREAM_ASR_ENQUEUE_CONSOLIDATION", True),
     ).backfill_segments(segments, reason="audio_asr_backfill")
     asr_state = store.mark_asr_window_done(
         window_id,
@@ -528,7 +528,7 @@ def process_stream_asr_task(
     if not upload_path.exists():
         raise FileNotFoundError(f"stream upload chunk not found: {upload_path}")
 
-    backend = (os.getenv("WORLDMM_STREAM_ASR_BACKEND") or str(task.get("asr_backend") or "whisperx")).strip().lower()
+    backend = (os.getenv("EM2MEM_STREAM_ASR_BACKEND") or str(task.get("asr_backend") or "whisperx")).strip().lower()
     stream_id = str(task.get("stream_id") or "")
     upload_chunk_id = str(task.get("upload_chunk_id") or f"upload_{int(task.get('upload_chunk_index', 0)):06d}")
     upload_chunk_index = int(task.get("upload_chunk_index", 0) or 0)
@@ -576,7 +576,7 @@ def process_stream_asr_task(
                 language=language,
                 model_dir=model_dir,
                 align_model_dir=align_model_dir,
-                batch_size=int(os.getenv("WORLDMM_WHISPERX_BATCH_SIZE", "16") or 16),
+                batch_size=int(os.getenv("EM2MEM_WHISPERX_BATCH_SIZE", "16") or 16),
                 force=force,
                 runtime=asr_runtime,
             )
@@ -593,8 +593,8 @@ def process_stream_asr_task(
     backfill_result = TranscriptBackfiller(
         session_dir,
         project_root=Path(project_root),
-        enqueue_refine=_env_bool("WORLDMM_STREAM_ASR_ENQUEUE_REFINE", True),
-        enqueue_consolidation=_env_bool("WORLDMM_STREAM_ASR_ENQUEUE_CONSOLIDATION", True),
+        enqueue_refine=_env_bool("EM2MEM_STREAM_ASR_ENQUEUE_REFINE", True),
+        enqueue_consolidation=_env_bool("EM2MEM_STREAM_ASR_ENQUEUE_CONSOLIDATION", True),
     ).backfill_segments(segments, reason="transcript_backfill")
     _update_upload_asr_status(session_dir, upload_chunk_index, status="done", segment_count=len(segments))
 

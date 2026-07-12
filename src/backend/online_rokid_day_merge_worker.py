@@ -163,7 +163,7 @@ def run_worker(
                         "day_label": day_label,
                         "day_index": day_index,
                     },
-                    interval_env="WORLDMM_ROKID_DAY_MERGE_HEARTBEAT_SECONDS",
+                    interval_env="EM2MEM_ROKID_DAY_MERGE_HEARTBEAT_SECONDS",
                 ):
                     result = merge_rokid_day_child(
                         sessions_root=sessions_root,
@@ -173,8 +173,8 @@ def run_worker(
                         day_index=day_index,
                         run_id=run_id,
                         force_rebuild=True,
-                        skip_visual_embedding=_env_bool("WORLDMM_ROKID_DAY_MERGE_SKIP_VISUAL_EMBEDDING", True),
-                        skip_semantic=_env_bool("WORLDMM_ROKID_DAY_MERGE_SKIP_SEMANTIC", False),
+                        skip_visual_embedding=_env_bool("EM2MEM_ROKID_DAY_MERGE_SKIP_VISUAL_EMBEDDING", True),
+                        skip_semantic=_env_bool("EM2MEM_ROKID_DAY_MERGE_SKIP_SEMANTIC", False),
                     )
                 finish_rokid_day_merge_task(PROJECT_ROOT, claimed_path, task, status="done", result=result)
                 append_timeline_event(
@@ -217,8 +217,8 @@ def run_worker(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Merge Rokid DAY child sessions into their parent long-term memory.")
     parser.add_argument("--sessions-root", default=str(DEFAULT_SESSIONS_ROOT))
-    parser.add_argument("--interval-seconds", type=float, default=float(os.getenv("WORLDMM_ROKID_DAY_MERGE_INTERVAL_SECONDS", "15")))
-    parser.add_argument("--retry-delay-seconds", type=float, default=float(os.getenv("WORLDMM_ROKID_DAY_MERGE_RETRY_DELAY_SECONDS", "60")))
+    parser.add_argument("--interval-seconds", type=float, default=float(os.getenv("EM2MEM_ROKID_DAY_MERGE_INTERVAL_SECONDS", "15")))
+    parser.add_argument("--retry-delay-seconds", type=float, default=float(os.getenv("EM2MEM_ROKID_DAY_MERGE_RETRY_DELAY_SECONDS", "60")))
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()

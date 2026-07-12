@@ -104,9 +104,9 @@ class FrameStreamStore:
                 state["input_mode"] = frame_stream_input_mode(input_mode)
                 state["enabled"] = True
                 state.setdefault("frames", [])
-                state.setdefault("target_fps", target_fps or _env_float("WORLDMM_FRAME_STREAM_TARGET_FPS", 1.0))
-                state.setdefault("memory_target_fps", state.get("target_fps") or _env_float("WORLDMM_FRAME_STREAM_TARGET_FPS", 1.0))
-                state.setdefault("preview_target_fps", _env_float("WORLDMM_FRAME_STREAM_PREVIEW_FPS", 8.0))
+                state.setdefault("target_fps", target_fps or _env_float("EM2MEM_FRAME_STREAM_TARGET_FPS", 1.0))
+                state.setdefault("memory_target_fps", state.get("target_fps") or _env_float("EM2MEM_FRAME_STREAM_TARGET_FPS", 1.0))
+                state.setdefault("preview_target_fps", _env_float("EM2MEM_FRAME_STREAM_PREVIEW_FPS", 8.0))
                 state.setdefault("preview_received_count", state.get("received_count", 0))
                 state.setdefault("preview_accepted_count", state.get("accepted_count", 0))
                 state.setdefault("memory_accepted_count", 0)
@@ -212,7 +212,7 @@ class FrameStreamStore:
             }
             frames = [item for item in state.get("frames", []) or [] if isinstance(item, dict)]
             frames.append(record)
-            state["frames"] = frames[-max(1, _env_int("WORLDMM_FRAME_STREAM_STATE_HISTORY", 500)):]
+            state["frames"] = frames[-max(1, _env_int("EM2MEM_FRAME_STREAM_STATE_HISTORY", 500)):]
             state["accepted_count"] = int(state.get("accepted_count", 0) or 0) + 1
             state["preview_accepted_count"] = int(state.get("preview_accepted_count", 0) or 0) + 1
             state["latest_frame_index"] = int(frame_index)
@@ -289,9 +289,9 @@ class FrameStreamStore:
                 "enabled": is_frame_stream_mode(mode),
                 "input_mode": mode,
                 "ready": False,
-                "target_fps": _env_float("WORLDMM_FRAME_STREAM_TARGET_FPS", 1.0),
-                "memory_target_fps": _env_float("WORLDMM_FRAME_STREAM_TARGET_FPS", 1.0),
-                "preview_target_fps": _env_float("WORLDMM_FRAME_STREAM_PREVIEW_FPS", 8.0),
+                "target_fps": _env_float("EM2MEM_FRAME_STREAM_TARGET_FPS", 1.0),
+                "memory_target_fps": _env_float("EM2MEM_FRAME_STREAM_TARGET_FPS", 1.0),
+                "preview_target_fps": _env_float("EM2MEM_FRAME_STREAM_PREVIEW_FPS", 8.0),
                 "latest_frame_index": None,
                 "latest_frame_at": None,
                 "mcur_ready": False,
@@ -367,9 +367,9 @@ class FrameStreamStore:
             "latest_memory_frame_at": None,
             "mcur_ready": False,
             "mcur_version": 0,
-            "target_fps": float(target_fps or _env_float("WORLDMM_FRAME_STREAM_TARGET_FPS", 1.0)),
-            "memory_target_fps": float(target_fps or _env_float("WORLDMM_FRAME_STREAM_TARGET_FPS", 1.0)),
-            "preview_target_fps": float(_env_float("WORLDMM_FRAME_STREAM_PREVIEW_FPS", 8.0)),
+            "target_fps": float(target_fps or _env_float("EM2MEM_FRAME_STREAM_TARGET_FPS", 1.0)),
+            "memory_target_fps": float(target_fps or _env_float("EM2MEM_FRAME_STREAM_TARGET_FPS", 1.0)),
+            "preview_target_fps": float(_env_float("EM2MEM_FRAME_STREAM_PREVIEW_FPS", 8.0)),
             "preview_recent": [],
             "memory_recent": [],
             "frames": [],
@@ -395,7 +395,7 @@ class FrameStreamStore:
         latest_memory_ts = state.get("latest_memory_relative_ts_ms")
         if latest_memory_ts is None:
             return True
-        fps = max(0.01, float(state.get("memory_target_fps") or state.get("target_fps") or _env_float("WORLDMM_FRAME_STREAM_TARGET_FPS", 1.0)))
+        fps = max(0.01, float(state.get("memory_target_fps") or state.get("target_fps") or _env_float("EM2MEM_FRAME_STREAM_TARGET_FPS", 1.0)))
         interval_ms = max(1, int(round(1000.0 / fps)))
         return int(relative_ts_ms) - int(latest_memory_ts) >= interval_ms
 
@@ -427,8 +427,8 @@ class FrameStreamStore:
         return round((len(rows) - 1) / span_seconds, 2)
 
     def _prune_preview_frames_unlocked(self, frames: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        preview_history = max(1, _env_int("WORLDMM_FRAME_STREAM_PREVIEW_HISTORY", 16))
-        memory_history = max(1, _env_int("WORLDMM_FRAME_STREAM_MEMORY_HISTORY", 500))
+        preview_history = max(1, _env_int("EM2MEM_FRAME_STREAM_PREVIEW_HISTORY", 16))
+        memory_history = max(1, _env_int("EM2MEM_FRAME_STREAM_MEMORY_HISTORY", 500))
         recent_preview = frames[-preview_history:]
         recent_memory = [item for item in frames if item.get("memory_accepted")][-memory_history:]
         keep_paths = {

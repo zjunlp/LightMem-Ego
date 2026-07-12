@@ -21,7 +21,7 @@ class AppendDecision:
 
 
 class MemoryAppendLog:
-    """Append-only status log for MST 30s episode -> WorldMM memory updates."""
+    """Append-only status log for MST 30s episode -> Em2Mem memory updates."""
 
     def __init__(self, path: Path) -> None:
         self.path = Path(path)

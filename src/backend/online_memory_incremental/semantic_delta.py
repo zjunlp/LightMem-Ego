@@ -5,13 +5,13 @@ import os
 from pathlib import Path
 from typing import Any
 
-from online_memory.evidence_to_worldmm import _dedupe_triplets
-from online_memory.worldmm_layout import seconds_to_hhmmssff
+from online_memory.evidence_to_em2mem import _dedupe_triplets
+from online_memory.em2mem_layout import seconds_to_hhmmssff
 from online_preprocess.io_utils import ensure_dir, read_json, utc_now_iso, write_json_atomic
 
 
 def _model_name(model_name: str | None = None) -> str:
-    return model_name or os.getenv("WORLDMM_MEMORY_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-5.4"
+    return model_name or os.getenv("EM2MEM_MEMORY_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-5.4"
 
 
 def _slug(value: Any) -> str:
@@ -124,10 +124,10 @@ def generate_semantic_delta(
 ) -> dict[str, Any]:
     model = _model_name(model_name)
     rows = _load_graph_delta(graph_delta_path)
-    delta_dir = session_dir / "worldmm" / "incremental" / "semantic" / "deltas"
+    delta_dir = session_dir / "em2mem" / "incremental" / "semantic" / "deltas"
     delta_path = delta_dir / f"semantic_delta_v{version:06d}.jsonl"
-    state_path = session_dir / "worldmm" / "incremental" / "semantic" / "semantic_state.json"
-    semantic_root = session_dir / "worldmm" / "semantic_root"
+    state_path = session_dir / "em2mem" / "incremental" / "semantic" / "semantic_state.json"
+    semantic_root = session_dir / "em2mem" / "semantic_root"
     candidate_path = semantic_root / "semantic_candidates.jsonl"
     memory_path = semantic_root / f"semantic_memory_{model}.json"
 
@@ -225,7 +225,7 @@ def generate_semantic_delta(
         {
             "facts": merged_facts,
             "timeline": timeline,
-            "source": "worldmm_incremental_semantic_delta",
+            "source": "em2mem_incremental_semantic_delta",
             "semantic_memory_ready": True,
             "semantic_generation_backend": "incremental_graph_delta",
             "semantic_consolidation": "deterministic_incremental_global_dedupe",
@@ -235,7 +235,7 @@ def generate_semantic_delta(
         }
     )
     write_json_atomic(memory_path, memory)
-    consolidation_state_path = session_dir / "worldmm" / "incremental" / "semantic" / "semantic_consolidation_state.json"
+    consolidation_state_path = session_dir / "em2mem" / "incremental" / "semantic" / "semantic_consolidation_state.json"
     write_json_atomic(
         consolidation_state_path,
         {

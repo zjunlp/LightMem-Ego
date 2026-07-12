@@ -87,10 +87,10 @@ def _queue_counts(project_root: Path) -> dict[str, int]:
 
 
 def _heartbeat_interval_seconds() -> float:
-    configured = os.getenv("WORLDMM_QUERY_WORKER_HEARTBEAT_SECONDS")
+    configured = os.getenv("EM2MEM_QUERY_WORKER_HEARTBEAT_SECONDS")
     if configured not in {None, ""}:
-        return max(1.0, _env_float("WORLDMM_QUERY_WORKER_HEARTBEAT_SECONDS", 15.0))
-    stale_seconds = max(3.0, _env_float("WORLDMM_WORKER_STALE_SECONDS", 60.0))
+        return max(1.0, _env_float("EM2MEM_QUERY_WORKER_HEARTBEAT_SECONDS", 15.0))
+    stale_seconds = max(3.0, _env_float("EM2MEM_WORKER_STALE_SECONDS", 60.0))
     return max(1.0, min(15.0, stale_seconds / 3.0))
 
 
@@ -127,7 +127,7 @@ def _touch_runtime(
         project_root,
         "query",
         status="ready" if state in {"idle", "running"} else state,
-        model_name=os.getenv("WORLDMM_QUERY_RESPOND_MODEL") or os.getenv("WORLDMM_RESPOND_MODEL") or os.getenv("OPENAI_MODEL"),
+        model_name=os.getenv("EM2MEM_QUERY_RESPOND_MODEL") or os.getenv("EM2MEM_RESPOND_MODEL") or os.getenv("OPENAI_MODEL"),
         backend="openai-compatible",
         client_loaded=True,
         warmup_done=True,
@@ -220,16 +220,16 @@ def _write_runtime(project_root: Path, cache: SessionEngineCache, state: str, ex
         "updated_at": utc_now_iso(),
         "pid": os.getpid(),
         "project_root": str(project_root),
-        "pipeline_mode": os.getenv("WORLDMM_PIPELINE_MODE", "mst"),
-        "strict_load_only": _env_bool("WORLDMM_QUERY_STRICT_LOAD_ONLY", True),
-        "skip_reindex": _env_bool("WORLDMM_QUERY_SKIP_REINDEX", True),
-        "use_cached_hipporag": _env_bool("WORLDMM_QUERY_USE_CACHED_HIPPORAG", True),
+        "pipeline_mode": os.getenv("EM2MEM_PIPELINE_MODE", "mst"),
+        "strict_load_only": _env_bool("EM2MEM_QUERY_STRICT_LOAD_ONLY", True),
+        "skip_reindex": _env_bool("EM2MEM_QUERY_SKIP_REINDEX", True),
+        "use_cached_hipporag": _env_bool("EM2MEM_QUERY_USE_CACHED_HIPPORAG", True),
         "long_term_retrieval_scheme": normalize_long_term_retrieval_scheme(None),
-        "preload_recent_memory_ready": int(os.getenv("WORLDMM_PRELOAD_RECENT_MEMORY_READY", "0") or 0),
+        "preload_recent_memory_ready": int(os.getenv("EM2MEM_PRELOAD_RECENT_MEMORY_READY", "0") or 0),
         "queue_counts": queue_counts,
         "router": {
             "memory_router_enabled": True,
-            "default_memory_mode": os.getenv("WORLDMM_DEFAULT_MEMORY_MODE", "auto"),
+            "default_memory_mode": os.getenv("EM2MEM_DEFAULT_MEMORY_MODE", "auto"),
         },
         "cache": cache.runtime_info(),
     }
@@ -241,7 +241,7 @@ def _write_runtime(project_root: Path, cache: SessionEngineCache, state: str, ex
         project_root,
         "query",
         status="ready" if state in {"idle", "running"} else state,
-        model_name=os.getenv("WORLDMM_QUERY_RESPOND_MODEL") or os.getenv("WORLDMM_RESPOND_MODEL") or os.getenv("OPENAI_MODEL"),
+        model_name=os.getenv("EM2MEM_QUERY_RESPOND_MODEL") or os.getenv("EM2MEM_RESPOND_MODEL") or os.getenv("OPENAI_MODEL"),
         backend="openai-compatible",
         client_loaded=True,
         warmup_done=True,
@@ -268,10 +268,10 @@ def _preload_vlm2vec() -> dict[str, Any]:
 
 
 def _preload_text_embedding() -> dict[str, Any] | None:
-    backend = os.getenv("WORLDMM_TEXT_EMBED_BACKEND", "local").strip().lower()
+    backend = os.getenv("EM2MEM_TEXT_EMBED_BACKEND", "local").strip().lower()
     if backend != "remote":
         return {"backend": backend or "local"}
-    from worldmm.embedding.remote_text_embedding import RemoteTextEmbeddingModel
+    from em2mem.embedding.remote_text_embedding import RemoteTextEmbeddingModel
 
     client = RemoteTextEmbeddingModel()
     health = client.ping_remote()
@@ -305,7 +305,7 @@ def _discover_memory_ready_sessions(sessions_root: Path, limit: int) -> list[str
     for session_dir in sessions_root.iterdir():
         if not session_dir.is_dir():
             continue
-        memory_config = session_dir / "worldmm" / "memory_config.json"
+        memory_config = session_dir / "em2mem" / "memory_config.json"
         if not memory_config.exists():
             continue
         config = read_json(memory_config, default={})
@@ -653,12 +653,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Persistent online query worker with session-level engine cache.")
     parser.add_argument("--project-root", default=str(PROJECT_ROOT))
     parser.add_argument("--sessions-root", default="online_sessions")
-    parser.add_argument("--poll-interval", type=float, default=float(os.getenv("WORLDMM_QUERY_WORKER_POLL_SECONDS", "1.0")))
-    parser.add_argument("--cache-max-sessions", type=int, default=int(os.getenv("WORLDMM_QUERY_CACHE_MAX_SESSIONS", "9")))
-    parser.add_argument("--ttl-seconds", type=int, default=int(os.getenv("WORLDMM_QUERY_CACHE_TTL_SECONDS", "3600")))
-    parser.add_argument("--preload-vlm2vec", action=argparse.BooleanOptionalAction, default=_env_bool("WORLDMM_PRELOAD_VLM2VEC", False))
-    parser.add_argument("--preload-sessions", default=os.getenv("WORLDMM_PRELOAD_QUERY_SESSIONS", ""))
-    parser.add_argument("--preload-recent-memory-ready", type=int, default=int(os.getenv("WORLDMM_PRELOAD_RECENT_MEMORY_READY", "0")))
+    parser.add_argument("--poll-interval", type=float, default=float(os.getenv("EM2MEM_QUERY_WORKER_POLL_SECONDS", "1.0")))
+    parser.add_argument("--cache-max-sessions", type=int, default=int(os.getenv("EM2MEM_QUERY_CACHE_MAX_SESSIONS", "9")))
+    parser.add_argument("--ttl-seconds", type=int, default=int(os.getenv("EM2MEM_QUERY_CACHE_TTL_SECONDS", "3600")))
+    parser.add_argument("--preload-vlm2vec", action=argparse.BooleanOptionalAction, default=_env_bool("EM2MEM_PRELOAD_VLM2VEC", False))
+    parser.add_argument("--preload-sessions", default=os.getenv("EM2MEM_PRELOAD_QUERY_SESSIONS", ""))
+    parser.add_argument("--preload-recent-memory-ready", type=int, default=int(os.getenv("EM2MEM_PRELOAD_RECENT_MEMORY_READY", "0")))
     parser.add_argument("--once", action="store_true", help="Process queued tasks once and exit.")
     return parser.parse_args()
 

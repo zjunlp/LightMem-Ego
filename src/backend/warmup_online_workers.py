@@ -21,8 +21,8 @@ def main() -> None:
         project_root,
         "evidence",
         status="ready",
-        backend=os.getenv("WORLDMM_EVIDENCE_CAPTION_BACKEND", "openai"),
-        model_name=os.getenv("WORLDMM_VLM_MODEL") or os.getenv("OPENAI_MODEL"),
+        backend=os.getenv("EM2MEM_EVIDENCE_CAPTION_BACKEND", "openai"),
+        model_name=os.getenv("EM2MEM_VLM_MODEL") or os.getenv("OPENAI_MODEL"),
         client_loaded=True,
         warmup_done=True,
     )
@@ -30,8 +30,8 @@ def main() -> None:
         project_root,
         "refine",
         status="ready",
-        backend=os.getenv("WORLDMM_MST_REFINE_BACKEND", "openai"),
-        model_name=os.getenv("WORLDMM_MST_REFINE_MODEL") or os.getenv("WORLDMM_VLM_MODEL") or os.getenv("OPENAI_MODEL"),
+        backend=os.getenv("EM2MEM_MST_REFINE_BACKEND", "openai"),
+        model_name=os.getenv("EM2MEM_MST_REFINE_MODEL") or os.getenv("EM2MEM_VLM_MODEL") or os.getenv("OPENAI_MODEL"),
         client_loaded=True,
         warmup_done=True,
     )
@@ -39,8 +39,8 @@ def main() -> None:
         project_root,
         "consolidation",
         status="ready",
-        backend=os.getenv("WORLDMM_MST_EPISODIC_BACKEND", "openai"),
-        model_name=os.getenv("WORLDMM_MST_EPISODIC_MODEL") or os.getenv("WORLDMM_MEMORY_MODEL") or os.getenv("OPENAI_MODEL"),
+        backend=os.getenv("EM2MEM_MST_EPISODIC_BACKEND", "openai"),
+        model_name=os.getenv("EM2MEM_MST_EPISODIC_MODEL") or os.getenv("EM2MEM_MEMORY_MODEL") or os.getenv("OPENAI_MODEL"),
         client_loaded=True,
         warmup_done=True,
     )

@@ -33,7 +33,7 @@ def _age(value: Any) -> str:
 
 
 def _print_table(runtime: dict[str, Any], *, show_timeline: bool = False) -> None:
-    print(f"WorldMM Online Pipeline Runtime | updated_at={runtime.get('updated_at')}")
+    print(f"Em2Mem Online Pipeline Runtime | updated_at={runtime.get('updated_at')}")
     pipeline = runtime.get("pipeline") or {}
     legacy = runtime.get("legacy_evidence") or {}
     print(f"Pipeline mode: {runtime.get('pipeline_mode', pipeline.get('pipeline_mode', 'mst'))}")
@@ -150,7 +150,7 @@ def _print_table(runtime: dict[str, Any], *, show_timeline: bool = False) -> Non
             f"{_short(lt.get('latest_graph_ready_version')):<5} "
             f"{_short(lt.get('latest_semantic_ready_version')):<4} "
             f"{lag:<10} "
-            f"{_short(lt.get('worldmm_update_mode'))[:20]:<20} "
+            f"{_short(lt.get('em2mem_update_mode'))[:20]:<20} "
             f"{_short(src.get('active_30s_source'))[:26]:<26} "
             f"{str(bool(qry.get('query_ready'))):<5}"
         )
@@ -185,7 +185,7 @@ def _print_table(runtime: dict[str, Any], *, show_timeline: bool = False) -> Non
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Monitor online WorldMM worker, queue, and session pipeline state.")
+    parser = argparse.ArgumentParser(description="Monitor online Em2Mem worker, queue, and session pipeline state.")
     parser.add_argument("--project-root", default=str(PROJECT_ROOT))
     parser.add_argument("--sessions-root", default=str(DEFAULT_SESSIONS_ROOT))
     parser.add_argument("--session-id", default=None)

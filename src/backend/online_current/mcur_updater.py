@@ -17,7 +17,7 @@ class MCurUpdater:
         self.store = MCurStore(self.session_dir)
         self.detector = FrameDiffEventDetector(
             self.session_dir,
-            candidate_fps=env_float("WORLDMM_MCUR_CANDIDATE_FPS", 1.0),
+            candidate_fps=env_float("EM2MEM_MCUR_CANDIDATE_FPS", 1.0),
         )
         self.aligner = TranscriptAligner(self.session_dir)
 

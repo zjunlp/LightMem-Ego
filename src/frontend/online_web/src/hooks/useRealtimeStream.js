@@ -25,7 +25,7 @@ import {
   uploadDemoTestVideos,
   uploadAudioChunk,
   uploadFrame
-} from '../api/worldmmApi.js'
+} from '../api/lightmem_egoApi.js'
 import {
   assertWebRtcSecureContext,
   publishWhip,

@@ -48,8 +48,8 @@ class MCurFrameSelector:
         max_images: int | None = None,
         max_frames: int | None = None,
     ) -> dict[str, Any]:
-        max_images = env_int("WORLDMM_MCUR_MAX_QUERY_IMAGES", 3) if max_images is None else int(max_images)
-        max_frames = env_int("WORLDMM_MCUR_MAX_EVIDENCE_FRAMES", 5) if max_frames is None else int(max_frames)
+        max_images = env_int("EM2MEM_MCUR_MAX_QUERY_IMAGES", 3) if max_images is None else int(max_images)
+        max_frames = env_int("EM2MEM_MCUR_MAX_EVIDENCE_FRAMES", 5) if max_frames is None else int(max_frames)
         max_images = max(0, max_images)
         max_frames = max(1, max_frames)
         frames = list(current_context.get("frames", []) or [])

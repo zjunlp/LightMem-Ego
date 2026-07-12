@@ -59,7 +59,7 @@ def _write_visual_checkpoint(
     index_backend: str,
     item_count: int,
 ) -> str:
-    checkpoint_dir = session_dir / "worldmm" / "incremental" / "visual" / "checkpoints" / f"v{visual_version:06d}"
+    checkpoint_dir = session_dir / "em2mem" / "incremental" / "visual" / "checkpoints" / f"v{visual_version:06d}"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     copied: dict[str, str] = {}
     for name in ("visual.faiss", "visual_embeddings.pkl", "visual_id_mapping.json", "visual_items.jsonl"):
@@ -94,7 +94,7 @@ def build_visual_embeddings(
     verbose: bool = False,
 ) -> Path:
     session_dir = sessions_root / session_id
-    memory_config_path = session_dir / "worldmm" / "memory_config.json"
+    memory_config_path = session_dir / "em2mem" / "memory_config.json"
     config = read_json(memory_config_path, default={})
     if not isinstance(config, dict):
         config = {}
@@ -105,9 +105,9 @@ def build_visual_embeddings(
     if not evidence_path.exists():
         raise FileNotFoundError(f"Missing evidence file for session {session_id}: {evidence_path}")
     if not memory_config_path.exists():
-        raise FileNotFoundError(f"Missing worldmm/memory_config.json for session {session_id}")
+        raise FileNotFoundError(f"Missing em2mem/memory_config.json for session {session_id}")
 
-    visual_root = session_dir / "worldmm" / "visual"
+    visual_root = session_dir / "em2mem" / "visual"
     items_path = visual_root / "visual_items.jsonl"
     mapping_path = visual_root / "visual_id_mapping.json"
     embeddings_path = visual_root / "visual_embeddings.pkl"
@@ -233,7 +233,7 @@ def append_visual_embeddings(
     verbose: bool = False,
 ) -> Path:
     session_dir = sessions_root / session_id
-    memory_config_path = session_dir / "worldmm" / "memory_config.json"
+    memory_config_path = session_dir / "em2mem" / "memory_config.json"
     config = read_json(memory_config_path, default={})
     if not isinstance(config, dict):
         config = {}
@@ -241,13 +241,13 @@ def append_visual_embeddings(
     if not evidence_path.exists():
         raise FileNotFoundError(f"Missing evidence file for visual append: {evidence_path}")
 
-    visual_root = session_dir / "worldmm" / "visual"
+    visual_root = session_dir / "em2mem" / "visual"
     items_path = visual_root / "visual_items.jsonl"
     mapping_path = visual_root / "visual_id_mapping.json"
     embeddings_path = visual_root / "visual_embeddings.pkl"
     faiss_path = visual_root / "visual.faiss"
-    append_log_path = session_dir / "worldmm" / "incremental" / "visual" / "visual_append_log.jsonl"
-    memory_append_log_path = session_dir / "worldmm" / "incremental" / "memory_append_log.jsonl"
+    append_log_path = session_dir / "em2mem" / "incremental" / "visual" / "visual_append_log.jsonl"
+    memory_append_log_path = session_dir / "em2mem" / "incremental" / "memory_append_log.jsonl"
     visual_root.mkdir(parents=True, exist_ok=True)
     append_log_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -427,7 +427,7 @@ def append_visual_embeddings(
 def _append_memory_visual_ready(path: Path, session_dir: Path, episode_ids: list[str], visual_version: int) -> None:
     if not episode_ids:
         return
-    episodes_path = session_dir / "worldmm" / "mst_episodic" / "mst_30sec_episodes.json"
+    episodes_path = session_dir / "em2mem" / "mst_episodic" / "mst_30sec_episodes.json"
     episodes = read_json(episodes_path, default=[])
     if isinstance(episodes, dict):
         episodes = episodes.get("episodes") or []
@@ -459,7 +459,7 @@ def _append_memory_visual_ready(path: Path, session_dir: Path, episode_ids: list
     try:
         from online_memory_incremental.append_log import MemoryAppendLog
 
-        MemoryAppendLog(path).write_state(session_dir / "worldmm" / "incremental" / "append_state.json", session_dir.name)
+        MemoryAppendLog(path).write_state(session_dir / "em2mem" / "incremental" / "append_state.json", session_dir.name)
     except Exception:
         pass
 

@@ -53,29 +53,25 @@ def _query_rag_helpers() -> Any:
     return query_rag
 
 
-def _worldmm_classes(long_term_retrieval_scheme: str | None = None) -> tuple[Any, Any, Any, Any, Any]:
-    from worldmm.embedding import EmbeddingModel
-    from worldmm.llm import LLMModel, PromptTemplateManager
-    from worldmm.memory import transform_timestamp
+def _em2mem_classes(long_term_retrieval_scheme: str | None = None) -> tuple[Any, Any, Any, Any, Any]:
+    from em2mem.embedding import EmbeddingModel
+    from em2mem.llm import LLMModel, PromptTemplateManager
+    from em2mem.memory import EM2Memory, transform_timestamp
 
     scheme = normalize_long_term_retrieval_scheme(long_term_retrieval_scheme)
-    if scheme == "em2memory":
-        from worldmm.memory.WorldMemory import WorldMemory
-    elif scheme == "worldmm_legacy":
-        from worldmm.memory.memory import WorldMemory
-    else:
+    if scheme != "em2memory":
         raise ValueError(f"unsupported long-term retrieval scheme: {scheme}")
 
-    return EmbeddingModel, LLMModel, PromptTemplateManager, WorldMemory, transform_timestamp
+    return EmbeddingModel, LLMModel, PromptTemplateManager, EM2Memory, transform_timestamp
 
 
-def _configure_semantic_embedding_cache(world_memory: Any, semantic_path: str | None) -> None:
+def _configure_semantic_embedding_cache(em2mem_memory: Any, semantic_path: str | None) -> None:
     if not semantic_path:
         return
-    semantic_memory = getattr(world_memory, "semantic_memory", None)
+    semantic_memory = getattr(em2mem_memory, "semantic_memory", None)
     if semantic_memory is None or not hasattr(semantic_memory, "embedding_cache_dir"):
         return
-    configured_cache_dir = os.getenv("WORLDMM_SEMANTIC_EMBED_CACHE_DIR", "").strip()
+    configured_cache_dir = os.getenv("EM2MEM_SEMANTIC_EMBED_CACHE_DIR", "").strip()
     cache_dir = Path(configured_cache_dir) if configured_cache_dir else Path(semantic_path).parent / ".semantic_embedding_cache"
     try:
         semantic_memory.embedding_cache_dir = cache_dir
@@ -283,7 +279,7 @@ def _finalize_eval_trace(result: dict[str, Any], trace: dict[str, Any]) -> dict[
                 "evidence_pack_ms",
             )
         ))
-        durations.setdefault("answer_generation_ms", latency.get("generation_ms") or latency.get("worldmm_answer_ms"))
+        durations.setdefault("answer_generation_ms", latency.get("generation_ms") or latency.get("em2mem_answer_ms"))
         durations.setdefault("end_to_end_qa_ms", latency.get("total_ms"))
     result["eval_trace"] = trace
     return result
@@ -304,7 +300,7 @@ def _env_int(name: str, default: int) -> int:
 
 
 def _answer_language_instruction() -> str:
-    language = str(os.getenv("WORLDMM_ANSWER_LANGUAGE", "zh") or "zh").strip().lower()
+    language = str(os.getenv("EM2MEM_ANSWER_LANGUAGE", "zh") or "zh").strip().lower()
     if language in {"zh", "cn", "chinese", "中文", "zh-cn", "zh_hans", "zh-hans", "simplified_chinese"}:
         return "请始终用简体中文回答，不要使用繁体中文。即使证据文本是英文，也要翻译和概括成简体中文；专有名词、文件名、模型名可以保留原文。"
     if language in {"en", "english"}:
@@ -334,7 +330,7 @@ def _contains_keyword_any(text: str, keywords: Any) -> bool:
 
 
 def _current_fast_path_enabled() -> bool:
-    return _env_bool("WORLDMM_CURRENT_FAST_PATH_ENABLED", True)
+    return _env_bool("EM2MEM_CURRENT_FAST_PATH_ENABLED", True)
 
 
 def _is_current_fast_question(question: str) -> bool:
@@ -469,9 +465,9 @@ def _session_config_path(session_dir: Path, config: dict[str, Any], key: str) ->
 
 
 def _load_memory_config(session_dir: Path) -> tuple[Path, dict[str, Any]]:
-    memory_config_path = session_dir / "worldmm" / "memory_config.json"
+    memory_config_path = session_dir / "em2mem" / "memory_config.json"
     if not memory_config_path.exists():
-        raise FileNotFoundError("memory is not ready: worldmm/memory_config.json not found")
+        raise FileNotFoundError("memory is not ready: em2mem/memory_config.json not found")
     config = read_json(memory_config_path, default={})
     if not isinstance(config, dict) or config.get("status") != "memory_ready":
         raise RuntimeError("memory is not ready")
@@ -764,11 +760,11 @@ def _apply_image_fallback_to_route(route_decision: dict[str, Any], diagnostics: 
     route_decision["use_image_evidence_source"] = "auto_partial_memory_fallback"
     route_decision["max_image_evidence"] = max(
         int(route_decision.get("max_image_evidence") or 0),
-        _env_int("WORLDMM_PARTIAL_MEMORY_IMAGE_FALLBACK_MAX_IMAGES", 4),
+        _env_int("EM2MEM_PARTIAL_MEMORY_IMAGE_FALLBACK_MAX_IMAGES", 4),
     )
     route_decision["evidence_frames_k"] = max(
         int(route_decision.get("evidence_frames_k") or 0),
-        _env_int("WORLDMM_PARTIAL_MEMORY_IMAGE_FALLBACK_FRAME_K", 6),
+        _env_int("EM2MEM_PARTIAL_MEMORY_IMAGE_FALLBACK_FRAME_K", 6),
     )
     warnings = route_decision.setdefault("warnings", [])
     message = "partial/provisional memory detected; attaching local visual frames as primary evidence"
@@ -865,7 +861,7 @@ def _has_any_query_evidence(session_dir: Path) -> bool:
             return True
     except Exception:
         pass
-    memory_config = read_json(session_dir / "worldmm" / "memory_config.json", default={})
+    memory_config = read_json(session_dir / "em2mem" / "memory_config.json", default={})
     if isinstance(memory_config, dict):
         readiness = memory_config.get("readiness") if isinstance(memory_config.get("readiness"), dict) else {}
         return bool(
@@ -904,8 +900,8 @@ def _answer_memory_status_question(session_id: str, session_dir: Path, question:
     current_state = read_json(session_dir / "current" / "current_state.json", default={})
     frame_state = read_json(session_dir / "stream" / "frame_state.json", default={})
     mst_state = read_json(session_dir / "short_term" / "mst_state.json", default={})
-    memory_config = read_json(session_dir / "worldmm" / "memory_config.json", default={})
-    component_versions = read_json(session_dir / "worldmm" / "incremental" / "component_versions.json", default={})
+    memory_config = read_json(session_dir / "em2mem" / "memory_config.json", default={})
+    component_versions = read_json(session_dir / "em2mem" / "incremental" / "component_versions.json", default={})
     current_state = current_state if isinstance(current_state, dict) else {}
     frame_state = frame_state if isinstance(frame_state, dict) else {}
     mst_state = mst_state if isinstance(mst_state, dict) else {}
@@ -1220,7 +1216,7 @@ def _mark_active_query_component_versions(
     """
     if not active_query_memory_version:
         return
-    component_path = session_dir / "worldmm" / "incremental" / "component_versions.json"
+    component_path = session_dir / "em2mem" / "incremental" / "component_versions.json"
     data = read_json(component_path, default={})
     if not isinstance(data, dict):
         data = {"session_id": session_dir.name}
@@ -1254,7 +1250,7 @@ class LoadedQueryEngine:
         session_dir: Path,
         memory_config_path: Path,
         memory_config: dict[str, Any],
-        world_memory: Any,
+        em2mem_memory: Any,
         query_args: dict[str, Any],
         visual_evidence_data: list[dict[str, Any]],
         semantic_path: str,
@@ -1277,7 +1273,7 @@ class LoadedQueryEngine:
         self.memory_config_path = memory_config_path
         self.memory_config_mtime = memory_config_path.stat().st_mtime if memory_config_path.exists() else 0.0
         self.memory_config = memory_config
-        self.world_memory = world_memory
+        self.em2mem_memory = em2mem_memory
         self.query_args = query_args
         self.visual_evidence_data = visual_evidence_data
         self.semantic_path = semantic_path
@@ -1400,7 +1396,7 @@ class LoadedQueryEngine:
 
     def close(self) -> None:
         try:
-            self.world_memory.cleanup()
+            self.em2mem_memory.cleanup()
         except Exception:
             pass
 
@@ -1416,7 +1412,7 @@ class LoadedQueryEngine:
             "graph_lagging": bool(lag.get("graph_lagging")),
             "visual_lagging": bool(lag.get("visual_lagging")),
             "readiness": config.get("readiness") if isinstance(config.get("readiness"), dict) else {},
-            "worldmm_update_mode": config.get("worldmm_update_mode"),
+            "em2mem_update_mode": config.get("em2mem_update_mode"),
             "latest_snapshot_version": config.get("latest_snapshot_version"),
             "latest_snapshot_path": config.get("latest_snapshot_path"),
         }
@@ -1648,7 +1644,7 @@ class LoadedQueryEngine:
             cache_mode = "auto"
         interaction_enabled = (
             bool(use_interaction_cache)
-            and _env_bool("WORLDMM_INTERACTION_CACHE_ENABLED", True)
+            and _env_bool("EM2MEM_INTERACTION_CACHE_ENABLED", True)
             and cache_mode != "off"
         )
         cache_read_enabled = interaction_enabled and cache_mode in {"auto", "read_only"}
@@ -1747,8 +1743,8 @@ class LoadedQueryEngine:
                     stream_handler=stream_handler,
                 )
                 result["visual_embedding_ready"] = self.visual_ready
-                result["pipeline_mode"] = self.memory_config.get("pipeline_mode", os.getenv("WORLDMM_PIPELINE_MODE", "mst"))
-                result["active_30s_source"] = self.memory_config.get("active_30s_source") or self.memory_config.get("worldmm_30s_input_source")
+                result["pipeline_mode"] = self.memory_config.get("pipeline_mode", os.getenv("EM2MEM_PIPELINE_MODE", "mst"))
+                result["active_30s_source"] = self.memory_config.get("active_30s_source") or self.memory_config.get("em2mem_30s_input_source")
                 result["episodic_source"] = self.memory_config.get("episodic_source")
                 result["legacy_evidence_used"] = bool(self.memory_config.get("legacy_evidence_used") or self.memory_config.get("legacy_evidence_fallback_used"))
                 result["retrieval_plan"] = retrieval_plan.get("retrieval_plan", {})
@@ -2016,11 +2012,11 @@ class LoadedQueryEngine:
             )
 
         query_rag = _query_rag_helpers()
-        _, _, _, _, transform_timestamp = _worldmm_classes(self.long_term_retrieval_scheme)
+        _, _, _, _, transform_timestamp = _em2mem_classes(self.long_term_retrieval_scheme)
         query_start = time.perf_counter()
         self.touch()
         self.query_count += 1
-        self.world_memory.set_retrieval_top_k(
+        self.em2mem_memory.set_retrieval_top_k(
             episodic=text_top_k,
             semantic=max(text_top_k, 8),
             visual=min(max(text_top_k, 1), 5),
@@ -2038,7 +2034,7 @@ class LoadedQueryEngine:
         )
         until_time = query_rag.build_until_timestamp(effective_until_date, effective_until_time)
         day_context_block = build_day_context_block(getattr(self, "day_context", None))
-        qa_result = self.world_memory.answer(
+        qa_result = self.em2mem_memory.answer(
             query=resolved_question,
             choices=None,
             until_time=until_time,
@@ -2050,17 +2046,17 @@ class LoadedQueryEngine:
             prompt_context=day_context_block or None,
             generate_answer=False,
         )
-        worldmm_answer_ms = _ms(query_start)
+        em2mem_answer_ms = _ms(query_start)
         long_term_timing = _qa_timing_ms(qa_result)
         long_term_rag_ms = int(long_term_timing.get("retrieval_ms") or 0)
         long_term_selector_ms = int(long_term_timing.get("selector_ms") or 0)
         long_term_pack_ms = int(long_term_timing.get("pack_ms") or 0)
         long_term_retrieval_ms = long_term_rag_ms + long_term_selector_ms + long_term_pack_ms
         text_query_ms = long_term_retrieval_ms
-        episodic_retrieval_debug = getattr(getattr(self.world_memory, "episodic_memory", None), "last_retrieval_debug", {})
+        episodic_retrieval_debug = getattr(getattr(self.em2mem_memory, "episodic_memory", None), "last_retrieval_debug", {})
 
-        selected_events = query_rag.summarize_selected_events(self.world_memory, qa_result.selected_doc_ids)
-        supporting_semantic_facts = query_rag.summarize_semantic_facts(self.world_memory, qa_result.semantic_fact_ids)
+        selected_events = query_rag.summarize_selected_events(self.em2mem_memory, qa_result.selected_doc_ids)
+        supporting_semantic_facts = query_rag.summarize_semantic_facts(self.em2mem_memory, qa_result.semantic_fact_ids)
         retrieved_items_summary = query_rag.summarize_retrieved_items(qa_result)
         timestamps = [_event_timestamps(event) for event in selected_events if isinstance(event, dict)]
         evidence_frames = self._build_evidence_frames(selected_events)
@@ -2230,11 +2226,11 @@ class LoadedQueryEngine:
                 if str(fallback_raw.error_debug or "").strip():
                     fallback_raw.error_debug = "simplified_text_fallback_error_debug:\n" + str(fallback_raw.error_debug)
                 elif str(fallback_raw.answer or "").strip() == "Unable to generate answer":
-                    fallback_raw.error_debug = "worldmm_primary_error_debug:\n" + str(primary_error_debug)
+                    fallback_raw.error_debug = "em2mem_primary_error_debug:\n" + str(primary_error_debug)
             if isinstance(fallback_raw.llm_debug, dict):
-                fallback_raw.llm_debug["worldmm_primary_error_debug"] = primary_error_debug
+                fallback_raw.llm_debug["em2mem_primary_error_debug"] = primary_error_debug
                 if primary_traceback:
-                    fallback_raw.llm_debug["worldmm_primary_traceback"] = primary_traceback
+                    fallback_raw.llm_debug["em2mem_primary_traceback"] = primary_traceback
             final_raw_qa = fallback_raw
             final_answer = final_raw_qa.answer
 
@@ -2245,7 +2241,7 @@ class LoadedQueryEngine:
         latency["memory_router_ms"] = memory_router_ms
         latency["retrieval_planner_ms"] = retrieval_planner_ms
         latency["text_retrieval_ms"] = text_query_ms
-        latency["worldmm_answer_ms"] = worldmm_answer_ms
+        latency["em2mem_answer_ms"] = em2mem_answer_ms
         latency["long_term_rag_ms"] = long_term_rag_ms
         latency["long_term_retrieval_ms"] = long_term_retrieval_ms
         latency["long_term_selector_ms"] = long_term_selector_ms
@@ -2265,7 +2261,7 @@ class LoadedQueryEngine:
         if isinstance(final_raw_qa.llm_debug, dict):
             raw_traceback = str(
                 final_raw_qa.llm_debug.get("traceback")
-                or final_raw_qa.llm_debug.get("worldmm_primary_traceback")
+                or final_raw_qa.llm_debug.get("em2mem_primary_traceback")
                 or ""
             )
 
@@ -2286,7 +2282,7 @@ class LoadedQueryEngine:
             "error_debug": final_raw_qa.error_debug,
             "traceback": raw_traceback,
             "primary_error_debug": (
-                final_raw_qa.llm_debug.get("worldmm_primary_error_debug", "")
+                final_raw_qa.llm_debug.get("em2mem_primary_error_debug", "")
                 if isinstance(final_raw_qa.llm_debug, dict)
                 else ""
             ),
@@ -2313,8 +2309,8 @@ class LoadedQueryEngine:
             "image_selection_summary": pack_result.get("image_selection_summary", {}),
             "episodic_retrieval_debug": episodic_retrieval_debug,
             "pipeline": {
-                "pipeline_mode": self.memory_config.get("pipeline_mode", os.getenv("WORLDMM_PIPELINE_MODE", "mst")),
-                "active_30s_source": self.memory_config.get("active_30s_source") or self.memory_config.get("worldmm_30s_input_source"),
+                "pipeline_mode": self.memory_config.get("pipeline_mode", os.getenv("EM2MEM_PIPELINE_MODE", "mst")),
+                "active_30s_source": self.memory_config.get("active_30s_source") or self.memory_config.get("em2mem_30s_input_source"),
                 "episodic_source": self.memory_config.get("episodic_source"),
                 "legacy_evidence_used": bool(self.memory_config.get("legacy_evidence_used") or self.memory_config.get("legacy_evidence_fallback_used")),
             },
@@ -2349,8 +2345,8 @@ class LoadedQueryEngine:
             "route_decision": route_decision,
             "retrieval_mode": retrieval_mode,
             "retrieval_mode_source": route_decision.get("retrieval_mode_source"),
-            "pipeline_mode": self.memory_config.get("pipeline_mode", os.getenv("WORLDMM_PIPELINE_MODE", "mst")),
-            "active_30s_source": self.memory_config.get("active_30s_source") or self.memory_config.get("worldmm_30s_input_source"),
+            "pipeline_mode": self.memory_config.get("pipeline_mode", os.getenv("EM2MEM_PIPELINE_MODE", "mst")),
+            "active_30s_source": self.memory_config.get("active_30s_source") or self.memory_config.get("em2mem_30s_input_source"),
             "episodic_source": self.memory_config.get("episodic_source"),
             "legacy_evidence_used": bool(self.memory_config.get("legacy_evidence_used") or self.memory_config.get("legacy_evidence_fallback_used")),
             "long_term_ready": True,
@@ -2560,8 +2556,8 @@ class LoadedQueryEngine:
             "route_decision": route_decision,
             "retrieval_mode": "visual_only",
             "retrieval_mode_source": route_decision.get("retrieval_mode_source"),
-            "pipeline_mode": self.memory_config.get("pipeline_mode", os.getenv("WORLDMM_PIPELINE_MODE", "mst")),
-            "active_30s_source": self.memory_config.get("active_30s_source") or self.memory_config.get("worldmm_30s_input_source"),
+            "pipeline_mode": self.memory_config.get("pipeline_mode", os.getenv("EM2MEM_PIPELINE_MODE", "mst")),
+            "active_30s_source": self.memory_config.get("active_30s_source") or self.memory_config.get("em2mem_30s_input_source"),
             "episodic_source": self.memory_config.get("episodic_source"),
             "legacy_evidence_used": bool(self.memory_config.get("legacy_evidence_used") or self.memory_config.get("legacy_evidence_fallback_used")),
             "visual_embedding_ready": self.visual_ready,
@@ -2669,7 +2665,7 @@ class LoadedQueryEngine:
         selected_evidence: list[dict[str, Any]] | None = None,
         stream_handler: Any = None,
     ) -> Any:
-        from worldmm.memory.utils import QAResult, RetrievedItem
+        from em2mem.memory.utils import QAResult, RetrievedItem
 
         prompt_text = self._build_visual_answer_prompt(
             question=question,
@@ -2719,11 +2715,11 @@ class LoadedQueryEngine:
             "image_warnings": image_warnings,
             "evidence_pack_summary": evidence_pack_summary or {},
         }
-        answer_attempts = _env_int("WORLDMM_QUERY_ANSWER_RETRIES", 3)
+        answer_attempts = _env_int("EM2MEM_QUERY_ANSWER_RETRIES", 3)
         try:
             if callable(stream_handler):
                 answer, primary_debug = _llm_stream_with_retries(
-                    self.world_memory.respond_llm_model,
+                    self.em2mem_memory.respond_llm_model,
                     messages,
                     answer_attempts,
                     on_chunk=lambda text: _emit_stream_event(
@@ -2733,7 +2729,7 @@ class LoadedQueryEngine:
                 )
             else:
                 answer, primary_debug = _llm_generate_with_retries(
-                    self.world_memory.respond_llm_model,
+                    self.em2mem_memory.respond_llm_model,
                     messages,
                     answer_attempts,
                 )
@@ -2748,7 +2744,7 @@ class LoadedQueryEngine:
                 try:
                     if callable(stream_handler):
                         answer, fallback_debug = _llm_stream_with_retries(
-                            self.world_memory.respond_llm_model,
+                            self.em2mem_memory.respond_llm_model,
                             prompt_text,
                             answer_attempts,
                             on_chunk=lambda text: _emit_stream_event(
@@ -2758,7 +2754,7 @@ class LoadedQueryEngine:
                         )
                     else:
                         answer, fallback_debug = _llm_generate_with_retries(
-                            self.world_memory.respond_llm_model,
+                            self.em2mem_memory.respond_llm_model,
                             prompt_text,
                             answer_attempts,
                         )
@@ -2937,7 +2933,7 @@ class LoadedQueryEngine:
                 ),
             })
         final_evidence = []
-        final_prompt_limit = _env_int("WORLDMM_PROMPT_FINAL_EVIDENCE_K", 10)
+        final_prompt_limit = _env_int("EM2MEM_PROMPT_FINAL_EVIDENCE_K", 10)
         for item in selected_evidence[: max(1, final_prompt_limit)]:
             final_evidence.append({
                 "evidence_id": item.get("evidence_id"),
@@ -3281,8 +3277,8 @@ class LoadedQueryEngine:
         return memories
 
     def runtime_info(self) -> dict[str, Any]:
-        episodic_memory = getattr(self.world_memory, "episodic_memory", None)
-        semantic_memory = getattr(self.world_memory, "semantic_memory", None)
+        episodic_memory = getattr(self.em2mem_memory, "episodic_memory", None)
+        semantic_memory = getattr(self.em2mem_memory, "semantic_memory", None)
         episodic_counts: dict[str, int] = {}
         indexed_counts: dict[str, int] = {}
         hipporag_counts: dict[str, Any] = {}
@@ -3315,10 +3311,10 @@ class LoadedQueryEngine:
             "memory_config_path": str(self.memory_config_path),
             "memory_config_mtime": self.memory_config_mtime,
             "pipeline_mode": self.memory_config.get("pipeline_mode"),
-            "active_30s_source": self.memory_config.get("active_30s_source") or self.memory_config.get("worldmm_30s_input_source"),
+            "active_30s_source": self.memory_config.get("active_30s_source") or self.memory_config.get("em2mem_30s_input_source"),
             "episodic_source": self.memory_config.get("episodic_source"),
             "legacy_evidence_used": bool(self.memory_config.get("legacy_evidence_used") or self.memory_config.get("legacy_evidence_fallback_used")),
-            "worldmm_update_mode": self.memory_config.get("worldmm_update_mode"),
+            "em2mem_update_mode": self.memory_config.get("em2mem_update_mode"),
             "strict_load_only": self.strict_load_only,
             "preload_status": self.preload_status,
             "latest_ready_memory_version": self.latest_ready_memory_version,
@@ -3367,16 +3363,16 @@ def load_query_engine(
 ) -> LoadedQueryEngine:
     query_rag = _query_rag_helpers()
     long_term_retrieval_scheme = normalize_long_term_retrieval_scheme(long_term_retrieval_scheme)
-    EmbeddingModel, LLMModel, PromptTemplateManager, WorldMemory, _ = _worldmm_classes(long_term_retrieval_scheme)
+    EmbeddingModel, LLMModel, PromptTemplateManager, EM2Memory, _ = _em2mem_classes(long_term_retrieval_scheme)
     session_dir = sessions_root / session_id
     if not session_dir.exists():
         raise FileNotFoundError(f"session not found: {session_dir}")
     memory_config_path, config = _load_memory_config(session_dir)
     config["long_term_retrieval_scheme"] = long_term_retrieval_scheme
-    strict_load_only = _env_bool("WORLDMM_QUERY_STRICT_LOAD_ONLY", True)
+    strict_load_only = _env_bool("EM2MEM_QUERY_STRICT_LOAD_ONLY", True)
     if strict_load_only:
-        os.environ.setdefault("WORLDMM_QUERY_USE_CACHED_HIPPORAG", "1")
-        os.environ.setdefault("WORLDMM_QUERY_SKIP_REINDEX", "1")
+        os.environ.setdefault("EM2MEM_QUERY_USE_CACHED_HIPPORAG", "1")
+        os.environ.setdefault("EM2MEM_QUERY_SKIP_REINDEX", "1")
     latest_ready_memory_version = _memory_version_from_config(config)
     building_memory_version = None
     try:
@@ -3387,16 +3383,16 @@ def load_query_engine(
         raise RuntimeError("no ready long-term memory snapshot for strict load-only query")
     query_args = dict(config.get("query_rag_args", {}) or {})
     subject = str(query_args.get("subject") or session_id)
-    default_query_model = os.getenv("WORLDMM_QUERY_LLM_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-5.4"
+    default_query_model = os.getenv("EM2MEM_QUERY_LLM_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-5.4"
     retriever_model_name = str(
-        os.getenv("WORLDMM_QUERY_RETRIEVER_MODEL")
+        os.getenv("EM2MEM_QUERY_RETRIEVER_MODEL")
         or default_query_model
         or query_args.get("retriever_model")
         or "gpt-5.4"
     )
     respond_model_name = str(
-        os.getenv("WORLDMM_QUERY_RESPOND_MODEL")
-        or os.getenv("WORLDMM_RESPOND_MODEL")
+        os.getenv("EM2MEM_QUERY_RESPOND_MODEL")
+        or os.getenv("EM2MEM_RESPOND_MODEL")
         or default_query_model
         or query_args.get("respond_model")
         or retriever_model_name
@@ -3411,11 +3407,11 @@ def load_query_engine(
         raise RuntimeError("memory_config query_rag_args are incomplete")
 
     embedding_model = EmbeddingModel()
-    answer_retries = _env_int("WORLDMM_QUERY_ANSWER_RETRIES", 3)
+    answer_retries = _env_int("EM2MEM_QUERY_ANSWER_RETRIES", 3)
     retriever_llm_model = LLMModel(model_name=retriever_model_name, max_retries=answer_retries)
     respond_llm_model = LLMModel(model_name=respond_model_name, fps=1, max_retries=answer_retries)
     prompt_template_manager = PromptTemplateManager()
-    world_memory = WorldMemory(
+    em2mem_memory = EM2Memory(
         embedding_model=embedding_model,
         retriever_llm_model=retriever_llm_model,
         respond_llm_model=respond_llm_model,
@@ -3430,7 +3426,7 @@ def load_query_engine(
     )
     if "30sec" not in episodic_caption_files:
         raise FileNotFoundError("30sec caption file is required.")
-    skip_episodic_sidecar = _env_bool("WORLDMM_SKIP_EPISODIC_SIDECAR", False)
+    skip_episodic_sidecar = _env_bool("EM2MEM_SKIP_EPISODIC_SIDECAR", False)
     if skip_episodic_sidecar:
         episodic_triplet_files = {}
         episodic_graph_files = {}
@@ -3467,25 +3463,25 @@ def load_query_engine(
         if candidate_visual_path.exists():
             visual_embeddings_path = str(candidate_visual_path)
 
-    world_memory.load_episodic_captions(caption_files=episodic_caption_files)
+    em2mem_memory.load_episodic_captions(caption_files=episodic_caption_files)
     if episodic_triplet_files or episodic_graph_files:
-        world_memory.load_episodic_sidecar(
+        em2mem_memory.load_episodic_sidecar(
             triplet_files=episodic_triplet_files,
             graph_files=episodic_graph_files,
         )
-    _configure_semantic_embedding_cache(world_memory, semantic_path)
-    world_memory.load_semantic_triples(data=semantic_results)
-    world_memory.load_visual_clips(
+    _configure_semantic_embedding_cache(em2mem_memory, semantic_path)
+    em2mem_memory.load_semantic_triples(data=semantic_results)
+    em2mem_memory.load_visual_clips(
         embeddings_path=visual_embeddings_path,
         clips_data=visual_evidence_data,
     )
-    if hasattr(world_memory.visual_memory, "set_base_dir"):
-        world_memory.visual_memory.set_base_dir(session_dir)
+    if hasattr(em2mem_memory.visual_memory, "set_base_dir"):
+        em2mem_memory.visual_memory.set_base_dir(session_dir)
     until_time = query_rag.build_until_timestamp(
         str(query_args.get("until_date") or "DAY1"),
         str(query_args.get("until_time") or "23595999"),
     )
-    world_memory.index(until_time)
+    em2mem_memory.index(until_time)
 
     visual_ready = False
     visual_items: dict[str, dict[str, Any]] = {}
@@ -3525,7 +3521,7 @@ def load_query_engine(
         session_dir=session_dir,
         memory_config_path=memory_config_path,
         memory_config=config,
-        world_memory=world_memory,
+        em2mem_memory=em2mem_memory,
         query_args=query_args,
         visual_evidence_data=visual_evidence_data,
         semantic_path=semantic_path,
@@ -3615,7 +3611,7 @@ def _build_local_evidence_answer(
 
 def _build_short_term_llm_prompt(question: str, short_term_results: list[dict[str, Any]], pack_summary: dict[str, Any]) -> str:
     evidence = []
-    prompt_limit = _env_int("WORLDMM_MST_SUMMARY_PROMPT_EVENTS", 16) if _is_summary_question_text(question) else 8
+    prompt_limit = _env_int("EM2MEM_MST_SUMMARY_PROMPT_EVENTS", 16) if _is_summary_question_text(question) else 8
     for item in short_term_results[: max(1, prompt_limit)]:
         evidence.append({
             "event_id": item.get("event_id"),
@@ -3656,17 +3652,17 @@ def _build_short_term_llm_prompt(question: str, short_term_results: list[dict[st
 
 def _get_short_term_answer_model() -> Any:
     model_name = (
-        os.getenv("WORLDMM_MCUR_ANSWER_MODEL")
-        or os.getenv("WORLDMM_MST_ANSWER_MODEL")
-        or os.getenv("WORLDMM_QUERY_RESPOND_MODEL")
-        or os.getenv("WORLDMM_RESPOND_MODEL")
+        os.getenv("EM2MEM_MCUR_ANSWER_MODEL")
+        or os.getenv("EM2MEM_MST_ANSWER_MODEL")
+        or os.getenv("EM2MEM_QUERY_RESPOND_MODEL")
+        or os.getenv("EM2MEM_RESPOND_MODEL")
         or os.getenv("OPENAI_MODEL")
         or "gpt-5.4"
     )
-    retries = _env_int("WORLDMM_MCUR_ANSWER_MODEL_RETRIES", _env_int("WORLDMM_QUERY_ANSWER_RETRIES", 3))
+    retries = _env_int("EM2MEM_MCUR_ANSWER_MODEL_RETRIES", _env_int("EM2MEM_QUERY_ANSWER_RETRIES", 3))
     key = (model_name, retries)
     if key not in _SHORT_TERM_ANSWER_MODELS:
-        _, LLMModel, _, _, _ = _worldmm_classes()
+        _, LLMModel, _, _, _ = _em2mem_classes()
         _SHORT_TERM_ANSWER_MODELS[key] = LLMModel(model_name=model_name, fps=1, max_retries=retries)
     return _SHORT_TERM_ANSWER_MODELS[key]
 
@@ -3706,17 +3702,17 @@ def _answer_current_memory(
             "short_term_ready": short_term_ready,
         }
 
-    current_image_cap = max(0, _env_int("WORLDMM_MCUR_MAX_QUERY_IMAGES", 3))
+    current_image_cap = max(0, _env_int("EM2MEM_MCUR_MAX_QUERY_IMAGES", 3))
     try:
         requested_max_images = int(route_decision.get("max_image_evidence")) if route_decision.get("max_image_evidence") is not None else current_image_cap
     except Exception:
         requested_max_images = current_image_cap
     max_images = min(max(0, requested_max_images), current_image_cap)
-    max_frames = int(route_decision.get("evidence_frames_k") or _env_int("WORLDMM_MCUR_MAX_EVIDENCE_FRAMES", 5))
+    max_frames = int(route_decision.get("evidence_frames_k") or _env_int("EM2MEM_MCUR_MAX_EVIDENCE_FRAMES", 5))
     use_image = bool(route_decision.get("use_image_evidence", True))
     if not use_image and _is_visual_event_question(question, route_decision.get("query_type")):
         use_image = True
-        fallback_max_images = max(0, _env_int("WORLDMM_MCUR_VISUAL_FALLBACK_MAX_IMAGES", 3))
+        fallback_max_images = max(0, _env_int("EM2MEM_MCUR_VISUAL_FALLBACK_MAX_IMAGES", 3))
         max_images = min(max(max_images, fallback_max_images), current_image_cap)
         route_decision["use_image_evidence"] = True
         route_decision["use_image_evidence_source"] = "auto_current_visual_question"
@@ -3774,7 +3770,7 @@ def _answer_current_memory(
             answer, llm_debug = _llm_stream_with_retries(
                 _get_short_term_answer_model(),
                 messages if selected_image_paths else prompt_text,
-                _env_int("WORLDMM_MCUR_ANSWER_RETRIES", 1),
+                _env_int("EM2MEM_MCUR_ANSWER_RETRIES", 1),
                 on_chunk=lambda text: _emit_stream_event(
                     stream_handler,
                     {"type": "delta", "stage": "answer", "delta": text},
@@ -3784,7 +3780,7 @@ def _answer_current_memory(
             answer, llm_debug = _llm_generate_with_retries(
                 _get_short_term_answer_model(),
                 messages if selected_image_paths else prompt_text,
-                _env_int("WORLDMM_MCUR_ANSWER_RETRIES", 1),
+                _env_int("EM2MEM_MCUR_ANSWER_RETRIES", 1),
             )
         answer_debug["llm_debug"] = llm_debug
     except Exception as exc:
@@ -3797,7 +3793,7 @@ def _answer_current_memory(
                     answer, fallback_debug = _llm_stream_with_retries(
                         _get_short_term_answer_model(),
                         prompt_text,
-                        _env_int("WORLDMM_MCUR_ANSWER_RETRIES", 1),
+                        _env_int("EM2MEM_MCUR_ANSWER_RETRIES", 1),
                         on_chunk=lambda text: _emit_stream_event(
                             stream_handler,
                             {"type": "delta", "stage": "answer", "delta": text},
@@ -3807,7 +3803,7 @@ def _answer_current_memory(
                     answer, fallback_debug = _llm_generate_with_retries(
                         _get_short_term_answer_model(),
                         prompt_text,
-                        _env_int("WORLDMM_MCUR_ANSWER_RETRIES", 1),
+                        _env_int("EM2MEM_MCUR_ANSWER_RETRIES", 1),
                     )
                 answer_debug["text_only_fallback_debug"] = fallback_debug
             except Exception as fallback_exc:
@@ -3986,7 +3982,7 @@ def _query_short_term_only(
     cache_mode = str(cache_mode or "auto").strip().lower()
     if cache_mode not in {"auto", "off", "read_only", "write_only"}:
         cache_mode = "auto"
-    interaction_enabled = bool(use_interaction_cache) and _env_bool("WORLDMM_INTERACTION_CACHE_ENABLED", True) and cache_mode != "off"
+    interaction_enabled = bool(use_interaction_cache) and _env_bool("EM2MEM_INTERACTION_CACHE_ENABLED", True) and cache_mode != "off"
     cache_read_enabled = interaction_enabled and cache_mode in {"auto", "read_only"}
     cache_write_enabled = interaction_enabled and cache_mode in {"auto", "write_only"}
     cache_context: dict[str, Any] = {"cache_hit": False, "is_followup": False, "reason": "no cache context", "confidence": 0.0}
@@ -4133,13 +4129,13 @@ def _query_short_term_only(
     generation_start = time.perf_counter()
     answer_debug: dict[str, Any] = {
         "answer_model": (
-            os.getenv("WORLDMM_MST_ANSWER_MODEL")
-            or os.getenv("WORLDMM_QUERY_RESPOND_MODEL")
-            or os.getenv("WORLDMM_RESPOND_MODEL")
+            os.getenv("EM2MEM_MST_ANSWER_MODEL")
+            or os.getenv("EM2MEM_QUERY_RESPOND_MODEL")
+            or os.getenv("EM2MEM_RESPOND_MODEL")
             or os.getenv("OPENAI_MODEL")
             or "gpt-5.4"
         ),
-        "llm_enabled": _env_bool("WORLDMM_MST_ANSWER_WITH_LLM", True),
+        "llm_enabled": _env_bool("EM2MEM_MST_ANSWER_WITH_LLM", True),
         "fallback_used": False,
         "local_fallback_answer": local_answer,
     }
@@ -4172,7 +4168,7 @@ def _query_short_term_only(
                 answer, llm_debug = _llm_stream_with_retries(
                     _get_short_term_answer_model(),
                     prompt_or_messages,
-                    _env_int("WORLDMM_MST_ANSWER_RETRIES", _env_int("WORLDMM_QUERY_ANSWER_RETRIES", 3)),
+                    _env_int("EM2MEM_MST_ANSWER_RETRIES", _env_int("EM2MEM_QUERY_ANSWER_RETRIES", 3)),
                     on_chunk=lambda text: _emit_stream_event(
                         stream_handler,
                         {"type": "delta", "stage": "answer", "delta": text},
@@ -4182,7 +4178,7 @@ def _query_short_term_only(
                 answer, llm_debug = _llm_generate_with_retries(
                     _get_short_term_answer_model(),
                     prompt_or_messages,
-                    _env_int("WORLDMM_MST_ANSWER_RETRIES", _env_int("WORLDMM_QUERY_ANSWER_RETRIES", 3)),
+                    _env_int("EM2MEM_MST_ANSWER_RETRIES", _env_int("EM2MEM_QUERY_ANSWER_RETRIES", 3)),
                 )
             answer_debug["llm_debug"] = llm_debug
         except Exception as exc:
@@ -4381,8 +4377,8 @@ def query_session(
                     "retrieval_mode": "current",
                     "use_image_evidence": use_image_evidence,
                     "max_image_evidence": min(
-                        int(max_image_evidence) if max_image_evidence is not None else _env_int("WORLDMM_MCUR_MAX_QUERY_IMAGES", 3),
-                        _env_int("WORLDMM_MCUR_MAX_QUERY_IMAGES", 3),
+                        int(max_image_evidence) if max_image_evidence is not None else _env_int("EM2MEM_MCUR_MAX_QUERY_IMAGES", 3),
+                        _env_int("EM2MEM_MCUR_MAX_QUERY_IMAGES", 3),
                     ),
                     "top_k": top_k,
                     "text_top_k": text_top_k,
@@ -4586,7 +4582,7 @@ def query_session(
         direct_cache_mode = str(cache_mode or "auto").strip().lower()
         if direct_cache_mode not in {"auto", "off", "read_only", "write_only"}:
             direct_cache_mode = "auto"
-        interaction_enabled = bool(use_interaction_cache) and _env_bool("WORLDMM_INTERACTION_CACHE_ENABLED", True) and direct_cache_mode != "off"
+        interaction_enabled = bool(use_interaction_cache) and _env_bool("EM2MEM_INTERACTION_CACHE_ENABLED", True) and direct_cache_mode != "off"
         cache_read_enabled = interaction_enabled and direct_cache_mode in {"auto", "read_only"}
         cache_write_enabled = interaction_enabled and direct_cache_mode in {"auto", "write_only"}
         interaction_cache = InteractionCache(session_id=interaction_cache_session_id, session_dir=sessions_root / interaction_cache_session_id)

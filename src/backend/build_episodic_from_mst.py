@@ -18,18 +18,18 @@ def main() -> None:
     parser.add_argument("--window-start", type=float, default=None)
     parser.add_argument("--window-end", type=float, default=None)
     parser.add_argument("--limit-windows", type=int, default=None)
-    parser.add_argument("--update-worldmm", action="store_true", help="After building compatible MST episodic files, run the WorldMM adapter.")
+    parser.add_argument("--update-em2mem", action="store_true", help="After building compatible MST episodic files, run the Em2Mem adapter.")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
-    if args.update_worldmm:
-        from online_mst_to_worldmm import consolidate_short_term_to_worldmm
+    if args.update_em2mem:
+        from online_mst_to_em2mem import consolidate_short_term_to_em2mem
 
-        result = consolidate_short_term_to_worldmm(
+        result = consolidate_short_term_to_em2mem(
             session_id=args.session_id,
             sessions_root=Path(args.sessions_root),
             backend=args.backend,
-            update_worldmm=True,
+            update_em2mem=True,
             force=args.force,
             dry_run=args.dry_run,
             window_start=args.window_start,

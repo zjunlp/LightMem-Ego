@@ -39,7 +39,7 @@ def main() -> None:
     parser.add_argument("--sleep-seconds", type=float, default=0.0)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--clear-archive", action="store_true", help="With --force, also clear append-only M_st archive.")
-    parser.add_argument("--enqueue-refine", action=argparse.BooleanOptionalAction, default=_env_bool("WORLDMM_AUTO_MST_REFINE", True))
+    parser.add_argument("--enqueue-refine", action=argparse.BooleanOptionalAction, default=_env_bool("EM2MEM_AUTO_MST_REFINE", True))
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -97,8 +97,8 @@ def main() -> None:
         task_path = enqueue_mst_refine_task(
             project_root=PROJECT_ROOT,
             session_id=target_session_id,
-            backend=os.getenv("WORLDMM_MST_REFINE_BACKEND", "openai"),
-            limit_events=int(os.getenv("WORLDMM_MST_REFINE_LIMIT_EVENTS", "10")),
+            backend=os.getenv("EM2MEM_MST_REFINE_BACKEND", "openai"),
+            limit_events=int(os.getenv("EM2MEM_MST_REFINE_LIMIT_EVENTS", "10")),
             force_refine=False,
         )
         print(f"[stream] refine_task={task_path}")

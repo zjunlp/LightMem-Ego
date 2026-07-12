@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from online_memory import build_online_worldmm_memory
+from online_memory import build_online_em2mem_memory
 from online_preprocess.io_utils import read_json, relative_to_session, utc_now_iso, write_json_atomic
 
 from .file_lock import FileLock
@@ -19,7 +19,7 @@ from .rokid_day import (
 
 
 REQUIRED_CHILD_OUTPUTS = (
-    Path("worldmm") / "mst_episodic" / "mst_30sec_episodes.json",
+    Path("em2mem") / "mst_episodic" / "mst_30sec_episodes.json",
     Path("evidence") / "mst_session_evidence.json",
     Path("captions") / "mst_session_30sec_captioned.json",
 )
@@ -339,16 +339,16 @@ def _bool_value(value: Any, default: bool = False) -> bool:
 
 def _child_memory_ready_missing(child_dir: Path) -> list[str]:
     missing: list[str] = []
-    memory_config = read_json(child_dir / "worldmm" / "memory_config.json", default={})
+    memory_config = read_json(child_dir / "em2mem" / "memory_config.json", default={})
     if not isinstance(memory_config, dict):
-        return ["worldmm/memory_config.json"]
+        return ["em2mem/memory_config.json"]
     status = str(memory_config.get("status") or "").strip()
     memory_build_state = str(memory_config.get("memory_build_state") or "").strip()
     if status != "memory_ready" and memory_build_state != "ready":
-        missing.append(f"worldmm/memory_config.json:status={status or 'missing'}")
-        missing.append(f"worldmm/memory_config.json:memory_build_state={memory_build_state or 'missing'}")
+        missing.append(f"em2mem/memory_config.json:status={status or 'missing'}")
+        missing.append(f"em2mem/memory_config.json:memory_build_state={memory_build_state or 'missing'}")
     if not _bool_value(memory_config.get("long_term_partial_ready"), False):
-        missing.append("worldmm/memory_config.json:long_term_partial_ready=false")
+        missing.append("em2mem/memory_config.json:long_term_partial_ready=false")
     readiness = memory_config.get("readiness") if isinstance(memory_config.get("readiness"), dict) else {}
     visual_ready = _bool_value(readiness.get("visual_ready"), _bool_value(memory_config.get("visual_embedding_ready"), False))
     visual_lagging = _bool_value(memory_config.get("visual_lagging"), False)
@@ -356,9 +356,9 @@ def _child_memory_ready_missing(child_dir: Path) -> list[str]:
     if lag:
         visual_lagging = _bool_value(lag.get("visual_lagging"), visual_lagging)
     # if not visual_ready:
-    #     missing.append("worldmm/memory_config.json:visual_ready=false")
+    #     missing.append("em2mem/memory_config.json:visual_ready=false")
     # if visual_lagging:
-    #     missing.append("worldmm/memory_config.json:visual_lagging=true")
+    #     missing.append("em2mem/memory_config.json:visual_lagging=true")
     return missing
 
 
@@ -423,16 +423,16 @@ def missing_child_outputs(child_dir: Path) -> list[str]:
         if pending_ready_window_count:
             missing.append(f"short_term/consolidation_state.json:pending_ready_window_count={pending_ready_window_count}")
 
-    append_state = read_json(child_dir / "worldmm" / "incremental" / "append_state.json", default={})
+    append_state = read_json(child_dir / "em2mem" / "incremental" / "append_state.json", default={})
     if not isinstance(append_state, dict):
-        missing.append("worldmm/incremental/append_state.json")
+        missing.append("em2mem/incremental/append_state.json")
     else:
         pending_count = _int_value(append_state.get("pending_count"))
         failed_count = _int_value(append_state.get("failed_count"))
         if pending_count:
-            missing.append(f"worldmm/incremental/append_state.json:pending_count={pending_count}")
+            missing.append(f"em2mem/incremental/append_state.json:pending_count={pending_count}")
         if failed_count:
-            missing.append(f"worldmm/incremental/append_state.json:failed_count={failed_count}")
+            missing.append(f"em2mem/incremental/append_state.json:failed_count={failed_count}")
 
     return missing
 
@@ -518,7 +518,7 @@ def merge_rokid_day_child(
     lock_path = parent_dir / "stream" / "day_merge_state.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with FileLock(str(lock_path), timeout=60):
-        child_episodes = _load_list(child_dir / "worldmm" / "mst_episodic" / "mst_30sec_episodes.json")
+        child_episodes = _load_list(child_dir / "em2mem" / "mst_episodic" / "mst_30sec_episodes.json")
         child_evidence = _load_list(child_dir / "evidence" / "mst_session_evidence.json")
         child_captions = _load_list(child_dir / "captions" / "mst_session_30sec_captioned.json")
 
@@ -550,7 +550,7 @@ def merge_rokid_day_child(
             time_context=time_context,
         )
 
-        parent_episode_path = parent_dir / "worldmm" / "mst_episodic" / "mst_30sec_episodes.json"
+        parent_episode_path = parent_dir / "em2mem" / "mst_episodic" / "mst_30sec_episodes.json"
         parent_evidence_path = parent_dir / "evidence" / "mst_session_evidence.json"
         parent_caption_path = parent_dir / "captions" / "mst_session_30sec_captioned.json"
         episodes = _merge_unique_by_id(_load_list(parent_episode_path), incoming_episodes, ("episode_id", "doc_id"))
@@ -563,7 +563,7 @@ def merge_rokid_day_child(
         write_json_atomic(parent_evidence_path, evidence)
         write_json_atomic(parent_caption_path, captions)
 
-        build_config_path = build_online_worldmm_memory(
+        build_config_path = build_online_em2mem_memory(
             session_id=parent_session_id,
             sessions_root=sessions_root,
             force=force_rebuild,

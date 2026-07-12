@@ -122,8 +122,8 @@ class MicroEventBuilder:
             refine_task_path = enqueue_mst_refine_task(
                 project_root=Path(project_root),
                 session_id=self.session_id,
-                backend=os.getenv("WORLDMM_MST_REFINE_BACKEND", "openai"),
-                limit_events=int(os.getenv("WORLDMM_MST_REFINE_LIMIT_EVENTS", "10")),
+                backend=os.getenv("EM2MEM_MST_REFINE_BACKEND", "openai"),
+                limit_events=int(os.getenv("EM2MEM_MST_REFINE_LIMIT_EVENTS", "10")),
                 force_refine=False,
             )
         return {
@@ -167,8 +167,8 @@ class MicroEventBuilder:
             refine_task_path = enqueue_mst_refine_task(
                 project_root=Path(project_root),
                 session_id=self.session_id,
-                backend=os.getenv("WORLDMM_MST_REFINE_BACKEND", "openai"),
-                limit_events=int(os.getenv("WORLDMM_MST_REFINE_LIMIT_EVENTS", "10")),
+                backend=os.getenv("EM2MEM_MST_REFINE_BACKEND", "openai"),
+                limit_events=int(os.getenv("EM2MEM_MST_REFINE_LIMIT_EVENTS", "10")),
                 force_refine=False,
             )
         return {

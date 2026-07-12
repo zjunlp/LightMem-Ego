@@ -31,7 +31,7 @@ def _load_dotenv(path: Path) -> None:
 
 def _default_server() -> str:
     _load_dotenv(ROOT_DIR / ".env")
-    port = os.getenv("WORLDMM_API_PORT", "8000").strip() or "8000"
+    port = os.getenv("EM2MEM_API_PORT", "8000").strip() or "8000"
     return f"http://127.0.0.1:{port}"
 
 
@@ -85,7 +85,7 @@ def _extract_answer(payload: dict[str, Any]) -> str:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Ask a question against a specific WorldMM session and wait for the answer.")
+    parser = argparse.ArgumentParser(description="Ask a question against a specific Em2Mem session and wait for the answer.")
     parser.add_argument("positional_session_id", nargs="?", help="Session id to query.")
     parser.add_argument("positional_question", nargs="*", help="Question text. If omitted, use --question.")
     parser.add_argument("--session-id", dest="session_id", default=None)

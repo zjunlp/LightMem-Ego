@@ -129,12 +129,12 @@ def ingest_frame(
             },
             409,
         )
-    max_bytes = int(os.getenv("WORLDMM_FRAME_STREAM_MAX_BYTES", "524288") or 524288)
+    max_bytes = int(os.getenv("EM2MEM_FRAME_STREAM_MAX_BYTES", "524288") or 524288)
     size_bytes = len(frame_bytes or b"")
     if size_bytes <= 0:
         return _with_status({"status": "error", "message": "uploaded frame is empty"}, 400)
     if size_bytes > max_bytes:
-        return _with_status({"status": "error", "message": f"frame exceeds WORLDMM_FRAME_STREAM_MAX_BYTES={max_bytes}"}, 400)
+        return _with_status({"status": "error", "message": f"frame exceeds EM2MEM_FRAME_STREAM_MAX_BYTES={max_bytes}"}, 400)
     rokid_warnings: list[str] = []
     if is_rokid_input_mode(mode):
         relative_ts_ms, timestamp_source, rokid_warnings = prepare_rokid_relative_ts(
@@ -245,14 +245,14 @@ def ingest_frame(
                 )
         if update_mst and memory_accepted:
             try:
-                if _env_bool("WORLDMM_FRAME_STREAM_ENABLE_MST", True):
+                if _env_bool("EM2MEM_FRAME_STREAM_ENABLE_MST", True):
                     from online_short_term.frame_stream_event_builder import FrameStreamMicroEventBuilder
 
                     frame_mst_result = FrameStreamMicroEventBuilder(session_dir).process_frame(
                         frame_record=frame_record,
                         current_frame_path=str(frame_state.get("latest_current_frame_path") or "") or None,
                         project_root=project_root,
-                        enqueue_refine=_env_bool("WORLDMM_FRAME_STREAM_ENQUEUE_REFINE", True),
+                        enqueue_refine=_env_bool("EM2MEM_FRAME_STREAM_ENQUEUE_REFINE", True),
                     )
                     refresh_session_pipeline_state(session_dir)
                     _append_timeline_event_safe(
@@ -404,11 +404,11 @@ def ingest_audio_chunk(
         return _with_status({"status": "error", "message": "audio_index must be an integer"}, 400)
     if audio_index < 0:
         return _with_status({"status": "error", "message": "audio_index must be >= 0"}, 400)
-    if not _env_bool("WORLDMM_AUDIO_STREAM_ENABLED", True):
+    if not _env_bool("EM2MEM_AUDIO_STREAM_ENABLED", True):
         return _with_status(
             {
                 "status": "audio_stream_disabled",
-                "message": "audio stream is disabled by WORLDMM_AUDIO_STREAM_ENABLED=0",
+                "message": "audio stream is disabled by EM2MEM_AUDIO_STREAM_ENABLED=0",
                 "session_id": session_id,
             },
             409,
@@ -445,7 +445,7 @@ def ingest_audio_chunk(
     mime_type = str(content_type or "").strip() or None
     mime_base = normalize_audio_mime(content_type)
     codec = audio_codec_from_mime(content_type)
-    max_bytes = int(os.getenv("WORLDMM_AUDIO_CHUNK_MAX_BYTES", "1048576") or 1048576)
+    max_bytes = int(os.getenv("EM2MEM_AUDIO_CHUNK_MAX_BYTES", "1048576") or 1048576)
     size_bytes = len(audio_bytes or b"")
     if size_bytes <= 0:
         return _with_status({"status": "error", "message": "uploaded audio chunk is empty", "session_id": session_id, "audio_index": audio_index}, 400)
@@ -453,7 +453,7 @@ def ingest_audio_chunk(
         return _with_status(
             {
                 "status": "error",
-                "message": f"audio chunk exceeds WORLDMM_AUDIO_CHUNK_MAX_BYTES={max_bytes}",
+                "message": f"audio chunk exceeds EM2MEM_AUDIO_CHUNK_MAX_BYTES={max_bytes}",
                 "session_id": session_id,
                 "audio_index": audio_index,
             },
@@ -504,7 +504,7 @@ def ingest_audio_chunk(
                     stream_id=str(stream_state.get("stream_id") or ""),
                 )
             except Exception as exc:
-                asr_enqueue = {"enabled": _env_bool("WORLDMM_AUDIO_ASR_ENABLED", True), "enqueued": [], "error": str(exc)}
+                asr_enqueue = {"enabled": _env_bool("EM2MEM_AUDIO_ASR_ENABLED", True), "enqueued": [], "error": str(exc)}
                 print(f"[audio_stream] rolling ASR enqueue failed session_id={session_id} audio_index={audio_index}: {exc}", flush=True)
         timeline_event_type = {
             "audio_chunk_received": "audio_chunk_received",

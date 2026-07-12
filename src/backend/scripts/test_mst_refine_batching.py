@@ -13,7 +13,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.modules.setdefault("cv2", types.SimpleNamespace())
 sys.modules.setdefault("fcntl", types.SimpleNamespace(LOCK_EX=1, LOCK_UN=2, flock=lambda *args, **kwargs: None))
-TEST_TMP_ROOT = PROJECT_ROOT.parent / "work" / "omnispark_test_tmp"
+TEST_TMP_ROOT = PROJECT_ROOT.parent / "work" / "lightmem_ego_test_tmp"
 TEST_TMP_ROOT.mkdir(parents=True, exist_ok=True)
 
 

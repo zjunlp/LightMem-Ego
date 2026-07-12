@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 
 # Keep ffmpeg/ffprobe discovery stable for API and workers. Provide explicit
-# WORLDMM_FFMPEG_BIN / WORLDMM_FFPROBE_BIN values in .env when system PATH is
+# EM2MEM_FFMPEG_BIN / EM2MEM_FFPROBE_BIN values in .env when system PATH is
 # not enough.
 
-_worldmm_prepend_path() {
+_em2mem_prepend_path() {
   local dir="$1"
   if [[ -n "$dir" && -d "$dir" ]]; then
     case ":${PATH:-}:" in
@@ -14,7 +14,7 @@ _worldmm_prepend_path() {
   fi
 }
 
-_worldmm_prepend_ld_library_path() {
+_em2mem_prepend_ld_library_path() {
   local dir="$1"
   if [[ -n "$dir" && -d "$dir" ]]; then
     case ":${LD_LIBRARY_PATH:-}:" in
@@ -24,7 +24,7 @@ _worldmm_prepend_ld_library_path() {
   fi
 }
 
-_worldmm_prepend_ld_preload() {
+_em2mem_prepend_ld_preload() {
   local lib="$1"
   if [[ -n "$lib" && -f "$lib" ]]; then
     case ":${LD_PRELOAD:-}:" in
@@ -34,7 +34,7 @@ _worldmm_prepend_ld_preload() {
   fi
 }
 
-_worldmm_resolve_tool_binary() {
+_em2mem_resolve_tool_binary() {
   local tool_name="$1"
   local configured="${2:-}"
   local resolved=""
@@ -74,69 +74,69 @@ _worldmm_resolve_tool_binary() {
   printf '%s\n' "${configured:-$tool_name}"
 }
 
-_worldmm_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-_worldmm_root_dir="$(cd "$_worldmm_script_dir/.." && pwd)"
+_em2mem_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_em2mem_root_dir="$(cd "$_em2mem_script_dir/.." && pwd)"
 
 if [[ -n "${FFMPEG_HOME:-}" && -d "$FFMPEG_HOME" ]]; then
   if [[ -n "${VIRTUAL_ENV:-}" ]]; then
-    _worldmm_prepend_path "$VIRTUAL_ENV/bin"
-    _worldmm_prepend_path "$FFMPEG_HOME"
+    _em2mem_prepend_path "$VIRTUAL_ENV/bin"
+    _em2mem_prepend_path "$FFMPEG_HOME"
   else
-    _worldmm_prepend_path "$FFMPEG_HOME"
+    _em2mem_prepend_path "$FFMPEG_HOME"
   fi
 fi
 
-if [[ -z "${WORLDMM_FFMPEG_BIN:-}" && -n "${FFMPEG_HOME:-}" && -x "$FFMPEG_HOME/ffmpeg" ]]; then
-  export WORLDMM_FFMPEG_BIN="$FFMPEG_HOME/ffmpeg"
+if [[ -z "${EM2MEM_FFMPEG_BIN:-}" && -n "${FFMPEG_HOME:-}" && -x "$FFMPEG_HOME/ffmpeg" ]]; then
+  export EM2MEM_FFMPEG_BIN="$FFMPEG_HOME/ffmpeg"
 else
-  export WORLDMM_FFMPEG_BIN="$(_worldmm_resolve_tool_binary ffmpeg "${WORLDMM_FFMPEG_BIN:-}")"
+  export EM2MEM_FFMPEG_BIN="$(_em2mem_resolve_tool_binary ffmpeg "${EM2MEM_FFMPEG_BIN:-}")"
 fi
 
-if [[ -z "${WORLDMM_FFPROBE_BIN:-}" && -n "${FFMPEG_HOME:-}" && -x "$FFMPEG_HOME/ffprobe" ]]; then
-  export WORLDMM_FFPROBE_BIN="$FFMPEG_HOME/ffprobe"
+if [[ -z "${EM2MEM_FFPROBE_BIN:-}" && -n "${FFMPEG_HOME:-}" && -x "$FFMPEG_HOME/ffprobe" ]]; then
+  export EM2MEM_FFPROBE_BIN="$FFMPEG_HOME/ffprobe"
 else
-  export WORLDMM_FFPROBE_BIN="$(_worldmm_resolve_tool_binary ffprobe "${WORLDMM_FFPROBE_BIN:-}")"
+  export EM2MEM_FFPROBE_BIN="$(_em2mem_resolve_tool_binary ffprobe "${EM2MEM_FFPROBE_BIN:-}")"
 fi
 
-if [[ -z "${WORLDMM_FFMPEG_LIB_DIR:-}" ]]; then
+if [[ -z "${EM2MEM_FFMPEG_LIB_DIR:-}" ]]; then
   if [[ -n "${FFMPEG_HOME:-}" && -d "$FFMPEG_HOME/../lib" ]]; then
-    export WORLDMM_FFMPEG_LIB_DIR="$(cd "$FFMPEG_HOME/../lib" && pwd)"
-  elif [[ -n "${WORLDMM_FFMPEG_BIN:-}" ]]; then
-    _worldmm_ffmpeg_bin_dir="$(cd "$(dirname "$WORLDMM_FFMPEG_BIN")" 2>/dev/null && pwd || true)"
-    if [[ -n "$_worldmm_ffmpeg_bin_dir" && -d "$_worldmm_ffmpeg_bin_dir/../lib" ]]; then
-      export WORLDMM_FFMPEG_LIB_DIR="$(cd "$_worldmm_ffmpeg_bin_dir/../lib" && pwd)"
+    export EM2MEM_FFMPEG_LIB_DIR="$(cd "$FFMPEG_HOME/../lib" && pwd)"
+  elif [[ -n "${EM2MEM_FFMPEG_BIN:-}" ]]; then
+    _em2mem_ffmpeg_bin_dir="$(cd "$(dirname "$EM2MEM_FFMPEG_BIN")" 2>/dev/null && pwd || true)"
+    if [[ -n "$_em2mem_ffmpeg_bin_dir" && -d "$_em2mem_ffmpeg_bin_dir/../lib" ]]; then
+      export EM2MEM_FFMPEG_LIB_DIR="$(cd "$_em2mem_ffmpeg_bin_dir/../lib" && pwd)"
     fi
   fi
 fi
 
-_worldmm_prepend_ld_library_path "${WORLDMM_FFMPEG_LIB_DIR:-}"
+_em2mem_prepend_ld_library_path "${EM2MEM_FFMPEG_LIB_DIR:-}"
 
-if [[ "${WORLDMM_PRELOAD_FFMPEG_IMAGE_LIBS:-1}" =~ ^(1|true|TRUE|yes|YES|on|ON)$ ]]; then
-  _worldmm_prepend_ld_preload "${WORLDMM_FFMPEG_LIB_DIR:-}/libtiff.so.6"
-  _worldmm_prepend_ld_preload "${WORLDMM_FFMPEG_LIB_DIR:-}/libjpeg.so.8"
+if [[ "${EM2MEM_PRELOAD_FFMPEG_IMAGE_LIBS:-1}" =~ ^(1|true|TRUE|yes|YES|on|ON)$ ]]; then
+  _em2mem_prepend_ld_preload "${EM2MEM_FFMPEG_LIB_DIR:-}/libtiff.so.6"
+  _em2mem_prepend_ld_preload "${EM2MEM_FFMPEG_LIB_DIR:-}/libjpeg.so.8"
 fi
 
 if [[ -n "${VIRTUAL_ENV:-}" ]]; then
-  _worldmm_site_packages=""
-  for _worldmm_candidate in "$VIRTUAL_ENV"/lib/python*/site-packages; do
-    if [[ -d "$_worldmm_candidate" ]]; then
-      _worldmm_site_packages="$_worldmm_candidate"
+  _em2mem_site_packages=""
+  for _em2mem_candidate in "$VIRTUAL_ENV"/lib/python*/site-packages; do
+    if [[ -d "$_em2mem_candidate" ]]; then
+      _em2mem_site_packages="$_em2mem_candidate"
       break
     fi
   done
-  if [[ -n "$_worldmm_site_packages" ]]; then
-    _worldmm_prepend_ld_library_path "$_worldmm_site_packages/torch/lib"
-    for _worldmm_nvidia_lib in "$_worldmm_site_packages"/nvidia/*/lib; do
-      _worldmm_prepend_ld_library_path "$_worldmm_nvidia_lib"
+  if [[ -n "$_em2mem_site_packages" ]]; then
+    _em2mem_prepend_ld_library_path "$_em2mem_site_packages/torch/lib"
+    for _em2mem_nvidia_lib in "$_em2mem_site_packages"/nvidia/*/lib; do
+      _em2mem_prepend_ld_library_path "$_em2mem_nvidia_lib"
     done
   fi
 fi
 
-if [[ -d "$_worldmm_root_dir/.venv_whisperx" && "${VIRTUAL_ENV:-}" == "$_worldmm_root_dir/.venv_whisperx" ]]; then
-  _worldmm_prepend_path "$_worldmm_root_dir/.venv_whisperx/bin"
+if [[ -d "$_em2mem_root_dir/.venv_whisperx" && "${VIRTUAL_ENV:-}" == "$_em2mem_root_dir/.venv_whisperx" ]]; then
+  _em2mem_prepend_path "$_em2mem_root_dir/.venv_whisperx/bin"
 fi
 
-echo "[worldmm_ffmpeg_env] FFMPEG_HOME=${FFMPEG_HOME:-}"
-echo "[worldmm_ffmpeg_env] WORLDMM_FFMPEG_BIN=${WORLDMM_FFMPEG_BIN}"
-echo "[worldmm_ffmpeg_env] WORLDMM_FFPROBE_BIN=${WORLDMM_FFPROBE_BIN}"
-echo "[worldmm_ffmpeg_env] WORLDMM_FFMPEG_LIB_DIR=${WORLDMM_FFMPEG_LIB_DIR:-}"
+echo "[em2mem_ffmpeg_env] FFMPEG_HOME=${FFMPEG_HOME:-}"
+echo "[em2mem_ffmpeg_env] EM2MEM_FFMPEG_BIN=${EM2MEM_FFMPEG_BIN}"
+echo "[em2mem_ffmpeg_env] EM2MEM_FFPROBE_BIN=${EM2MEM_FFPROBE_BIN}"
+echo "[em2mem_ffmpeg_env] EM2MEM_FFMPEG_LIB_DIR=${EM2MEM_FFMPEG_LIB_DIR:-}"

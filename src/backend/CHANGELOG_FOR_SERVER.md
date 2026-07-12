@@ -8,7 +8,7 @@ flows, then adds an offline script that exports a session-level `eval.json`.
 
 ## Files Changed
 
-- `src/worldmm/llm/openai_gpt.py`
+- `src/em2mem/llm/openai_gpt.py`
   - Records API request start, first token for streaming, response finish, duration, request path, model, attempt, and errors in `last_debug.api_timing`.
 
 - `online_query/query_engine.py`
@@ -31,7 +31,7 @@ flows, then adds an offline script that exports a session-level `eval.json`.
 
 ## How To Apply
 
-From `/zjunlp/chenyijun/worldmm-online-server-release`, review and apply:
+From `/zjunlp/chenyijun/lightmem_ego-online-server-release`, review and apply:
 
 ```bash
 git apply /path/to/eval_recording_changes.clean.diff
@@ -42,7 +42,7 @@ If the server working tree has local edits, review conflicts manually before app
 ## Verification
 
 ```bash
-python -m py_compile api_server.py online_query/query_engine.py src/worldmm/llm/openai_gpt.py scripts/ask_session_wait.py scripts/build_session_eval.py
+python -m py_compile api_server.py online_query/query_engine.py src/em2mem/llm/openai_gpt.py scripts/ask_session_wait.py scripts/build_session_eval.py
 python scripts/build_session_eval.py --session-id <SESSION_ID> --pretty
 ```
 

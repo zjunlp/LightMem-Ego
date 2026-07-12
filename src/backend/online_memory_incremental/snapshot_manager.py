@@ -10,7 +10,7 @@ from online_preprocess.io_utils import ensure_dir, read_json, relative_to_sessio
 class SnapshotManager:
     def __init__(self, session_dir: Path) -> None:
         self.session_dir = Path(session_dir)
-        self.root = self.session_dir / "worldmm" / "incremental" / "snapshots"
+        self.root = self.session_dir / "em2mem" / "incremental" / "snapshots"
 
     def _copy_if_exists(self, src: Path, dst: Path) -> None:
         if not src.exists():
@@ -40,10 +40,10 @@ class SnapshotManager:
             shutil.rmtree(target)
         ensure_dir(tmp)
 
-        worldmm = self.session_dir / "worldmm"
+        em2mem = self.session_dir / "em2mem"
         for name in ("caption_root", "sidecar_root", "semantic_root", "visual_root", "visual", "embeddings"):
-            self._copy_if_exists(worldmm / name, tmp / name)
-        self._copy_if_exists(worldmm / "memory_config.json", tmp / "memory_config.json")
+            self._copy_if_exists(em2mem / name, tmp / name)
+        self._copy_if_exists(em2mem / "memory_config.json", tmp / "memory_config.json")
 
         caption_30s = tmp / "caption_root" / f"{self.session_dir.name}_30sec.json"
         if not caption_30s.exists():

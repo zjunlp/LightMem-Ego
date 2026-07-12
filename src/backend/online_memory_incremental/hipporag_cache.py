@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from online_memory.worldmm_layout import seconds_to_hhmmssff
+from online_memory.em2mem_layout import seconds_to_hhmmssff
 from online_preprocess.io_utils import read_json, utc_now_iso, write_json_atomic
 
 
@@ -125,7 +125,7 @@ def inspect_hipporag_cache_health(session_dir: Path, project_root: Path | None =
     levels: dict[str, dict[str, Any]] = {}
     healthy = True
     for granularity in GRANULARITIES:
-        caption_path = session_dir / "worldmm" / "caption_root" / f"{session_id}_{granularity}.json"
+        caption_path = session_dir / "em2mem" / "caption_root" / f"{session_id}_{granularity}.json"
         captions = _load_json_list(caption_path)
         active_texts = list(dict.fromkeys([_caption_text(item) for item in captions if _caption_text(item)]))
         expected_docs = len(active_texts)
@@ -204,14 +204,14 @@ def _caption_file_map(session_dir: Path) -> dict[str, str]:
     session_id = session_dir.name
     result: dict[str, str] = {}
     for granularity in GRANULARITIES:
-        path = session_dir / "worldmm" / "caption_root" / f"{session_id}_{granularity}.json"
+        path = session_dir / "em2mem" / "caption_root" / f"{session_id}_{granularity}.json"
         if path.exists():
             result[granularity] = str(path)
     return result
 
 
 def _active_caption_texts(session_dir: Path, granularity: str) -> list[str]:
-    path = session_dir / "worldmm" / "caption_root" / f"{session_dir.name}_{granularity}.json"
+    path = session_dir / "em2mem" / "caption_root" / f"{session_dir.name}_{granularity}.json"
     return list(dict.fromkeys([_caption_text(item) for item in _load_json_list(path) if _caption_text(item)]))
 
 
@@ -219,13 +219,13 @@ def _max_end_timestamp_int(session_dir: Path) -> int:
     session_id = session_dir.name
     max_end = 0.0
     for granularity in GRANULARITIES:
-        path = session_dir / "worldmm" / "caption_root" / f"{session_id}_{granularity}.json"
+        path = session_dir / "em2mem" / "caption_root" / f"{session_id}_{granularity}.json"
         for item in _load_json_list(path):
             try:
                 max_end = max(max_end, float(item.get("end") or 0.0))
             except Exception:
                 continue
-    # WorldMM CaptionEntry.timestamp_int includes a DAY1 offset. Query code
+    # Em2Mem CaptionEntry.timestamp_int includes a DAY1 offset. Query code
     # builds the same shape via query_rag.build_until_timestamp("DAY1", ...).
     return 100000000 + int(seconds_to_hhmmssff(max_end))
 
@@ -297,19 +297,19 @@ def _copy_granularity_cache_dirs(
     return copied
 
 
-def _build_world_memory_for_cache(
+def _build_em2mem_memory_for_cache(
     *,
     session_dir: Path,
     cache_tag: str,
     model_name: str | None,
 ):
-    from worldmm.embedding import EmbeddingModel
-    from worldmm.llm import LLMModel, PromptTemplateManager
-    from worldmm.memory import WorldMemory
+    from em2mem.embedding import EmbeddingModel
+    from em2mem.llm import LLMModel, PromptTemplateManager
+    from em2mem.memory import EM2Memory
 
     embedding_model = EmbeddingModel()
-    llm = LLMModel(model_name=model_name or os.getenv("WORLDMM_MEMORY_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-5.4")
-    world_memory = WorldMemory(
+    llm = LLMModel(model_name=model_name or os.getenv("EM2MEM_MEMORY_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-5.4")
+    em2mem_memory = EM2Memory(
         embedding_model=embedding_model,
         retriever_llm_model=llm,
         respond_llm_model=llm,
@@ -318,13 +318,13 @@ def _build_world_memory_for_cache(
         max_errors=3,
         episodic_cache_tag=cache_tag,
     )
-    world_memory.load_episodic_captions(caption_files=_caption_file_map(session_dir))
-    return world_memory
+    em2mem_memory.load_episodic_captions(caption_files=_caption_file_map(session_dir))
+    return em2mem_memory
 
 
 def _sync_granularity_in_tmp(
     *,
-    world_memory: Any,
+    em2mem_memory: Any,
     session_dir: Path,
     granularity: str,
     info: dict[str, Any],
@@ -352,14 +352,14 @@ def _sync_granularity_in_tmp(
         cache_dir = project_root / ".cache" / "episodic_memory" / tmp_tag / granularity
         if cache_dir.exists():
             shutil.rmtree(cache_dir)
-        getattr(world_memory.episodic_memory, "hipporag", {}).pop(granularity, None)
-        hipporag = world_memory.episodic_memory._get_or_create_hipporag(granularity)
+        getattr(em2mem_memory.episodic_memory, "hipporag", {}).pop(granularity, None)
+        hipporag = em2mem_memory.episodic_memory._get_or_create_hipporag(granularity)
         hipporag.update(docs=active_docs)
         hipporag.prepare_retrieval_objects()
         result["mode"] = "copy_on_write_rebuild_corrupt_level"
         return result
 
-    hipporag = world_memory.episodic_memory._get_or_create_hipporag(granularity)
+    hipporag = em2mem_memory.episodic_memory._get_or_create_hipporag(granularity)
 
     if stale_docs:
         try:
@@ -369,8 +369,8 @@ def _sync_granularity_in_tmp(
             cache_dir = project_root / ".cache" / "episodic_memory" / tmp_tag / granularity
             if cache_dir.exists():
                 shutil.rmtree(cache_dir)
-            getattr(world_memory.episodic_memory, "hipporag", {}).pop(granularity, None)
-            hipporag = world_memory.episodic_memory._get_or_create_hipporag(granularity)
+            getattr(em2mem_memory.episodic_memory, "hipporag", {}).pop(granularity, None)
+            hipporag = em2mem_memory.episodic_memory._get_or_create_hipporag(granularity)
             hipporag.update(docs=active_docs)
             hipporag.prepare_retrieval_objects()
             result["mode"] = "copy_on_write_rebuild_after_delete_failed"
@@ -399,7 +399,7 @@ def refresh_hipporag_cache(
     """
     session_dir = Path(session_dir)
     project_root = Path(project_root) if project_root else PROJECT_ROOT
-    if not _env_bool("WORLDMM_INCREMENTAL_REFRESH_HIPPORAG_CACHE", True):
+    if not _env_bool("EM2MEM_INCREMENTAL_REFRESH_HIPPORAG_CACHE", True):
         return {"status": "disabled", "session_id": session_dir.name, "healthy": None}
 
     target_tag = f"online_{session_dir.name}"
@@ -438,9 +438,9 @@ def refresh_hipporag_cache(
     try:
         with _temporary_env(
             {
-                "WORLDMM_QUERY_STRICT_LOAD_ONLY": "0",
-                "WORLDMM_QUERY_USE_CACHED_HIPPORAG": "0",
-                "WORLDMM_QUERY_SKIP_REINDEX": "0",
+                "EM2MEM_QUERY_STRICT_LOAD_ONLY": "0",
+                "EM2MEM_QUERY_USE_CACHED_HIPPORAG": "0",
+                "EM2MEM_QUERY_SKIP_REINDEX": "0",
             }
         ):
             _copy_granularity_cache_dirs(
@@ -449,12 +449,12 @@ def refresh_hipporag_cache(
                 target_tag=tmp_tag,
                 granularities=refresh_granularities,
             )
-            world_memory = _build_world_memory_for_cache(session_dir=session_dir, cache_tag=tmp_tag, model_name=model_name)
+            world_memory = _build_em2mem_memory_for_cache(session_dir=session_dir, cache_tag=tmp_tag, model_name=model_name)
             for granularity in refresh_granularities:
                 info = (before.get("levels") or {}).get(granularity) or {}
                 operation_results.append(
                     _sync_granularity_in_tmp(
-                        world_memory=world_memory,
+                        em2mem_memory=em2mem_memory,
                         session_dir=session_dir,
                         granularity=granularity,
                         info=info,
@@ -463,7 +463,7 @@ def refresh_hipporag_cache(
                     )
                 )
             try:
-                world_memory.cleanup()
+                em2mem_memory.cleanup()
             except Exception:
                 pass
         tmp_health = inspect_hipporag_cache_health(session_dir, project_root, cache_tag=tmp_tag)
@@ -487,7 +487,7 @@ def refresh_hipporag_cache(
             shutil.rmtree(tmp_root)
 
     after = inspect_hipporag_cache_health(session_dir, project_root, cache_tag=target_tag)
-    state_path = session_dir / "worldmm" / "incremental" / "hipporag_cache_state.json"
+    state_path = session_dir / "em2mem" / "incremental" / "hipporag_cache_state.json"
     payload = {
         "session_id": session_dir.name,
         "status": "healthy" if after.get("healthy") else "degraded",
@@ -511,13 +511,13 @@ def refresh_hipporag_cache(
     }
     write_json_atomic(state_path, payload)
 
-    config_path = session_dir / "worldmm" / "memory_config.json"
+    config_path = session_dir / "em2mem" / "memory_config.json"
     config = read_json(config_path, default={})
     if isinstance(config, dict):
         config["hipporag_cache_ready"] = bool(after.get("healthy"))
         config["hipporag_cache_health"] = after
         config["hipporag_cache_update_mode"] = "copy_on_write_append_reconcile"
-        config["hipporag_cache_state_path"] = "worldmm/incremental/hipporag_cache_state.json"
+        config["hipporag_cache_state_path"] = "em2mem/incremental/hipporag_cache_state.json"
         config["updated_at"] = utc_now_iso()
         write_json_atomic(config_path, config)
     return payload

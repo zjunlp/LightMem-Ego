@@ -108,7 +108,7 @@ def load_stream_query_context(
         }
     pipeline_state = read_json(session_dir / "pipeline_state.json", default={})
     long_term_pipeline_state = read_json(long_term_session_dir / "pipeline_state.json", default={})
-    memory_config = read_json(long_term_session_dir / "worldmm" / "memory_config.json", default={})
+    memory_config = read_json(long_term_session_dir / "em2mem" / "memory_config.json", default={})
     transcript_state = read_json(session_dir / "stream" / "transcript" / "partial_transcript_state.json", default={})
     frame_state = read_json(session_dir / "stream" / "frame_state.json", default={})
     frame_event_state = read_json(session_dir / "stream" / "frame_event_state.json", default={})

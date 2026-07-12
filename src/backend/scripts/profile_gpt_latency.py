@@ -28,7 +28,7 @@ from online_query.query_engine import _build_short_term_llm_prompt
 from online_query.query_router import QueryRouter
 from online_short_term.mst_retriever import MSTRetriever
 from online_short_term.mst_store import MSTStore
-from worldmm.llm import LLMModel
+from em2mem.llm import LLMModel
 
 
 def _load_env_file(path: Path) -> None:
@@ -313,8 +313,8 @@ def main() -> None:
 
     _load_env_file(PROJECT_ROOT / ".env")
     model_name = (
-        os.getenv("WORLDMM_QUERY_RESPOND_MODEL")
-        or os.getenv("WORLDMM_RESPOND_MODEL")
+        os.getenv("EM2MEM_QUERY_RESPOND_MODEL")
+        or os.getenv("EM2MEM_RESPOND_MODEL")
         or os.getenv("OPENAI_MODEL")
         or "gpt-5.4"
     )

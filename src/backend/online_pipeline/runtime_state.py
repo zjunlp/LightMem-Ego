@@ -29,7 +29,7 @@ PIPELINE_MODES = {"mst", "legacy", "hybrid"}
 
 
 def get_pipeline_mode() -> str:
-    mode = os.getenv("WORLDMM_PIPELINE_MODE", "mst").strip().lower()
+    mode = os.getenv("EM2MEM_PIPELINE_MODE", "mst").strip().lower()
     return mode if mode in PIPELINE_MODES else "mst"
 
 
@@ -54,7 +54,7 @@ def _default_worker_role(worker: str, mode: str) -> str:
 
 def _default_worker_enabled(worker: str, mode: str) -> bool:
     if worker == "evidence":
-        return mode in {"legacy", "hybrid"} or _env_bool("WORLDMM_ENABLE_LEGACY_EVIDENCE_WORKER", False)
+        return mode in {"legacy", "hybrid"} or _env_bool("EM2MEM_ENABLE_LEGACY_EVIDENCE_WORKER", False)
     if worker == "stream":
         return mode != "legacy"
     if worker in {"refine", "consolidation"}:
@@ -236,7 +236,7 @@ def _aggregate_worker_payload(root: Path, worker: str, payloads: list[dict[str, 
 
 def _worker_stale_threshold_seconds() -> float:
     try:
-        return float(os.getenv("WORLDMM_WORKER_STALE_SECONDS", "60"))
+        return float(os.getenv("EM2MEM_WORKER_STALE_SECONDS", "60"))
     except Exception:
         return 60.0
 
@@ -664,11 +664,11 @@ def build_session_pipeline_state(session_dir: Path) -> dict[str, Any]:
     mst_state = _safe_json(session_dir / "short_term" / "mst_state.json", {})
     archive_state = _safe_json(session_dir / "short_term" / "archive" / "archive_state.json", {})
     refine_state = _safe_json(session_dir / "short_term" / "refine" / "refine_state.json", {})
-    episodic_state = _safe_json(session_dir / "worldmm" / "mst_episodic" / "mst_episodic_state.json", {})
+    episodic_state = _safe_json(session_dir / "em2mem" / "mst_episodic" / "mst_episodic_state.json", {})
     consolidation_state = _safe_json(session_dir / "short_term" / "consolidation_state.json", {})
-    memory_config = _safe_json(session_dir / "worldmm" / "memory_config.json", {})
-    component_versions = _safe_json(session_dir / "worldmm" / "incremental" / "component_versions.json", {})
-    append_state = _safe_json(session_dir / "worldmm" / "incremental" / "append_state.json", {})
+    memory_config = _safe_json(session_dir / "em2mem" / "memory_config.json", {})
+    component_versions = _safe_json(session_dir / "em2mem" / "incremental" / "component_versions.json", {})
+    append_state = _safe_json(session_dir / "em2mem" / "incremental" / "append_state.json", {})
     stream_state = _safe_json(session_dir / "stream" / "stream_state.json", {})
     event_state = _safe_json(session_dir / "stream" / "event_state.json", {})
     partial_transcript_state = _safe_json(session_dir / "stream" / "transcript" / "partial_transcript_state.json", {})
@@ -707,11 +707,11 @@ def build_session_pipeline_state(session_dir: Path) -> dict[str, Any]:
     mst_evidence_path = session_dir / "evidence" / "mst_session_evidence.json"
     legacy_evidence_available = legacy_caption_path.exists() and legacy_evidence_path.exists()
     mst_episodic_ready = mst_caption_path.exists() and mst_evidence_path.exists() and (
-        session_dir / "worldmm" / "mst_episodic" / "mst_30sec_episodes.json"
+        session_dir / "em2mem" / "mst_episodic" / "mst_30sec_episodes.json"
     ).exists()
     active_30s_source = (
         memory_config.get("active_30s_source")
-        or memory_config.get("worldmm_30s_input_source")
+        or memory_config.get("em2mem_30s_input_source")
         or ("mst_session_30sec_captioned" if memory_config.get("episodic_source") == "mst_micro_events" else None)
         or ("session_30sec_captioned" if memory_config.get("episodic_source") in {"legacy_evidence", "online_evidence"} else None)
     )
@@ -727,7 +727,7 @@ def build_session_pipeline_state(session_dir: Path) -> dict[str, Any]:
         build_state = "ready_with_warnings" if memory_config.get("last_build_error") else "ready"
         memory_config["memory_build_state"] = build_state
         memory_config["building_memory_version"] = None
-        write_json_atomic(session_dir / "worldmm" / "memory_config.json", memory_config)
+        write_json_atomic(session_dir / "em2mem" / "memory_config.json", memory_config)
 
     visual_ready = _as_bool(memory_config.get("visual_embedding_ready"), False)
     semantic_ready = _as_bool(memory_config.get("semantic_memory_ready"), False)
@@ -743,7 +743,7 @@ def build_session_pipeline_state(session_dir: Path) -> dict[str, Any]:
     latest_semantic = memory_config.get("latest_semantic_ready_version") or memory_config.get("semantic_version")
 
     episode_file_count = 0
-    episodes_path = session_dir / "worldmm" / "mst_episodic" / "mst_30sec_episodes.json"
+    episodes_path = session_dir / "em2mem" / "mst_episodic" / "mst_30sec_episodes.json"
     episodes_payload = _safe_json(episodes_path, [])
     if isinstance(episodes_payload, list):
         episode_file_count = len(episodes_payload)
@@ -787,8 +787,8 @@ def build_session_pipeline_state(session_dir: Path) -> dict[str, Any]:
             "latency": stream_state.get("latency", {}) if isinstance(stream_state.get("latency"), dict) else {},
         },
         "stream_asr": {
-            "enabled": _as_bool(os.getenv("WORLDMM_STREAM_ASR_ENABLED"), True),
-            "backend": os.getenv("WORLDMM_STREAM_ASR_BACKEND", "whisperx"),
+            "enabled": _as_bool(os.getenv("EM2MEM_STREAM_ASR_ENABLED"), True),
+            "backend": os.getenv("EM2MEM_STREAM_ASR_BACKEND", "whisperx"),
             "queue_pending": queue_counts(session_dir.parents[1]).get("stream_asr_queued", 0) if len(session_dir.parents) > 1 else 0,
             "partial_transcript_version": _as_int(partial_transcript_state.get("partial_transcript_version"), 0),
             "partial_transcript_segment_count": _as_int(partial_transcript_state.get("segment_count"), _count_lines(session_dir / "stream" / "transcript" / "partial_transcript.jsonl")),
@@ -842,7 +842,7 @@ def build_session_pipeline_state(session_dir: Path) -> dict[str, Any]:
             "ready_30s_window_count": _as_int(refine_state.get("ready_30s_window_count"), _ready_windows_count(session_dir)),
         },
         "episodic_30s": {
-            "ready": bool((session_dir / "worldmm" / "mst_episodic" / "mst_30sec_episodes.json").exists()),
+            "ready": bool((session_dir / "em2mem" / "mst_episodic" / "mst_30sec_episodes.json").exists()),
             "version": _as_int(episodic_state.get("mst_episodic_version") or episodic_state.get("version") or episodic_state.get("episode_count"), episode_file_count),
             "generated_episode_count": _as_int(
                 episodic_state.get("episode_count")
@@ -859,7 +859,7 @@ def build_session_pipeline_state(session_dir: Path) -> dict[str, Any]:
             "latest_ready_memory_version": _as_int(latest_ready, 0) if latest_ready is not None else None,
             "building_memory_version": _as_int(building, 0) if building is not None else None,
             "active_query_memory_version": _as_int(active_query, 0) if active_query is not None else None,
-            "worldmm_update_mode": memory_config.get("worldmm_update_mode"),
+            "em2mem_update_mode": memory_config.get("em2mem_update_mode"),
             "latest_fast_ready_version": _as_int(latest_fast, 0) if latest_fast is not None else None,
             "latest_visual_ready_version": _as_int(latest_visual, 0) if latest_visual is not None else None,
             "latest_graph_ready_version": _as_int(latest_graph, 0) if latest_graph is not None else None,
@@ -893,7 +893,7 @@ def build_session_pipeline_state(session_dir: Path) -> dict[str, Any]:
         },
         "query": {
             "query_ready": bool(latest_ready or _as_bool(mst_state.get("short_term_ready"), False) or _as_bool(current_state.get("mcur_ready"), False)),
-            "strict_load_only": _as_bool(os.getenv("WORLDMM_QUERY_STRICT_LOAD_ONLY"), True),
+            "strict_load_only": _as_bool(os.getenv("EM2MEM_QUERY_STRICT_LOAD_ONLY"), True),
         },
         "updated_at": utc_now_iso(),
     }

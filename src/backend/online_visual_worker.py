@@ -154,7 +154,7 @@ def run_worker(args: argparse.Namespace) -> None:
                     queue_pending=lambda: _queue_pending(project_root),
                     last_error=None,
                     extra={"session_id": session_id},
-                    interval_env="WORLDMM_VISUAL_HEARTBEAT_SECONDS",
+                    interval_env="EM2MEM_VISUAL_HEARTBEAT_SECONDS",
                 ):
                     if str(task.get("task_type") or "") == "visual_append":
                         visual_root = append_visual_embeddings(
@@ -212,15 +212,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Persistent VLM2Vec visual embedding worker.")
     parser.add_argument("--project-root", default=str(PROJECT_ROOT))
     parser.add_argument("--sessions-root", default=str(DEFAULT_SESSIONS_ROOT))
-    parser.add_argument("--backend", default=os.getenv("WORLDMM_VISUAL_BACKEND", "vlm2vec"), choices=["vlm2vec", "mock", "remote"])
-    parser.add_argument("--model-path", default=os.getenv("WORLDMM_VLM2VEC_MODEL_PATH"))
-    parser.add_argument("--device", default=os.getenv("WORLDMM_VLM2VEC_DEVICE", "cuda"))
-    parser.add_argument("--dtype", default=os.getenv("WORLDMM_VLM2VEC_DTYPE", "float16"))
-    parser.add_argument("--batch-size", type=int, default=int(os.getenv("WORLDMM_VISUAL_BATCH_SIZE", "8")))
+    parser.add_argument("--backend", default=os.getenv("EM2MEM_VISUAL_BACKEND", "vlm2vec"), choices=["vlm2vec", "mock", "remote"])
+    parser.add_argument("--model-path", default=os.getenv("EM2MEM_VLM2VEC_MODEL_PATH"))
+    parser.add_argument("--device", default=os.getenv("EM2MEM_VLM2VEC_DEVICE", "cuda"))
+    parser.add_argument("--dtype", default=os.getenv("EM2MEM_VLM2VEC_DTYPE", "float16"))
+    parser.add_argument("--batch-size", type=int, default=int(os.getenv("EM2MEM_VISUAL_BATCH_SIZE", "8")))
     parser.add_argument("--limit-items", type=int, default=None)
-    parser.add_argument("--poll-interval", type=float, default=float(os.getenv("WORLDMM_VISUAL_WORKER_POLL_SECONDS", "2")))
-    parser.add_argument("--force", action="store_true", default=_env_bool("WORLDMM_FORCE_VISUAL_EMBEDDING", False))
-    parser.add_argument("--warmup", action=argparse.BooleanOptionalAction, default=_env_bool("WORLDMM_VISUAL_WARMUP", True))
+    parser.add_argument("--poll-interval", type=float, default=float(os.getenv("EM2MEM_VISUAL_WORKER_POLL_SECONDS", "2")))
+    parser.add_argument("--force", action="store_true", default=_env_bool("EM2MEM_FORCE_VISUAL_EMBEDDING", False))
+    parser.add_argument("--warmup", action=argparse.BooleanOptionalAction, default=_env_bool("EM2MEM_VISUAL_WARMUP", True))
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()

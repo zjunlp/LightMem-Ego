@@ -473,7 +473,7 @@ class StreamChunkManager:
         if direct_upload_processing:
             return [(0.0, duration)]
         proc_seconds = max(0.1, float(processing_chunk_seconds))
-        min_tail_seconds = max(0.0, float(os.getenv("WORLDMM_STREAM_MIN_PROCESSING_TAIL_SECONDS", "1.0")))
+        min_tail_seconds = max(0.0, float(os.getenv("EM2MEM_STREAM_MIN_PROCESSING_TAIL_SECONDS", "1.0")))
         ranges: list[tuple[float, float]] = []
         local_start = 0.0
         while local_start < duration - 1e-3:
@@ -1062,7 +1062,7 @@ class StreamChunkManager:
                 short_segments = [
                     item
                     for item in new_processing
-                    if float(item.get("duration") or 0.0) < float(os.getenv("WORLDMM_STREAM_MIN_PROCESSING_TAIL_SECONDS", "1.0"))
+                    if float(item.get("duration") or 0.0) < float(os.getenv("EM2MEM_STREAM_MIN_PROCESSING_TAIL_SECONDS", "1.0"))
                 ]
                 if short_segments:
                     print(
