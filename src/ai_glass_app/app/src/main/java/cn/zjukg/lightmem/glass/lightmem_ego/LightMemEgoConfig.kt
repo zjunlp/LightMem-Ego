@@ -7,10 +7,10 @@ object LightMemEgoConfig {
     const val CREATE_NEW_PARENT_SESSION = true
     const val PARENT_SESSION_ID = ""
     val PRESET_QUESTIONS = listOf(
-        "What did I do today?",
-        "Where is my pen with a blue cap?",
-        "Where did I place my coffee?",
-        "What do I usually do after arriving at the office?",
+        "What is in the current scene?",
+        "What just happened",
+        "What did they just say?",
+        "Summarize everything so far.",
     )
     const val FRAME_INTERVAL_MS = 125L
     const val FRAME_CAPTURE_WIDTH = 1280
