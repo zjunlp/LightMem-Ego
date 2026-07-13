@@ -71,6 +71,8 @@ LightMem-Ego is designed for practical scenarios such as object finding, convers
 
 ## Demo
 
+Demo video: [YouTube](https://www.youtube.com/watch?v=BZuIxn00xlc) · [Bilibili](https://www.bilibili.com/video/BV1oANw62EA3/?vd_source=2537e8437f33dacc6255c196ac8292c3)
+
 <p align="center">
   <a href="https://www.bilibili.com/video/BV1oANw62EA3/">
     <img src="./figs/thumbnail.png" width="80%" alt="LightMem-Ego Demo Video">
