@@ -72,6 +72,9 @@ data class LightMemEgoGlassUiState(
     val voiceQuestionText: String = "",
     val voiceQuestionMessage: String = "",
     val voiceQuestionDurationMs: Long = 0L,
+    val quickQuestions: List<String> = LightMemEgoConfig.PRESET_QUESTIONS,
+    val selectedQuestionIndex: Int = 0,
+    val selectedQuestion: String = LightMemEgoConfig.PRESET_QUESTIONS.firstOrNull().orEmpty(),
     val liveRtmpMode: Boolean = false,
     val livePushUrl: String = "",
     val liveIngestStartPath: String = "",
@@ -144,6 +147,108 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
 
     fun setCameraReady(ready: Boolean) {
         _uiState.update { it.copy(cameraReady = ready) }
+    }
+
+    fun selectNextPresetQuestion() {
+        _uiState.update { state ->
+            val count = state.quickQuestions.size
+            val nextIndex = if (count <= 0) {
+                0
+            } else {
+                (state.selectedQuestionIndex + 1) % count
+            }
+            state.copy(
+                selectedQuestionIndex = nextIndex,
+                selectedQuestion = state.quickQuestions.getOrElse(nextIndex) { "" },
+            )
+        }
+    }
+
+    fun askSelectedPresetQuestion() {
+        val state = _uiState.value
+        val sessionId = state.sessionId
+        val question = state.selectedQuestion.trim()
+        if (!streaming || sessionId.isBlank()) {
+            _uiState.update { it.copy(lastError = "Hold Start first") }
+            return
+        }
+        if (state.asking) {
+            _uiState.update { it.copy(lastError = "Already answering. Please wait.") }
+            return
+        }
+        if (state.voiceQuestionRecording) {
+            _uiState.update { it.copy(lastError = "Stop voice question first") }
+            return
+        }
+        if (!state.canAsk) {
+            _uiState.update { it.copy(queryStatus = "waiting", lastError = "Question service is not ready. Please wait.") }
+            refreshStatusOnce()
+            return
+        }
+        if (question.isBlank()) {
+            _uiState.update { it.copy(lastError = "No preset question") }
+            return
+        }
+
+        val answerStartedElapsedMs = SystemClock.elapsedRealtime()
+        queryJob?.cancel()
+        _uiState.update {
+            it.copy(
+                asking = true,
+                queryStatus = "submitting",
+                queryTaskId = "",
+                lastQuestion = question,
+                answer = "",
+                answerLatencyMs = null,
+                voiceQuestionStatus = "idle",
+                voiceQuestionText = "",
+                voiceQuestionMessage = "",
+                lastError = "",
+            )
+        }
+        queryJob = viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val result = api.askQuestion(sessionId, question)
+                if (result.taskId.isNotBlank()) {
+                    _uiState.update {
+                        it.copy(
+                            queryStatus = result.status.ifBlank { "queued" },
+                            queryTaskId = result.taskId,
+                        )
+                    }
+                }
+                when {
+                    result.answer.isNotBlank() -> result.answer
+                    result.queued && result.taskId.isNotBlank() -> pollQueryAnswer(result.taskId)
+                    else -> "Backend returned no answer"
+                }
+            }.onSuccess { answer ->
+                val latencyMs = (SystemClock.elapsedRealtime() - answerStartedElapsedMs).coerceAtLeast(0L)
+                _uiState.update {
+                    it.copy(
+                        asking = false,
+                        queryStatus = "done",
+                        queryTaskId = "",
+                        answer = answer,
+                        answerLatencyMs = latencyMs,
+                        lastQuestion = question,
+                        lastError = "",
+                    )
+                }
+            }.onFailure { error ->
+                if (error is CancellationException) return@launch
+                _uiState.update {
+                    it.copy(
+                        asking = false,
+                        queryStatus = "failed",
+                        queryTaskId = "",
+                        answer = "",
+                        answerLatencyMs = null,
+                        lastError = error.message ?: "Preset question failed",
+                    )
+                }
+            }
+        }
     }
 
     fun toggleVoiceQuestionRecording() {

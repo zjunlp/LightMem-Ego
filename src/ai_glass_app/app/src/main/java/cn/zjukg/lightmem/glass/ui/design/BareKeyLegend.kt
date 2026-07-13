@@ -25,6 +25,7 @@ data class BareKeyGuide(
     val longPress: String? = null,
     val twoFingerClick: String? = null,
     val twoFingerDoubleClick: String? = null,
+    val twoFingerLongPress: String? = null,
     val swipeForward: String? = null,
     val swipeBack: String? = null,
 ) {
@@ -46,6 +47,7 @@ fun BareKeyLegendBar(
         guide.spriteClick?.let { add(KeyRowKind.SpriteClick to it) }
         guide.twoFingerClick?.let { add(KeyRowKind.TwoFingerClick to it) }
         guide.twoFingerDoubleClick?.let { add(KeyRowKind.TwoFingerDoubleClick to it) }
+        guide.twoFingerLongPress?.let { add(KeyRowKind.TwoFingerLongPress to it) }
         guide.swipeForward?.let { add(KeyRowKind.SwipeForward to it) }
         guide.swipeBack?.let { add(KeyRowKind.SwipeBack to it) }
         guide.doubleClick?.let { add(KeyRowKind.DoubleClick to it) }
@@ -101,6 +103,7 @@ private enum class KeyRowKind(val badge: String) {
     SpriteClick("Button click"),
     TwoFingerClick("2F click"),
     TwoFingerDoubleClick("2F double"),
+    TwoFingerLongPress("2F hold"),
     SwipeForward("Forward"),
     SwipeBack("Back"),
     DoubleClick("Double"),

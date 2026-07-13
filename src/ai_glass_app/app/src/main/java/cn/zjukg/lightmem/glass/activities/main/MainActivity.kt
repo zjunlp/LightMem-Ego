@@ -108,7 +108,11 @@ class MainActivity : ComponentActivity() {
                 return true
             }
             KeyEvent.KEYCODE_SETTINGS -> {
-                keyDispatcher?.consumeSystemKey("Key-SETTINGS")
+                if (event?.repeatCount == 0) {
+                    keyDispatcher?.dispatchTwoFingerLongPressKey("Key-SETTINGS")
+                } else {
+                    keyDispatcher?.consumeSystemKey("Key-SETTINGS-repeat")
+                }
                 return true
             }
             KeyEvent.KEYCODE_DPAD_LEFT,

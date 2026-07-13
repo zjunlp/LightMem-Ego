@@ -13,6 +13,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.core.content.ContextCompat
+import cn.zjukg.lightmem.glass.BuildConfig
 
 typealias BareKeyHandler = (BareKeyEvent) -> Boolean
 
@@ -25,8 +26,9 @@ typealias BareKeyHandler = (BareKeyEvent) -> Boolean
  * - One-finger double click -> [dispatchBackKey] with `KEYCODE_BACK`
  * - One-finger long press -> [dispatchLongKey] with `KEYCODE_PROG_BLUE`, or `ACTION_AI_START`
  * - Temple click -> broadcast mapped to [BareKeyEvent.SpriteClick]
+ * - Two-finger long press -> [dispatchTwoFingerLongPressKey] with `KEYCODE_SETTINGS`, or `ACTION_SETTINGS_KEY`
  *
- * Abort-only events are not dispatched to UI, such as temple long/double press and two-finger gestures.
+ * Abort-only events are not dispatched to UI, such as temple long/double press and unused two-finger gestures.
  * Ordered broadcasts must call `abortBroadcast()` inside `onReceive` to avoid default system AI,
  * settings, or power actions.
  */
@@ -108,6 +110,12 @@ class BareGlassesInputDispatcher(context: Context) {
         notifyIntercept(label, consumed = true)
     }
 
+    /** Two-finger TouchPad long press with `KEYCODE_SETTINGS` -> [BareKeyEvent.TwoFingerLongPress]. */
+    fun dispatchTwoFingerLongPressKey(label: String) {
+        notifyIntercept(label, consumed = true)
+        dispatchEvent(BareKeyEvent.TwoFingerLongPress, label)
+    }
+
     /** Direction-key fallback for TouchPad forward swipe -> [BareKeyEvent.SwipeForward]. */
     fun dispatchSwipeForwardKey(label: String) {
         notifyIntercept(label, consumed = true)
@@ -131,11 +139,15 @@ class BareGlassesInputDispatcher(context: Context) {
 
     private fun dispatchEvent(event: BareKeyEvent, label: String) {
         if (event == BareKeyEvent.LongPress && shouldDropDuplicateLongPress()) {
-            Log.d(TAG, "drop duplicate long press from $label")
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "drop duplicate long press from $label")
+            }
             return
         }
         if (event == BareKeyEvent.SpriteClick && shouldDropDuplicateSpriteClick()) {
-            Log.d(TAG, "drop duplicate sprite click from $label")
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "drop duplicate sprite click from $label")
+            }
             return
         }
         runCatching { handler?.invoke(event) }
@@ -183,6 +195,7 @@ class BareGlassesInputDispatcher(context: Context) {
             KeyEventAction.LONG_PRESS.action -> BareKeyEvent.LongPress
             KeyEventAction.TWO_FINGER_SINGLE.action -> BareKeyEvent.TwoFingerClick
             KeyEventAction.TWO_FINGER_DOUBLE.action -> BareKeyEvent.TwoFingerDoubleClick
+            KeyEventAction.SETTINGS_KEY.action -> BareKeyEvent.TwoFingerLongPress
             KeyEventAction.SWIPE_FORWARD.action -> BareKeyEvent.SwipeForward
             KeyEventAction.SWIPE_BACK.action -> BareKeyEvent.SwipeBack
             else -> null

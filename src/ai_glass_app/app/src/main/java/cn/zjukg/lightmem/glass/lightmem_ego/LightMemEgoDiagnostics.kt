@@ -8,6 +8,7 @@ import android.os.Process
 import android.os.SystemClock
 import android.util.Log
 import android.view.View
+import cn.zjukg.lightmem.glass.BuildConfig
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -23,16 +24,19 @@ object LightMemEgoDiagnostics {
     private const val MAX_TRACE_CHARS = 32_000
 
     fun recordStartup(context: Context, owner: String) {
+        if (!BuildConfig.DEBUG) return
         log(context, "startup", "owner=$owner pid=${Process.myPid()} uptimeMs=${SystemClock.uptimeMillis()}")
         recordMemory(context, "startup")
         recordHistoricalExitReasons(context)
     }
 
     fun logLifecycle(context: Context, owner: String, event: String, detail: String = "") {
+        if (!BuildConfig.DEBUG) return
         log(context, "lifecycle", "owner=$owner event=$event $detail")
     }
 
     fun logView(context: Context, owner: String, event: String, view: View?) {
+        if (!BuildConfig.DEBUG) return
         val detail = if (view == null) {
             "view=null"
         } else {
@@ -42,6 +46,7 @@ object LightMemEgoDiagnostics {
     }
 
     fun recordMemory(context: Context, label: String) {
+        if (!BuildConfig.DEBUG) return
         val info = Debug.MemoryInfo()
         Debug.getMemoryInfo(info)
         val runtime = Runtime.getRuntime()
@@ -54,6 +59,7 @@ object LightMemEgoDiagnostics {
     }
 
     fun log(context: Context, event: String, detail: String = "") {
+        if (!BuildConfig.DEBUG) return
         val line = "${timestamp()} $event $detail".trim()
         Log.i(TAG, line)
         appendLine(context, line)
@@ -62,7 +68,9 @@ object LightMemEgoDiagnostics {
     fun logError(context: Context, event: String, detail: String, error: Throwable? = null) {
         val line = "${timestamp()} $event $detail error=${error?.javaClass?.simpleName.orEmpty()}:${error?.message.orEmpty()}"
         Log.e(TAG, line, error)
-        appendLine(context, line)
+        if (BuildConfig.DEBUG) {
+            appendLine(context, line)
+        }
     }
 
     fun diagnosticsLogPath(context: Context): String =

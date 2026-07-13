@@ -3,6 +3,8 @@
 .idea/
 .kotlin/
 local.properties
+*.jks
+*.keystore
 .DS_Store
 build/
 **/build/

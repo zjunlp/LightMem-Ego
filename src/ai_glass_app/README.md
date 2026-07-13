@@ -102,6 +102,29 @@ The debug APK is generated at:
 app/build/outputs/apk/debug/app-debug.apk
 ```
 
+Release builds are signed with the local keystore configured through ignored local properties:
+
+```properties
+LIGHTMEM_RELEASE_STORE_FILE=lightmem-ego-release.jks
+LIGHTMEM_RELEASE_STORE_PASSWORD=...
+LIGHTMEM_RELEASE_KEY_ALIAS=lightmem-ego-release
+LIGHTMEM_RELEASE_KEY_PASSWORD=...
+```
+
+The release APK is generated with:
+
+```powershell
+.\gradlew.bat assembleRelease
+```
+
+Output path:
+
+```text
+app/build/outputs/apk/release/app-release.apk
+```
+
+Keep `lightmem-ego-release.jks` and the release signing values private. Android uses this signing certificate to decide whether a future APK is allowed to upgrade an installed app.
+
 ## Install And Start
 
 1. Enable ADB for the Rokid AI Glass.
@@ -114,7 +137,7 @@ adb devices
 3. Install the APK:
 
 ```bash
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb install -r app/build/outputs/apk/release/app-release.apk
 ```
 
 4. Start the app from the glasses launcher, or start it with ADB:
@@ -137,11 +160,19 @@ adb logcat | findstr LightMemEgoDiag
 
 ## Controls
 
-- Long press: start or stop the real-time capture session.
-- Sprite click while running: start recording a voice question. Click again to stop recording and submit it.
-- One-finger click / Enter key: show the next answer page when an answer has multiple pages.
-- Two-finger double click: show the previous answer page when an answer has multiple pages.
-- Back / one-finger double click: consumed by the app to avoid accidental exit during glasses use.
+The glasses app uses two input surfaces:
+
+- TouchPad: the touch area on the glasses. It supports one-finger click, one-finger double click, one-finger long press, and two-finger long press.
+- Physical temple button: the hardware button on the glasses temple. Click this button for voice-question recording.
+
+App actions:
+
+- TouchPad one-finger long press: start or stop the real-time capture session.
+- TouchPad one-finger click / Enter key while running: ask the currently selected preset question.
+- TouchPad one-finger double click / Back key: select the next preset question. The app consumes this action, so it does not exit.
+- Physical temple button click while running: start recording a voice question. Click the physical temple button again to stop recording and submit it.
+- TouchPad two-finger long press: show the next answer page when an answer has multiple pages.
+- TouchPad two-finger click, TouchPad two-finger double click, TouchPad swipes, and repeated long-press events: consumed by the app to avoid accidental system actions.
 
 ## Permissions
 
@@ -175,4 +206,10 @@ Build a debug APK:
 
 ```powershell
 .\gradlew.bat assembleDebug
+```
+
+Build a signed release APK:
+
+```powershell
+.\gradlew.bat assembleRelease
 ```

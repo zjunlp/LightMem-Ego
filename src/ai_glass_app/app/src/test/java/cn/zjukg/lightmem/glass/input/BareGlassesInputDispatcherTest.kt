@@ -42,4 +42,12 @@ class BareGlassesInputDispatcherTest {
             BareGlassesInputDispatcher.eventForBroadcastAction(KeyEventAction.TWO_FINGER_DOUBLE.action),
         )
     }
+
+    @Test
+    fun twoFingerLongPressDispatchesTwoFingerLongPress() {
+        assertEquals(
+            BareKeyEvent.TwoFingerLongPress,
+            BareGlassesInputDispatcher.eventForBroadcastAction(KeyEventAction.SETTINGS_KEY.action),
+        )
+    }
 }

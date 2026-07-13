@@ -6,6 +6,12 @@ object LightMemEgoConfig {
     const val FALLBACK_INPUT_MODE = "rokid_frame_audio"
     const val CREATE_NEW_PARENT_SESSION = true
     const val PARENT_SESSION_ID = ""
+    val PRESET_QUESTIONS = listOf(
+        "What did I do today?",
+        "Where is my pen with a blue cap?",
+        "Where did I place my coffee?",
+        "What do I usually do after arriving at the office?",
+    )
     const val FRAME_INTERVAL_MS = 125L
     const val FRAME_CAPTURE_WIDTH = 1280
     const val FRAME_CAPTURE_HEIGHT = 720

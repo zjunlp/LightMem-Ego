@@ -13,6 +13,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
+import cn.zjukg.lightmem.glass.BuildConfig
 
 private const val TAG = "BareCameraBind"
 
@@ -58,10 +59,12 @@ fun rememberCameraBound(
                     onBound(extras)
                     ready = true
                     onReady()
-                    Log.d(TAG, "Camera bound: ${extras.map { it.javaClass.simpleName }}")
+                    if (BuildConfig.DEBUG) {
+                        Log.d(TAG, "Camera bound: ${extras.map { it.javaClass.simpleName }}")
+                    }
                 } catch (e: Exception) {
                     Log.e(TAG, "Camera bind failed", e)
-                    onError(e.message ?: "相机初始化失败")
+                    onError(e.message ?: "Camera initialization failed")
                 }
             },
             mainExecutor,

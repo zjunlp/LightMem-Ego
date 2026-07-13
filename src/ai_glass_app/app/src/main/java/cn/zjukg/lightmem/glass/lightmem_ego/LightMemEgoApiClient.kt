@@ -1,5 +1,6 @@
 package cn.zjukg.lightmem.glass.lightmem_ego
 
+import cn.zjukg.lightmem.glass.BuildConfig
 import org.json.JSONObject
 import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
@@ -59,6 +60,13 @@ data class LightMemEgoAudioQuestionSubmitResult(
     val taskId: String,
     val answer: String,
     val message: String,
+)
+
+data class LightMemEgoAskSubmitResult(
+    val status: String,
+    val queued: Boolean,
+    val taskId: String,
+    val answer: String,
 )
 
 data class LightMemEgoStreamEvent(
@@ -294,6 +302,34 @@ class LightMemEgoApiClient(
                 .put("force_accept", true),
         )
 
+    fun askQuestion(sessionId: String, question: String): LightMemEgoAskSubmitResult {
+        val json = postJson(
+            "/ask/$sessionId",
+            JSONObject()
+                .put("question", question)
+                .put("mode", "async")
+                .put("retrieval_mode", "auto")
+                .put("memory_mode", "auto")
+                .put("top_k", 5)
+                .put("use_current", true)
+                .put("use_image_evidence", "auto")
+                .put("max_image_evidence", 6)
+                .put("debug_router", BuildConfig.LIGHTMEM_DEBUG_ROUTER)
+                .put("use_interaction_cache", true)
+                .put("client_source", "glasses")
+                .put("input_method", "preset"),
+        )
+        val taskId = json.optString("task_id", json.optString("taskId"))
+        val status = json.optString("status", "")
+        val answer = extractAnswer(json)
+        return LightMemEgoAskSubmitResult(
+            status = status,
+            queued = status == "queued" || taskId.isNotBlank(),
+            taskId = taskId,
+            answer = answer,
+        )
+    }
+
     fun askAudioQuestion(
         sessionId: String,
         wavBytes: ByteArray,
@@ -317,7 +353,7 @@ class LightMemEgoApiClient(
                 "use_current" to "true",
                 "use_image_evidence" to "auto",
                 "max_image_evidence" to "6",
-                "debug_router" to "true",
+                "debug_router" to BuildConfig.LIGHTMEM_DEBUG_ROUTER.toString(),
                 "use_interaction_cache" to "true",
                 "client_source" to "glasses",
                 "input_method" to "voice",
@@ -360,7 +396,7 @@ class LightMemEgoApiClient(
                 "use_current" to "true",
                 "use_image_evidence" to "auto",
                 "max_image_evidence" to "6",
-                "debug_router" to "true",
+                "debug_router" to BuildConfig.LIGHTMEM_DEBUG_ROUTER.toString(),
                 "use_interaction_cache" to "true",
                 "client_source" to "glasses",
                 "input_method" to "voice",

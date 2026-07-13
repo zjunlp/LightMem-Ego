@@ -25,7 +25,7 @@ internal enum class MarkdownAnswerStyle {
 
 internal fun String.toMarkdownAnswerPages(
     charsPerLine: Int = 43,
-    linesPerPage: Int = 7,
+    linesPerPage: Int = 6,
 ): List<List<MarkdownAnswerLine>> {
     val displayLines = parseMarkdownAnswerLines()
         .flatMap { it.chunkForGlasses(charsPerLine) }

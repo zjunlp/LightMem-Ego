@@ -60,7 +60,7 @@ class MarkdownAnswerFormatterTest {
         val pages = answer.toMarkdownAnswerPages()
 
         assertEquals(2, pages.size)
-        assertEquals(7, pages.first().size)
+        assertEquals(6, pages.first().size)
         assertEquals(answer, pages.flatten().joinToString("") { it.text })
     }
 }

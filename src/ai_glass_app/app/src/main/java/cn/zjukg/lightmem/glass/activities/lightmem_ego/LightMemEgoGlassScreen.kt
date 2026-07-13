@@ -41,6 +41,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.concurrent.Executors
 
+private const val ANSWER_LINES_PER_PAGE = 6
+
 @Composable
 fun LightMemEgoGlassScreen(
     onBack: () -> Unit,
@@ -63,7 +65,9 @@ fun LightMemEgoGlassScreen(
         )
     }
     var answerPageIndex by remember { mutableIntStateOf(0) }
-    val answerPages = remember(state.answer) { state.answer.toMarkdownAnswerPages() }
+    val answerPages = remember(state.answer) {
+        state.answer.toMarkdownAnswerPages(linesPerPage = ANSWER_LINES_PER_PAGE)
+    }
     val visibleAnswerPageIndex = if (answerPages.isEmpty()) {
         0
     } else {
@@ -160,12 +164,7 @@ fun LightMemEgoGlassScreen(
     RegisterBareKeyHandler { event ->
         when (event) {
             BareKeyEvent.Click -> {
-                if (answerPages.isNotEmpty()) {
-                    answerPageIndex = answerPageIndexAfterSwipeBack(
-                        currentIndex = visibleAnswerPageIndex,
-                        pageCount = answerPages.size,
-                    )
-                }
+                viewModel.askSelectedPresetQuestion()
                 true
             }
             BareKeyEvent.SpriteClick -> {
@@ -173,10 +172,12 @@ fun LightMemEgoGlassScreen(
                 true
             }
             BareKeyEvent.DoubleClick -> {
+                viewModel.selectNextPresetQuestion()
                 true
             }
             BareKeyEvent.LongPress -> {
                 if (state.running) {
+                    hasEnteredSessionScreen = false
                     viewModel.stopStreaming()
                 } else {
                     hasEnteredSessionScreen = true
@@ -188,11 +189,11 @@ fun LightMemEgoGlassScreen(
                 true
             }
             BareKeyEvent.TwoFingerDoubleClick -> {
+                true
+            }
+            BareKeyEvent.TwoFingerLongPress -> {
                 if (answerPages.isNotEmpty()) {
-                    answerPageIndex = answerPageIndexAfterSwipeForward(
-                        currentIndex = visibleAnswerPageIndex,
-                        pageCount = answerPages.size,
-                    )
+                    answerPageIndex = (visibleAnswerPageIndex + 1) % answerPages.size
                 }
                 true
             }
@@ -212,6 +213,19 @@ fun LightMemEgoGlassScreen(
         state.lastQuestion.isNotBlank() -> listOf("Question: ${state.lastQuestion}")
         else -> listOf("Ready")
     }
+    val questionsPerPage = 2
+    val pageIndex = state.selectedQuestionIndex / questionsPerPage
+    val pageCount = ((state.quickQuestions.size + questionsPerPage - 1) / questionsPerPage).coerceAtLeast(1)
+    val firstQuestionIndex = pageIndex * questionsPerPage
+    val questionLines = state.quickQuestions
+        .drop(firstQuestionIndex)
+        .take(questionsPerPage)
+        .mapIndexed { offset, question ->
+            val questionIndex = firstQuestionIndex + offset
+            val marker = if (questionIndex == state.selectedQuestionIndex) ">" else " "
+            "$marker ${questionIndex + 1}. ${question.compactQuestion()}"
+        }
+        .ifEmpty { listOf("No preset questions") }
     val showingAnswer = state.running && answerPages.isNotEmpty()
     val answerLabel = answerLabelFor(
         showingAnswer = showingAnswer,
@@ -219,11 +233,11 @@ fun LightMemEgoGlassScreen(
         pageCount = answerPages.size,
     )
     val answerLine = when {
+        state.lastError.isNotBlank() -> "Error: ${state.lastError}"
         !state.running -> "Hold starts capture"
         showingAnswer -> ""
         state.asking -> "Thinking... ${state.queryStatus}"
         !state.memoryReady && !state.canAsk -> "Memory not ready"
-        state.lastError.isNotBlank() -> state.lastError
         state.lastQuestion.isNotBlank() -> "Asked: ${state.lastQuestion.compactQuestion()}"
         state.canAsk -> "Audio question ready"
         else -> "Question service is not ready"
@@ -231,7 +245,11 @@ fun LightMemEgoGlassScreen(
     val answerLines = if (showingAnswer) {
         answerPages[visibleAnswerPageIndex].map { it.toAnnotatedString() }
     } else {
-        listOf(AnnotatedString(answerLine))
+        answerLine
+            .toMarkdownAnswerPages(linesPerPage = ANSWER_LINES_PER_PAGE)
+            .firstOrNull()
+            ?.map { it.toAnnotatedString() }
+            ?: listOf(AnnotatedString(answerLine))
     }
     val latencyLine = state.answerLatencyMs?.let { "Latency: ${formatAnswerLatency(it)}" }.orEmpty()
 
@@ -251,13 +269,14 @@ fun LightMemEgoGlassScreen(
         title = "LightMem-Ego",
         subtitle = state.displayDayLabel(),
         keyGuide = BareKeyGuide(
-            click = if (answerPages.size > 1) "Next answer" else null,
+            click = "Ask question",
             spriteClick = when {
                 state.voiceQuestionRecording -> "Stop voice question"
                 state.running -> "Start voice question"
                 else -> null
             },
-            twoFingerDoubleClick = if (answerPages.size > 1) "Previous answer" else null,
+            doubleClick = "Next question",
+            twoFingerLongPress = if (answerPages.size > 1) "Next answer" else null,
             longPress = if (state.running || state.sessionId.isNotBlank()) "Stop" else "Start",
         ),
         drawSafeAreaFrame = false,
@@ -268,10 +287,15 @@ fun LightMemEgoGlassScreen(
             maxLineCount = 2,
             maxLinesPerItem = 2,
         )
+        BareInfoBlock(
+            label = "Preset Questions (${pageIndex + 1}/$pageCount)",
+            lines = questionLines,
+            maxLineCount = questionsPerPage,
+        )
         BareRichInfoBlock(
             label = answerLabel,
             lines = answerLines,
-            maxLineCount = 7,
+            maxLineCount = ANSWER_LINES_PER_PAGE,
             maxLinesPerItem = 1,
         )
         Spacer(modifier = Modifier.weight(1f))

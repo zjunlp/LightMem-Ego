@@ -9,6 +9,7 @@ package cn.zjukg.lightmem.glass.input
  * - [SpriteClick]: `ACTION_SPRITE_BUTTON_CLICK` from temple button click.
  * - [DoubleClick]: `KEYCODE_BACK` from one-finger TouchPad double click.
  * - [LongPress]: one-finger TouchPad long press via `KEYCODE_PROG_BLUE` or `ACTION_AI_START`.
+ * - [TwoFingerLongPress]: two-finger TouchPad long press via `KEYCODE_SETTINGS` or `ACTION_SETTINGS_KEY`.
  * - [SwipeForward]: two-finger TouchPad forward swipe via `ACTION_TWO_FINGER_SWIPE_FORWARD`.
  * - [SwipeBack]: two-finger TouchPad backward swipe via `ACTION_TWO_FINGER_SWIPE_BACK`.
  */
@@ -19,6 +20,7 @@ enum class BareKeyEvent {
     LongPress,
     TwoFingerClick,
     TwoFingerDoubleClick,
+    TwoFingerLongPress,
     SwipeForward,
     SwipeBack,
 }
