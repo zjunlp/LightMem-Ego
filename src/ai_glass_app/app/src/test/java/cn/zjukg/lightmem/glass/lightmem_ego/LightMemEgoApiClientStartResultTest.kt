@@ -17,10 +17,9 @@ class LightMemEgoApiClientStartResultTest {
                 .put("session_id", "parent__day3")
                 .put("date_label", "2026.7.11")
                 .put("day_index", 3)
-                .put("input_mode", "rokid_live_rtmp")
-                .put("push_url", "rtmp://example/live"),
+                .put("input_mode", "rokid_frame_audio"),
             requestedParentSessionId = "",
-            inputMode = "rokid_live_rtmp",
+            inputMode = "rokid_frame_audio",
             runId = "run-1",
         )
 
@@ -34,10 +33,9 @@ class LightMemEgoApiClientStartResultTest {
             json = JSONObject()
                 .put("session_id", "parent")
                 .put("child_session_id", "parent__day7")
-                .put("input_mode", "rokid_live_rtmp")
-                .put("push_url", "rtmp://example/live"),
+                .put("input_mode", "rokid_frame_audio"),
             requestedParentSessionId = "",
-            inputMode = "rokid_live_rtmp",
+            inputMode = "rokid_frame_audio",
             runId = "run-1",
         )
 
@@ -52,10 +50,9 @@ class LightMemEgoApiClientStartResultTest {
             json = JSONObject()
                 .put("session_id", "parent")
                 .put("day", "4")
-                .put("input_mode", "rokid_live_rtmp")
-                .put("push_url", "rtmp://example/live"),
+                .put("input_mode", "rokid_frame_audio"),
             requestedParentSessionId = "",
-            inputMode = "rokid_live_rtmp",
+            inputMode = "rokid_frame_audio",
             runId = "run-1",
         )
 
@@ -76,14 +73,31 @@ class LightMemEgoApiClientStartResultTest {
                         .put("dayLabel", "None"),
                 )
                 .put("date_label", "null")
-                .put("input_mode", "rokid_live_rtmp")
-                .put("push_url", "rtmp://example/live"),
+                .put("input_mode", "rokid_frame_audio"),
             requestedParentSessionId = "",
-            inputMode = "rokid_live_rtmp",
+            inputMode = "rokid_frame_audio",
             runId = "run-1",
         )
 
         assertEquals(dateLabelFormatter.format(LocalDate.now()), result.dayLabel)
         assertNotEquals("null", result.dayLabel)
+    }
+
+    @Test
+    fun defaultsToRokidHttpUploadPaths() {
+        val result = LightMemEgoApiClient().parseStartResult(
+            json = JSONObject()
+                .put("session_id", "session-123")
+                .put("input_mode", "rokid_frame_audio"),
+            requestedParentSessionId = "",
+            inputMode = "rokid_frame_audio",
+            runId = "run-1",
+        )
+
+        assertEquals("rokid_frame_audio", result.inputMode)
+        assertEquals("/rokid/session-123/frame", result.frameUploadPath)
+        assertEquals("/rokid/session-123/audio_chunk", result.audioUploadPath)
+        assertEquals("/rokid/session-123/status", result.statusPath)
+        assertEquals("/rokid/session-123/audio_question", result.audioQuestionPath)
     }
 }

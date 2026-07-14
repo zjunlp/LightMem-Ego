@@ -23,9 +23,6 @@ data class LightMemEgoStartResult(
     val streamId: String,
     val canAsk: Boolean,
     val inputMode: String,
-    val pushUrl: String,
-    val liveIngestStartPath: String,
-    val liveIngestStopPath: String,
     val frameUploadPath: String,
     val audioUploadPath: String,
     val statusPath: String,
@@ -124,8 +121,8 @@ class LightMemEgoApiClient(
         val metadata = JSONObject()
             .put("source", "rokid_glass")
             .put("device_type", "rokid")
-            .put("transport", if (inputMode == "rokid_live_rtmp") "rtmp_srs" else "glasses_bare_app")
-            .put("sdk", if (inputMode == "rokid_live_rtmp") "android_rootencoder_rtmp" else "android_camera_x_audio_record")
+            .put("transport", "http_frame_audio")
+            .put("sdk", "android_camera_x_audio_record")
             .put("timestamp_mode", "connector_relative_ts_ms")
             .put("run_id", runId)
             .put("client_session_start_ts_ms", startTsMs)
@@ -195,24 +192,11 @@ class LightMemEgoApiClient(
             streamId = json.optString("stream_id"),
             canAsk = json.optBoolean("can_ask", false),
             inputMode = json.optString("input_mode", inputMode),
-            pushUrl = json.optString("push_url"),
-            liveIngestStartPath = json.optString("live_ingest_start_url"),
-            liveIngestStopPath = json.optString("live_ingest_stop_url"),
             frameUploadPath = framePath,
             audioUploadPath = audioPath,
             statusPath = statusPath,
             audioQuestionPath = audioQuestionPath,
         )
-    }
-
-    fun startLiveIngest(sessionId: String, path: String): JSONObject {
-        val effectivePath = path.ifBlank { "/rokid/$sessionId/live/ingest/start" }
-        return postJson(effectivePath, JSONObject())
-    }
-
-    fun stopLiveIngest(sessionId: String, path: String): JSONObject {
-        val effectivePath = path.ifBlank { "/rokid/$sessionId/live/ingest/stop" }
-        return postJson(effectivePath, JSONObject())
     }
 
     fun uploadFrame(
