@@ -14,12 +14,9 @@ import cn.zjukg.lightmem.glass.utils.BarePermissions
 import cn.zjukg.lightmem.glass.lightmem_ego.WavEncoder
 import cn.zjukg.lightmem.glass.lightmem_ego.LightMemEgoApiClient
 import cn.zjukg.lightmem.glass.lightmem_ego.LightMemEgoConfig
-import cn.zjukg.lightmem.glass.lightmem_ego.StoredRokidSession
 import cn.zjukg.lightmem.glass.lightmem_ego.LightMemEgoStartResult
 import cn.zjukg.lightmem.glass.lightmem_ego.LightMemEgoStreamEvent
 import cn.zjukg.lightmem.glass.lightmem_ego.LightMemEgoUploadResult
-import cn.zjukg.lightmem.glass.lightmem_ego.LightMemEgoRokidSessionStore
-import cn.zjukg.lightmem.glass.lightmem_ego.LightMemEgoApiException
 import cn.zjukg.lightmem.glass.lightmem_ego.LightMemEgoDiagnostics
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -33,8 +30,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
 import java.util.UUID
-
-private val TERMINAL_STREAM_STATUSES = setOf("ended", "stopped", "aborted", "cancelled", "canceled", "done")
 
 data class LightMemEgoGlassUiState(
     val status: String = "disconnected",
@@ -75,17 +70,10 @@ data class LightMemEgoGlassUiState(
     val quickQuestions: List<String> = LightMemEgoConfig.PRESET_QUESTIONS,
     val selectedQuestionIndex: Int = 0,
     val selectedQuestion: String = LightMemEgoConfig.PRESET_QUESTIONS.firstOrNull().orEmpty(),
-    val liveRtmpMode: Boolean = false,
-    val livePushUrl: String = "",
-    val liveIngestStartPath: String = "",
-    val liveIngestStopPath: String = "",
-    val liveRtmpStatus: String = "idle",
-    val rtmpRestartToken: Int = 0,
 )
 
 class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(application) {
     private val api = LightMemEgoApiClient()
-    private val sessionStore = LightMemEgoRokidSessionStore(application)
 
     private val _uiState = MutableStateFlow(
         LightMemEgoGlassUiState(
@@ -109,14 +97,11 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
     private var audioJob: Job? = null
     private var statusJob: Job? = null
     private var queryJob: Job? = null
-    private var rtmpRetryJob: Job? = null
-    private var rtmpRetryAttempt = 0
     private var recorder: AudioRecord? = null
     private val voiceQuestionLock = Any()
     private var voiceQuestionPcm = ByteArrayOutputStream()
     private var voiceQuestionStartElapsedMs = 0L
     private var lastVoiceQuestionDurationUiElapsedMs = 0L
-    private var attemptedStoredSessionResume = false
 
     @Volatile
     private var voiceQuestionCapturing = false
@@ -263,6 +248,17 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
         val state = _uiState.value
         if (!streaming || state.sessionId.isBlank()) {
             _uiState.update { it.copy(lastError = "Hold Start first") }
+            return
+        }
+        if (!state.canAsk) {
+            _uiState.update {
+                it.copy(
+                    voiceQuestionStatus = "waiting",
+                    voiceQuestionMessage = "Question service is not ready. Please wait.",
+                    lastError = "Question service is not ready. Please wait.",
+                )
+            }
+            refreshStatusOnce()
             return
         }
         if (state.asking) {
@@ -474,12 +470,12 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
     }
 
     fun startStreaming() {
-        startLiveIngestSession()
+        startRokidHttpSession()
     }
 
-    private fun startLiveIngestSession() {
+    private fun startRokidHttpSession() {
         val state = _uiState.value
-        LightMemEgoDiagnostics.log(getApplication(), "start-live-ingest", "streaming=$streaming stopping=$stopping")
+        LightMemEgoDiagnostics.log(getApplication(), "start-http-capture", "streaming=$streaming stopping=$stopping")
         if (!state.cameraGranted || !state.audioGranted) {
             _uiState.update { it.copy(status = "Please grant camera and microphone permissions", lastError = "") }
             return
@@ -493,14 +489,13 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
             }.onSuccess { result ->
                 LightMemEgoDiagnostics.log(
                     getApplication(),
-                    "start-live-ingest-success",
-                    "session=${result.sessionId} parent=${result.parentSessionId} mode=${result.inputMode} hasPush=${result.pushUrl.isNotBlank()}",
+                    "start-http-capture-success",
+                    "session=${result.sessionId} parent=${result.parentSessionId} mode=${result.inputMode}",
                 )
                 if (result.sessionId.isBlank()) {
                     failStart("Backend did not return session_id")
                     return@onSuccess
                 }
-                rememberActiveSession(result)
                 streaming = true
                 stopping = false
                 streamStartElapsedMs = SystemClock.elapsedRealtime()
@@ -518,11 +513,6 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
                         running = true,
                         canAsk = false,
                         memoryReady = false,
-                        liveRtmpMode = result.inputMode == "rokid_live_rtmp" && result.pushUrl.isNotBlank(),
-                        livePushUrl = result.pushUrl,
-                        liveIngestStartPath = result.liveIngestStartPath,
-                        liveIngestStopPath = result.liveIngestStopPath,
-                        liveRtmpStatus = if (result.inputMode == "rokid_live_rtmp") "waiting" else "disabled",
                         frameIndex = 0,
                         audioIndex = 0,
                         frameUploadedCount = 0,
@@ -541,126 +531,18 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
                     )
                 }
                 startMicrophoneAudioLoop(result.sessionId, uploadToBackend = true)
-                if (result.inputMode == "rokid_live_rtmp") startLiveIngest(result.sessionId, result.liveIngestStartPath)
                 startStatusPolling(result.sessionId)
             }.onFailure { error ->
-                LightMemEgoDiagnostics.logError(getApplication(), "start-live-ingest-failed", "", error)
+                LightMemEgoDiagnostics.logError(getApplication(), "start-http-capture-failed", "", error)
                 failStart(error.message ?: "Connection failed")
-            }
-        }
-    }
-
-    fun resumeStoredSessionIfAvailable(): Boolean {
-        if (attemptedStoredSessionResume || streaming || stopping) return false
-        attemptedStoredSessionResume = true
-        if (LightMemEgoConfig.CREATE_NEW_PARENT_SESSION) {
-            sessionStore.clear()
-            LightMemEgoDiagnostics.log(getApplication(), "stored-session-clear", "CREATE_NEW_PARENT_SESSION=true")
-            return false
-        }
-        val stored = sessionStore.load()
-        if (stored == null) {
-            LightMemEgoDiagnostics.log(getApplication(), "stored-session-missing")
-            return false
-        }
-        LightMemEgoDiagnostics.log(
-            getApplication(),
-            "stored-session-resume",
-            "session=${stored.sessionId} parent=${stored.parentSessionId} hasPush=${stored.pushUrl.isNotBlank()}",
-        )
-        resumeRokidSession(stored)
-        return true
-    }
-
-    private fun resumeRokidSession(stored: StoredRokidSession) {
-        val cleanSessionId = stored.sessionId.trim()
-        val cleanPushUrl = stored.pushUrl.trim()
-        if (cleanSessionId.isBlank() || cleanPushUrl.isBlank()) return
-        val state = _uiState.value
-        if (!state.cameraGranted || !state.audioGranted) {
-            _uiState.update { it.copy(status = "Please grant camera and microphone permissions", lastError = "") }
-            return
-        }
-        if (streaming && state.sessionId == cleanSessionId) {
-            _uiState.update { it.copy(livePushUrl = cleanPushUrl, liveRtmpMode = true, lastError = "") }
-            return
-        }
-        queryJob?.cancel()
-        audioJob?.cancel()
-        statusJob?.cancel()
-        _uiState.update { it.copy(status = "resuming", asking = false, queryStatus = "idle", queryTaskId = "", answer = "", lastError = "") }
-        viewModelScope.launch(Dispatchers.IO) {
-            runCatching {
-                val status = api.getStreamStatus(cleanSessionId)
-                if (status.streamStatus in TERMINAL_STREAM_STATUSES) {
-                    sessionStore.clear()
-                    throw IllegalStateException("Stored session already ${status.streamStatus}")
-                }
-                val latestAudioTs = status.latestAudioTsMs ?: status.latestFrameTsMs ?: 0L
-                val nextAudioIndex = status.audioChunksReceived.coerceAtLeast(0)
-                streaming = true
-                stopping = false
-                streamStartElapsedMs = SystemClock.elapsedRealtime() - latestAudioTs.coerceAtLeast(0L)
-                lastFrameCaptureElapsedMs = 0L
-                _uiState.update {
-                    it.copy(
-                        status = "capturing",
-                        sessionId = cleanSessionId,
-                        parentSessionId = stored.parentSessionId,
-                        childSessionId = cleanSessionId,
-                        dayLabel = stored.dayLabel,
-                        dayIndex = stored.dayIndex,
-                        runId = "",
-                        streamStatus = status.streamStatus.ifBlank { "streaming" },
-                        running = true,
-                        canAsk = status.canAsk,
-                        memoryReady = status.memoryReady,
-                        liveRtmpMode = true,
-                        livePushUrl = cleanPushUrl,
-                        liveIngestStartPath = stored.liveIngestStartPath.ifBlank { "/rokid/$cleanSessionId/live/ingest/start" },
-                        liveIngestStopPath = stored.liveIngestStopPath.ifBlank { "/rokid/$cleanSessionId/live/ingest/stop" },
-                        liveRtmpStatus = "resuming",
-                        rtmpRestartToken = it.rtmpRestartToken + 1,
-                        frameIndex = status.framesReceived.coerceAtLeast(0),
-                        audioIndex = nextAudioIndex,
-                        frameUploadedCount = 0,
-                        frameFailedCount = 0,
-                        frameDroppedCount = 0,
-                        audioUploadedCount = 0,
-                        audioFailedCount = 0,
-                        framesReceived = status.framesReceived,
-                        audioChunksReceived = status.audioChunksReceived,
-                        asking = false,
-                        queryStatus = "idle",
-                        queryTaskId = "",
-                        lastQuestion = "",
-                        answer = "",
-                        lastError = "",
-                    )
-                }
-                releaseRecorder()
-                startMicrophoneAudioLoop(cleanSessionId, uploadToBackend = true)
-                startLiveIngest(cleanSessionId, stored.liveIngestStartPath.ifBlank { "/rokid/$cleanSessionId/live/ingest/start" })
-                startStatusPolling(cleanSessionId)
-                LightMemEgoDiagnostics.log(
-                    getApplication(),
-                    "stored-session-resumed",
-                    "session=$cleanSessionId status=${status.streamStatus} frames=${status.framesReceived} audio=${status.audioChunksReceived}",
-                )
-            }.onFailure { error ->
-                LightMemEgoDiagnostics.logError(getApplication(), "stored-session-resume-failed", "session=$cleanSessionId", error)
-                _uiState.update { it.copy(status = "resume failed", lastError = error.message ?: "Stored session resume failed") }
             }
         }
     }
 
     fun stopStreaming() {
         if (stopping) return
-        val state = _uiState.value
-        val sessionId = state.sessionId
-        val liveStopPath = state.liveIngestStopPath
-        LightMemEgoDiagnostics.log(getApplication(), "stop-streaming", "session=$sessionId liveStopPath=$liveStopPath")
-        sessionStore.clear()
+        val sessionId = _uiState.value.sessionId
+        LightMemEgoDiagnostics.log(getApplication(), "stop-streaming", "session=$sessionId")
         stopping = true
         streaming = false
         frameUploadInFlight = false
@@ -672,11 +554,9 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
             statusJob = null
             queryJob?.cancel()
             queryJob = null
-            cancelRtmpRetry(resetAttempt = true)
             cancelVoiceQuestionCapture()
             releaseRecorder()
             if (sessionId.isNotBlank()) {
-                runCatching { if (liveStopPath.isNotBlank()) api.stopLiveIngest(sessionId, liveStopPath) }
                 runCatching { api.endStream(sessionId) }
             }
             stopping = false
@@ -684,6 +564,7 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
                 it.copy(
                     status = "stopped",
                     sessionId = "",
+                    parentSessionId = "",
                     childSessionId = "",
                     dayLabel = "",
                     dayIndex = 0,
@@ -691,11 +572,6 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
                     streamStatus = "stopped",
                     canAsk = false,
                     memoryReady = false,
-                    liveRtmpMode = false,
-                    livePushUrl = "",
-                    liveIngestStartPath = "",
-                    liveIngestStopPath = "",
-                    liveRtmpStatus = "stopped",
                 )
             }
         }
@@ -729,8 +605,15 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
                 )
             }.onSuccess {
                 _uiState.update {
+                    if (!it.running || it.sessionId != sessionId) return@update it
+                    val frameUploadedCount = it.frameUploadedCount + 1
                     it.copy(
-                        frameUploadedCount = it.frameUploadedCount + 1,
+                        frameUploadedCount = frameUploadedCount,
+                        canAsk = isQuestionReadyAfterUpload(
+                            backendCanAsk = it.canAsk,
+                            frameUploadedCount = frameUploadedCount,
+                            audioUploadedCount = it.audioUploadedCount,
+                        ),
                         lastError = "",
                     )
                 }
@@ -823,7 +706,17 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
                 uploadAudioChunkNow(sessionId, audioIndex, relativeTsMs, durationMs, pcmBytes)
             }.onSuccess {
                 _uiState.update { state ->
-                    state.copy(audioUploadedCount = state.audioUploadedCount + 1, lastError = "")
+                    if (!state.running || state.sessionId != sessionId) return@update state
+                    val audioUploadedCount = state.audioUploadedCount + 1
+                    state.copy(
+                        audioUploadedCount = audioUploadedCount,
+                        canAsk = isQuestionReadyAfterUpload(
+                            backendCanAsk = state.canAsk,
+                            frameUploadedCount = state.frameUploadedCount,
+                            audioUploadedCount = audioUploadedCount,
+                        ),
+                        lastError = "",
+                    )
                 }
             }.onFailure { error ->
                 _uiState.update { state ->
@@ -863,33 +756,6 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
         throw IllegalStateException("Question timed out")
     }
 
-    private fun rememberActiveSession(result: LightMemEgoStartResult) {
-        if (result.parentSessionId.isNotBlank()) {
-            sessionStore.saveParentSessionId(result.parentSessionId)
-        }
-        if (result.inputMode == "rokid_live_rtmp" && result.sessionId.isNotBlank() && result.pushUrl.isNotBlank()) {
-            LightMemEgoDiagnostics.log(
-                getApplication(),
-                "stored-session-save",
-                "session=${result.sessionId} parent=${result.parentSessionId}",
-            )
-            sessionStore.save(
-                StoredRokidSession(
-                    sessionId = result.sessionId,
-                    parentSessionId = result.parentSessionId,
-                    dayLabel = result.dayLabel,
-                    dayIndex = result.dayIndex,
-                    pushUrl = result.pushUrl,
-                    liveIngestStartPath = result.liveIngestStartPath,
-                    liveIngestStopPath = result.liveIngestStopPath,
-                ),
-            )
-        } else {
-            LightMemEgoDiagnostics.log(getApplication(), "stored-session-clear", "inputMode=${result.inputMode}")
-            sessionStore.clear()
-        }
-    }
-
     private fun startPreferredRokidSession(): LightMemEgoStartResult {
         val runId = UUID.randomUUID().toString()
         val parentSessionId = configuredParentSessionId()
@@ -908,34 +774,12 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
         } else if (createParentSession) {
             _uiState.update { it.copy(status = "creating parent...") }
         }
-        return runCatching {
-            api.startRokidStream(
-                inputMode = LightMemEgoConfig.INPUT_MODE,
-                parentSessionId = parentSessionId,
-                runId = runId,
-                createParentSession = createParentSession,
-            )
-        }.getOrElse { liveError ->
-            if (LightMemEgoConfig.INPUT_MODE == "rokid_live_rtmp") {
-                val fallbackParentId = (liveError as? LightMemEgoApiException)
-                    ?.payload
-                    ?.optString("parent_session_id")
-                    ?.takeIf { it.isNotBlank() }
-                    ?: parentSessionId
-                api.startRokidStream(
-                    inputMode = LightMemEgoConfig.FALLBACK_INPUT_MODE,
-                    parentSessionId = fallbackParentId,
-                    runId = runId,
-                    createParentSession = createParentSession && fallbackParentId.isNullOrBlank(),
-                ).also {
-                    _uiState.update { state ->
-                        state.copy(lastError = "RTMP live start failed, using HTTP fallback: ${liveError.message ?: liveError.javaClass.simpleName}")
-                    }
-                }
-            } else {
-                throw liveError
-            }
-        }
+        return api.startRokidStream(
+            inputMode = LightMemEgoConfig.INPUT_MODE,
+            parentSessionId = parentSessionId,
+            runId = runId,
+            createParentSession = createParentSession,
+        )
     }
 
     private fun configuredParentSessionId(): String? {
@@ -947,88 +791,6 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
             throw IllegalStateException("PARENT_SESSION_ID is blank while CREATE_NEW_PARENT_SESSION is false")
         }
         return sessionId
-    }
-
-    private fun startLiveIngest(sessionId: String, path: String) {
-        if (sessionId.isBlank()) return
-        viewModelScope.launch(Dispatchers.IO) {
-            runCatching { api.startLiveIngest(sessionId, path) }
-                .onSuccess {
-                    _uiState.update { state ->
-                        val shouldShowQueued = state.liveRtmpStatus in setOf("waiting", "resuming", "reconnecting")
-                        state.copy(liveRtmpStatus = if (shouldShowQueued) "ingest_queued" else state.liveRtmpStatus)
-                    }
-                }
-                .onFailure { error ->
-                    _uiState.update { state ->
-                        state.copy(liveRtmpStatus = "ingest_failed", lastError = error.message ?: "live ingest start failed")
-                    }
-                }
-        }
-    }
-
-    fun onRtmpStatus(status: String, detail: String = "") {
-        LightMemEgoDiagnostics.log(getApplication(), "rtmp-status", "status=$status detail=$detail")
-        when (status) {
-            "connected", "auth_success" -> {
-                cancelRtmpRetry(resetAttempt = true)
-                _uiState.update { state ->
-                    state.copy(liveRtmpStatus = status, lastError = "")
-                }
-                val state = _uiState.value
-                if (status == "connected" && streaming && state.liveRtmpMode && state.sessionId.isNotBlank()) {
-                    startLiveIngest(state.sessionId, state.liveIngestStartPath)
-                }
-            }
-            "failed", "disconnected", "auth_error" -> {
-                scheduleRtmpReconnect(status, detail)
-            }
-            else -> {
-                _uiState.update { state ->
-                    state.copy(
-                        liveRtmpStatus = status,
-                        lastError = if (status == "stop_failed") detail.ifBlank { status } else state.lastError,
-                    )
-                }
-            }
-        }
-    }
-
-    private fun scheduleRtmpReconnect(status: String, detail: String) {
-        if (!streaming || stopping) return
-        val current = _uiState.value
-        if (!current.liveRtmpMode || current.livePushUrl.isBlank()) return
-        rtmpRetryJob?.cancel()
-        val delayMs = rtmpReconnectDelayMs(rtmpRetryAttempt)
-        rtmpRetryAttempt += 1
-        _uiState.update { state ->
-            state.copy(
-                liveRtmpStatus = "retrying",
-                lastError = detail.ifBlank { status },
-            )
-        }
-        rtmpRetryJob = viewModelScope.launch(Dispatchers.IO) {
-            delay(delayMs)
-            val latest = _uiState.value
-            if (!streaming || stopping || !latest.liveRtmpMode || latest.livePushUrl.isBlank()) return@launch
-            _uiState.update { state ->
-                state.copy(
-                    liveRtmpStatus = "reconnecting",
-                    rtmpRestartToken = state.rtmpRestartToken + 1,
-                )
-            }
-        }
-    }
-
-    private fun rtmpReconnectDelayMs(attempt: Int): Long {
-        val capped = attempt.coerceIn(0, 4)
-        return (1_000L shl capped).coerceAtMost(10_000L)
-    }
-
-    private fun cancelRtmpRetry(resetAttempt: Boolean) {
-        rtmpRetryJob?.cancel()
-        rtmpRetryJob = null
-        if (resetAttempt) rtmpRetryAttempt = 0
     }
 
     private fun startStatusPolling(sessionId: String) {
@@ -1046,9 +808,14 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
             api.getStreamStatus(sessionId)
         }.onSuccess { result ->
             _uiState.update {
+                if (!it.running || it.sessionId != sessionId) return@update it
                 it.copy(
                     streamStatus = result.streamStatus.ifBlank { it.streamStatus },
-                    canAsk = result.canAsk,
+                    canAsk = isQuestionReadyAfterUpload(
+                        backendCanAsk = result.canAsk,
+                        frameUploadedCount = it.frameUploadedCount,
+                        audioUploadedCount = it.audioUploadedCount,
+                    ),
                     memoryReady = result.memoryReady,
                     framesReceived = result.framesReceived,
                     audioChunksReceived = result.audioChunksReceived,
@@ -1063,10 +830,9 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
     private fun failStart(message: String) {
         LightMemEgoDiagnostics.log(getApplication(), "start-failed", message)
         streaming = false
-        cancelRtmpRetry(resetAttempt = true)
         releaseRecorder()
         _uiState.update {
-            it.copy(status = "connection failed", running = false, canAsk = false, memoryReady = false, liveRtmpMode = false, livePushUrl = "", liveIngestStartPath = "", liveIngestStopPath = "", liveRtmpStatus = "failed", lastError = message)
+            it.copy(status = "connection failed", running = false, canAsk = false, memoryReady = false, lastError = message)
         }
     }
 
@@ -1117,7 +883,6 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
         audioJob?.cancel()
         statusJob?.cancel()
         queryJob?.cancel()
-        cancelRtmpRetry(resetAttempt = true)
         cancelVoiceQuestionCapture()
         releaseRecorder()
         super.onCleared()

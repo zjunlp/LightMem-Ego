@@ -1,5 +1,6 @@
 package cn.zjukg.lightmem.glass.input
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BareGlassesInputDispatcherTest {
@@ -49,5 +50,22 @@ class BareGlassesInputDispatcherTest {
             BareKeyEvent.TwoFingerLongPress,
             BareGlassesInputDispatcher.eventForBroadcastAction(KeyEventAction.SETTINGS_KEY.action),
         )
+    }
+
+    @Test
+    fun inputActionLogDetailIncludesActionSourceAndRecognizedTime() {
+        val detail = BareGlassesInputDispatcher.inputActionLogDetail(
+            event = BareKeyEvent.DoubleClick,
+            label = "Key BACK",
+            recognizedAtUptimeMs = 1234L,
+            handled = true,
+            dropped = false,
+        )
+
+        assertTrue(detail.contains("event=DoubleClick"))
+        assertTrue(detail.contains("source=Key BACK"))
+        assertTrue(detail.contains("uptimeMs=1234"))
+        assertTrue(detail.contains("handled=true"))
+        assertTrue(detail.contains("dropped=false"))
     }
 }

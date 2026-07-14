@@ -14,6 +14,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.core.content.ContextCompat
 import cn.zjukg.lightmem.glass.BuildConfig
+import cn.zjukg.lightmem.glass.lightmem_ego.LightMemEgoDiagnostics
 
 typealias BareKeyHandler = (BareKeyEvent) -> Boolean
 
@@ -33,6 +34,7 @@ typealias BareKeyHandler = (BareKeyEvent) -> Boolean
  * settings, or power actions.
  */
 class BareGlassesInputDispatcher(context: Context) {
+    private val appContext = context.applicationContext
     private var handler: BareKeyHandler? = null
     private var interceptListener: ((String) -> Unit)? = null
     private var lastLongPressDispatchedAtMs = 0L
@@ -65,7 +67,7 @@ class BareGlassesInputDispatcher(context: Context) {
             addAction(KeyEventAction.SETTINGS_KEY.action)
         }
         ContextCompat.registerReceiver(
-            context.applicationContext,
+            appContext,
             receiver,
             filter,
             ContextCompat.RECEIVER_EXPORTED,
@@ -108,6 +110,7 @@ class BareGlassesInputDispatcher(context: Context) {
     /** Consumes KeyEvent-only paths such as two-finger long press without dispatching to UI. */
     fun consumeSystemKey(label: String) {
         notifyIntercept(label, consumed = true)
+        logConsumedKey(label)
     }
 
     /** Two-finger TouchPad long press with `KEYCODE_SETTINGS` -> [BareKeyEvent.TwoFingerLongPress]. */
@@ -138,20 +141,52 @@ class BareGlassesInputDispatcher(context: Context) {
     }
 
     private fun dispatchEvent(event: BareKeyEvent, label: String) {
+        val recognizedAtUptimeMs = SystemClock.uptimeMillis()
         if (event == BareKeyEvent.LongPress && shouldDropDuplicateLongPress()) {
+            logRecognizedAction(
+                event = event,
+                label = label,
+                recognizedAtUptimeMs = recognizedAtUptimeMs,
+                handled = false,
+                dropped = true,
+            )
             if (BuildConfig.DEBUG) {
                 Log.d(TAG, "drop duplicate long press from $label")
             }
             return
         }
         if (event == BareKeyEvent.SpriteClick && shouldDropDuplicateSpriteClick()) {
+            logRecognizedAction(
+                event = event,
+                label = label,
+                recognizedAtUptimeMs = recognizedAtUptimeMs,
+                handled = false,
+                dropped = true,
+            )
             if (BuildConfig.DEBUG) {
                 Log.d(TAG, "drop duplicate sprite click from $label")
             }
             return
         }
-        runCatching { handler?.invoke(event) }
+        runCatching { handler?.invoke(event) ?: false }
+            .onSuccess { handled ->
+                logRecognizedAction(
+                    event = event,
+                    label = label,
+                    recognizedAtUptimeMs = recognizedAtUptimeMs,
+                    handled = handled,
+                    dropped = false,
+                )
+            }
             .onFailure { error ->
+                logRecognizedAction(
+                    event = event,
+                    label = label,
+                    recognizedAtUptimeMs = recognizedAtUptimeMs,
+                    handled = false,
+                    dropped = false,
+                    error = error.javaClass.simpleName,
+                )
                 Log.e(TAG, "key handler failed for $label: ${error.message}", error)
             }
     }
@@ -183,6 +218,36 @@ class BareGlassesInputDispatcher(context: Context) {
         interceptListener?.invoke(label + suffix)
     }
 
+    private fun logConsumedKey(label: String) {
+        LightMemEgoDiagnostics.log(
+            appContext,
+            "input-key-consumed",
+            "source=${label.toLogValue()} uptimeMs=${SystemClock.uptimeMillis()}",
+        )
+    }
+
+    private fun logRecognizedAction(
+        event: BareKeyEvent,
+        label: String,
+        recognizedAtUptimeMs: Long,
+        handled: Boolean,
+        dropped: Boolean,
+        error: String = "",
+    ) {
+        LightMemEgoDiagnostics.log(
+            appContext,
+            "input-action",
+            inputActionLogDetail(
+                event = event,
+                label = label,
+                recognizedAtUptimeMs = recognizedAtUptimeMs,
+                handled = handled,
+                dropped = dropped,
+                error = error,
+            ),
+        )
+    }
+
     companion object {
         private const val TAG = "BareGlassesInputDispatcher"
         private const val LONG_PRESS_DEBOUNCE_MS = 800L
@@ -201,6 +266,17 @@ class BareGlassesInputDispatcher(context: Context) {
             else -> null
         }
 
+        internal fun inputActionLogDetail(
+            event: BareKeyEvent,
+            label: String,
+            recognizedAtUptimeMs: Long,
+            handled: Boolean,
+            dropped: Boolean,
+            error: String = "",
+        ): String =
+            "event=${event.name} source=${label.toLogValue()} uptimeMs=$recognizedAtUptimeMs " +
+                "handled=$handled dropped=$dropped error=${error.toLogValue()}"
+
         fun abortOrderedBroadcast(receiver: BroadcastReceiver): Boolean {
             if (!receiver.isOrderedBroadcast) {
                 Log.w(TAG, "abort skipped: not ordered broadcast")
@@ -216,6 +292,9 @@ class BareGlassesInputDispatcher(context: Context) {
         }
     }
 }
+
+private fun String.toLogValue(): String =
+    if (isBlank()) "-" else replace('\n', ' ').replace('\r', ' ')
 
 typealias BareSpriteKeyDispatcher = BareGlassesInputDispatcher
 

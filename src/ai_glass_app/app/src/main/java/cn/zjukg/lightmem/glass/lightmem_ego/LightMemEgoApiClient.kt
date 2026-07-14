@@ -23,9 +23,6 @@ data class LightMemEgoStartResult(
     val streamId: String,
     val canAsk: Boolean,
     val inputMode: String,
-    val pushUrl: String,
-    val liveIngestStartPath: String,
-    val liveIngestStopPath: String,
     val frameUploadPath: String,
     val audioUploadPath: String,
     val statusPath: String,
@@ -124,8 +121,8 @@ class LightMemEgoApiClient(
         val metadata = JSONObject()
             .put("source", "rokid_glass")
             .put("device_type", "rokid")
-            .put("transport", if (inputMode == "rokid_live_rtmp") "rtmp_srs" else "glasses_bare_app")
-            .put("sdk", if (inputMode == "rokid_live_rtmp") "android_rootencoder_rtmp" else "android_camera_x_audio_record")
+            .put("transport", "http_frame_audio")
+            .put("sdk", "android_camera_x_audio_record")
             .put("timestamp_mode", "connector_relative_ts_ms")
             .put("run_id", runId)
             .put("client_session_start_ts_ms", startTsMs)
@@ -195,24 +192,11 @@ class LightMemEgoApiClient(
             streamId = json.optString("stream_id"),
             canAsk = json.optBoolean("can_ask", false),
             inputMode = json.optString("input_mode", inputMode),
-            pushUrl = json.optString("push_url"),
-            liveIngestStartPath = json.optString("live_ingest_start_url"),
-            liveIngestStopPath = json.optString("live_ingest_stop_url"),
             frameUploadPath = framePath,
             audioUploadPath = audioPath,
             statusPath = statusPath,
             audioQuestionPath = audioQuestionPath,
         )
-    }
-
-    fun startLiveIngest(sessionId: String, path: String): JSONObject {
-        val effectivePath = path.ifBlank { "/rokid/$sessionId/live/ingest/start" }
-        return postJson(effectivePath, JSONObject())
-    }
-
-    fun stopLiveIngest(sessionId: String, path: String): JSONObject {
-        val effectivePath = path.ifBlank { "/rokid/$sessionId/live/ingest/stop" }
-        return postJson(effectivePath, JSONObject())
     }
 
     fun uploadFrame(
@@ -319,15 +303,7 @@ class LightMemEgoApiClient(
                 .put("client_source", "glasses")
                 .put("input_method", "preset"),
         )
-        val taskId = json.optString("task_id", json.optString("taskId"))
-        val status = json.optString("status", "")
-        val answer = extractAnswer(json)
-        return LightMemEgoAskSubmitResult(
-            status = status,
-            queued = status == "queued" || taskId.isNotBlank(),
-            taskId = taskId,
-            answer = answer,
-        )
+        return parseAskSubmitResult(json)
     }
 
     fun askAudioQuestion(
@@ -359,18 +335,7 @@ class LightMemEgoApiClient(
                 "input_method" to "voice",
             ),
         )
-        val taskId = json.optString("task_id", json.optString("taskId"))
-        val status = json.optString("status", "")
-        val answer = extractAnswer(json)
-        val question = json.firstNonBlankString("question", "transcript", "text").orEmpty()
-        return LightMemEgoAudioQuestionSubmitResult(
-            status = status,
-            question = question,
-            queued = status == "queued" || taskId.isNotBlank(),
-            taskId = taskId,
-            answer = answer,
-            message = json.optString("message"),
-        )
+        return parseAudioQuestionSubmitResult(json)
     }
 
     fun askAudioQuestionStream(
@@ -412,6 +377,35 @@ class LightMemEgoApiClient(
     }
     fun getQueryTask(taskId: String): LightMemEgoQueryTaskResult {
         val json = getJson("/query_task/$taskId")
+        return parseQueryTaskResult(json)
+    }
+
+    internal fun parseAskSubmitResult(json: JSONObject): LightMemEgoAskSubmitResult {
+        val taskId = json.optString("task_id", json.optString("taskId"))
+        val status = json.optString("status", "")
+        return LightMemEgoAskSubmitResult(
+            status = status,
+            queued = status == "queued" || taskId.isNotBlank(),
+            taskId = taskId,
+            answer = extractAnswer(json),
+        )
+    }
+
+    internal fun parseAudioQuestionSubmitResult(json: JSONObject): LightMemEgoAudioQuestionSubmitResult {
+        val taskId = json.optString("task_id", json.optString("taskId"))
+        val status = json.optString("status", "")
+        val question = json.firstNonBlankString("question", "transcript", "text").orEmpty()
+        return LightMemEgoAudioQuestionSubmitResult(
+            status = status,
+            question = question,
+            queued = status == "queued" || taskId.isNotBlank(),
+            taskId = taskId,
+            answer = extractAnswer(json),
+            message = json.optString("message"),
+        )
+    }
+
+    internal fun parseQueryTaskResult(json: JSONObject): LightMemEgoQueryTaskResult {
         val status = json.optString("status", "queued").lowercase()
         return LightMemEgoQueryTaskResult(
             status = status,
@@ -647,12 +641,9 @@ class LightMemEgoApiClient(
 
     private fun extractAnswer(json: JSONObject): String {
         val result = json.optJSONObject("result")
-        val nestedResult = result?.optJSONObject("result")
-        return listOfNotNull(nestedResult, result, json)
-            .firstNotNullOfOrNull { item ->
-                item.firstNonBlankString("answer", "final_answer", "finalAnswer", "response", "text")
-            }
-            .orEmpty()
+        return json.firstNonBlankString("answer")
+            ?: result?.firstNonBlankString("answer")
+            ?: ""
     }
 
     private fun JSONObject.firstNonBlankString(vararg names: String): String? =

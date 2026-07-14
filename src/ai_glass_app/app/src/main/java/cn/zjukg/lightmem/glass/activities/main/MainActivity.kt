@@ -31,6 +31,8 @@ class MainActivity : ComponentActivity() {
     private val lightMemEgoGlassViewModel by viewModels<LightMemEgoGlassViewModel>()
 
     private var keyDispatcher: BareGlassesInputDispatcher? = null
+    private var enterLongPressHandled = false
+    private var progBlueLongPressHandled = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -94,13 +96,20 @@ class MainActivity : ComponentActivity() {
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         when (keyCode) {
-            KeyEvent.KEYCODE_ENTER -> return true
+            KeyEvent.KEYCODE_ENTER -> {
+                if ((event?.repeatCount ?: 0) > 0 && !enterLongPressHandled) {
+                    enterLongPressHandled = true
+                    keyDispatcher?.dispatchLongKey()
+                }
+                return true
+            }
             KeyEvent.KEYCODE_BACK -> {
                 keyDispatcher?.dispatchBackKey()
                 return true
             }
             KeyEvent.KEYCODE_PROG_BLUE -> {
-                if (event?.repeatCount == 0) {
+                if (!progBlueLongPressHandled) {
+                    progBlueLongPressHandled = true
                     keyDispatcher?.dispatchLongKey()
                 } else {
                     keyDispatcher?.consumeSystemKey("Key-PROG_BLUE-repeat")
@@ -138,8 +147,22 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
-        if (keyCode == KeyEvent.KEYCODE_ENTER && event != null && event.repeatCount == 0) {
-            keyDispatcher?.dispatchEnterKey()
+        when (keyCode) {
+            KeyEvent.KEYCODE_ENTER -> {
+                if (enterLongPressHandled) {
+                    enterLongPressHandled = false
+                } else if (event != null && event.repeatCount == 0) {
+                    keyDispatcher?.dispatchEnterKey()
+                }
+                return true
+            }
+            KeyEvent.KEYCODE_PROG_BLUE -> {
+                progBlueLongPressHandled = false
+                return true
+            }
+        }
+        mainActivityConsumedKeyUpLabel(keyCode)?.let { label ->
+            keyDispatcher?.consumeSystemKey(label)
             return true
         }
         return super.onKeyUp(keyCode, event)

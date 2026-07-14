@@ -48,5 +48,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "GlassesBareDevSample"
+rootProject.name = "LightMem-Ego"
 include(":app")

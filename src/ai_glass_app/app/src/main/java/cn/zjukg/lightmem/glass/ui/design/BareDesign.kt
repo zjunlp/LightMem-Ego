@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -271,19 +272,39 @@ fun BareRichInfoBlock(
     label: String,
     lines: List<AnnotatedString>,
     modifier: Modifier = Modifier,
+    trailingLabel: String = "",
     maxLineCount: Int = 3,
     maxLinesPerItem: Int = 2,
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
         if (label.isNotBlank()) {
-            Text(
-                text = label,
-                color = NeonGreen,
-                fontSize = BareTokens.BodySp,
-                fontWeight = FontWeight.Medium,
-                lineHeight = BareTokens.BodySp * 1.2f,
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-            )
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = label,
+                    color = NeonGreen,
+                    fontSize = BareTokens.BodySp,
+                    fontWeight = FontWeight.Medium,
+                    lineHeight = BareTokens.BodySp * 1.2f,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                if (trailingLabel.isNotBlank()) {
+                    Text(
+                        text = trailingLabel,
+                        color = NeonGreen.copy(alpha = 0.82f),
+                        fontSize = BareTokens.CaptionSp,
+                        lineHeight = BareTokens.CaptionSp * 1.15f,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.End,
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
+                }
+            }
             Canvas(
                 modifier = Modifier
                     .fillMaxWidth()
