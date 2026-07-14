@@ -32,7 +32,6 @@ class MainActivity : ComponentActivity() {
 
     private var keyDispatcher: BareGlassesInputDispatcher? = null
     private var enterLongPressHandled = false
-    private var notificationLongPressHandled = false
     private var progBlueLongPressHandled = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -108,13 +107,6 @@ class MainActivity : ComponentActivity() {
                 keyDispatcher?.dispatchBackKey()
                 return true
             }
-            KeyEvent.KEYCODE_NOTIFICATION -> {
-                if (!notificationLongPressHandled) {
-                    notificationLongPressHandled = true
-                    keyDispatcher?.dispatchLongKey()
-                }
-                return true
-            }
             KeyEvent.KEYCODE_PROG_BLUE -> {
                 if (!progBlueLongPressHandled) {
                     progBlueLongPressHandled = true
@@ -168,10 +160,10 @@ class MainActivity : ComponentActivity() {
                 progBlueLongPressHandled = false
                 return true
             }
-            KeyEvent.KEYCODE_NOTIFICATION -> {
-                notificationLongPressHandled = false
-                return true
-            }
+        }
+        mainActivityConsumedKeyUpLabel(keyCode)?.let { label ->
+            keyDispatcher?.consumeSystemKey(label)
+            return true
         }
         return super.onKeyUp(keyCode, event)
     }
