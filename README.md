@@ -9,8 +9,11 @@
 </p>
 
 <p align="center">
-  <a href="#citation">
-    <img src="https://img.shields.io/badge/Paper-Coming%20Soon-red" alt="Paper">
+  <a href="https://arxiv.org/abs/2607.11487">
+    <img src="https://img.shields.io/badge/arXiv-2607.11487-b31b1b?logo=arxiv&logoColor=white" alt="arXiv">
+  </a>
+  <a href="https://huggingface.co/papers/2607.11487">
+    <img src="https://img.shields.io/badge/HuggingFace-Paper-yellow?logo=huggingface&logoColor=white" alt="Hugging Face Paper">
   </a>
   <a href="https://github.com/zjunlp/LightMem-Ego">
     <img src="https://img.shields.io/github/stars/zjunlp/LightMem-Ego?style=social" alt="GitHub Stars">
