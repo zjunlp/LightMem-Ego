@@ -250,6 +250,17 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
             _uiState.update { it.copy(lastError = "Hold Start first") }
             return
         }
+        if (!state.canAsk) {
+            _uiState.update {
+                it.copy(
+                    voiceQuestionStatus = "waiting",
+                    voiceQuestionMessage = "Question service is not ready. Please wait.",
+                    lastError = "Question service is not ready. Please wait.",
+                )
+            }
+            refreshStatusOnce()
+            return
+        }
         if (state.asking) {
             _uiState.update { it.copy(lastError = "Already answering. Please wait.") }
             return
@@ -594,8 +605,15 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
                 )
             }.onSuccess {
                 _uiState.update {
+                    if (!it.running || it.sessionId != sessionId) return@update it
+                    val frameUploadedCount = it.frameUploadedCount + 1
                     it.copy(
-                        frameUploadedCount = it.frameUploadedCount + 1,
+                        frameUploadedCount = frameUploadedCount,
+                        canAsk = isQuestionReadyAfterUpload(
+                            backendCanAsk = it.canAsk,
+                            frameUploadedCount = frameUploadedCount,
+                            audioUploadedCount = it.audioUploadedCount,
+                        ),
                         lastError = "",
                     )
                 }
@@ -688,7 +706,17 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
                 uploadAudioChunkNow(sessionId, audioIndex, relativeTsMs, durationMs, pcmBytes)
             }.onSuccess {
                 _uiState.update { state ->
-                    state.copy(audioUploadedCount = state.audioUploadedCount + 1, lastError = "")
+                    if (!state.running || state.sessionId != sessionId) return@update state
+                    val audioUploadedCount = state.audioUploadedCount + 1
+                    state.copy(
+                        audioUploadedCount = audioUploadedCount,
+                        canAsk = isQuestionReadyAfterUpload(
+                            backendCanAsk = state.canAsk,
+                            frameUploadedCount = state.frameUploadedCount,
+                            audioUploadedCount = audioUploadedCount,
+                        ),
+                        lastError = "",
+                    )
                 }
             }.onFailure { error ->
                 _uiState.update { state ->
@@ -780,9 +808,14 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
             api.getStreamStatus(sessionId)
         }.onSuccess { result ->
             _uiState.update {
+                if (!it.running || it.sessionId != sessionId) return@update it
                 it.copy(
                     streamStatus = result.streamStatus.ifBlank { it.streamStatus },
-                    canAsk = result.canAsk,
+                    canAsk = isQuestionReadyAfterUpload(
+                        backendCanAsk = result.canAsk,
+                        frameUploadedCount = it.frameUploadedCount,
+                        audioUploadedCount = it.audioUploadedCount,
+                    ),
                     memoryReady = result.memoryReady,
                     framesReceived = result.framesReceived,
                     audioChunksReceived = result.audioChunksReceived,

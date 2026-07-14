@@ -7,8 +7,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -31,8 +29,6 @@ import cn.zjukg.lightmem.glass.ui.design.BareHeroText
 import cn.zjukg.lightmem.glass.ui.design.BareKeyGuide
 import cn.zjukg.lightmem.glass.ui.design.BareRichInfoBlock
 import cn.zjukg.lightmem.glass.ui.design.BareScreenLayout
-import cn.zjukg.lightmem.glass.ui.design.BareTokens
-import cn.zjukg.lightmem.glass.ui.theme.NeonGreen
 import cn.zjukg.lightmem.glass.lightmem_ego.ImageProxyJpegConverter
 import cn.zjukg.lightmem.glass.lightmem_ego.LightMemEgoConfig
 import cn.zjukg.lightmem.glass.lightmem_ego.LightMemEgoDiagnostics
@@ -245,19 +241,11 @@ fun LightMemEgoGlassScreen(
         BareRichInfoBlock(
             label = answerLabel,
             lines = answerLines,
+            trailingLabel = latencyLine,
             maxLineCount = ANSWER_LINES_PER_PAGE,
             maxLinesPerItem = 1,
         )
         Spacer(modifier = Modifier.weight(1f))
-        Text(
-            text = latencyLine,
-            color = NeonGreen.copy(alpha = 0.82f),
-            fontSize = BareTokens.CaptionSp,
-            lineHeight = BareTokens.CaptionSp * 1.15f,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.fillMaxWidth(),
-        )
     }
 }
 
