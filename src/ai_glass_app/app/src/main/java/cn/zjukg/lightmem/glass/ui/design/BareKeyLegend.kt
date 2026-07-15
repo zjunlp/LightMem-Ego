@@ -42,21 +42,25 @@ fun BareKeyLegendBar(
     guide: BareKeyGuide,
     modifier: Modifier = Modifier,
 ) {
-    val rows = buildList {
+    val mainRows = buildList {
         guide.click?.let { add(KeyRowKind.Click to it) }
-        guide.spriteClick?.let { add(KeyRowKind.SpriteClick to it) }
+        guide.twoFingerLongPress?.let { add(KeyRowKind.TwoFingerLongPress to it) }
         guide.twoFingerClick?.let { add(KeyRowKind.TwoFingerClick to it) }
         guide.twoFingerDoubleClick?.let { add(KeyRowKind.TwoFingerDoubleClick to it) }
-        guide.twoFingerLongPress?.let { add(KeyRowKind.TwoFingerLongPress to it) }
         guide.swipeForward?.let { add(KeyRowKind.SwipeForward to it) }
         guide.swipeBack?.let { add(KeyRowKind.SwipeBack to it) }
         guide.doubleClick?.let { add(KeyRowKind.DoubleClick to it) }
         guide.longPress?.let { add(KeyRowKind.LongPress to it) }
     }
-    if (rows.isEmpty()) return
+    val spriteRow = guide.spriteClick?.let { KeyRowKind.SpriteClick to it }
 
-    val rowH = if (rows.size >= 4) 27.dp else 30.dp
-    val displayRows = (rows.size + 1) / 2
+    val totalItems = mainRows.size + (if (spriteRow != null) 1 else 0)
+    if (totalItems == 0) return
+
+    val rowH = if (totalItems >= 4) 27.dp else 30.dp
+    val mainDisplayRows = (mainRows.size + 1) / 2
+    val spriteDisplayRows = if (spriteRow != null) 1 else 0
+    val displayRows = mainDisplayRows + spriteDisplayRows
     val totalH = (4 + displayRows * rowH.value).dp.coerceAtMost(BareTokens.LegendH)
     Column(
         modifier = modifier
@@ -75,7 +79,7 @@ fun BareKeyLegendBar(
                 strokeWidth = BareTokens.STROKE_THIN,
             )
         }
-        rows.chunked(2).forEach { rowItems ->
+        mainRows.chunked(2).forEach { rowItems ->
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -93,6 +97,21 @@ fun BareKeyLegendBar(
                 if (rowItems.size == 1) {
                     androidx.compose.foundation.layout.Spacer(modifier = Modifier.weight(1f))
                 }
+            }
+        }
+        if (spriteRow != null) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(rowH),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                BareKeyLegendRow(
+                    kind = spriteRow.first,
+                    action = spriteRow.second,
+                    modifier = Modifier.weight(1f),
+                )
             }
         }
     }
@@ -118,7 +137,7 @@ private fun BareKeyLegendRow(kind: KeyRowKind, action: String, modifier: Modifie
             .padding(horizontal = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        BareKeyBadge(label = kind.badge)
+        BareKeyBadge(kind = kind)
         Text(
             text = action,
             color = NeonGreen,
@@ -134,15 +153,19 @@ private fun BareKeyLegendRow(kind: KeyRowKind, action: String, modifier: Modifie
 }
 
 @Composable
-private fun BareKeyBadge(label: String) {
+private fun BareKeyBadge(kind: KeyRowKind) {
+    val width = when (kind) {
+        KeyRowKind.SpriteClick -> 98.dp
+        else -> 78.dp
+    }
     Text(
-        text = label,
+        text = kind.badge,
         color = NeonGreen,
         fontSize = BareTokens.CaptionSp,
         fontWeight = FontWeight.Medium,
         lineHeight = BareTokens.CaptionSp * 1.15f,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
-        modifier = Modifier.width(78.dp),
+        modifier = Modifier.width(width),
     )
 }
