@@ -3,8 +3,6 @@ package cn.zjukg.lightmem.glass.lightmem_ego
 object LightMemEgoConfig {
     const val API_BASE_URL = "https://lightmem-ego.zjukg.cn/api"
     const val INPUT_MODE = "rokid_frame_audio"
-    const val CREATE_NEW_PARENT_SESSION = true
-    const val PARENT_SESSION_ID = ""
     val PRESET_QUESTIONS = listOf(
         "What is in the current scene?",
         "What just happened",

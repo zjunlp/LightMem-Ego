@@ -6,19 +6,13 @@ import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
-import java.time.Instant
-import java.time.LocalDate
-import java.time.LocalDateTime
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 import java.util.UUID
 
 data class LightMemEgoStartResult(
     val sessionId: String,
-    val parentSessionId: String,
-    val childSessionId: String,
     val dayLabel: String,
     val dayIndex: Int,
+    val displayDayLabel: String,
     val runId: String,
     val streamId: String,
     val canAsk: Boolean,
@@ -27,6 +21,9 @@ data class LightMemEgoStartResult(
     val audioUploadPath: String,
     val statusPath: String,
     val audioQuestionPath: String,
+    val nextFrameIndex: Int,
+    val nextAudioIndex: Int,
+    val relativeTsBaseMs: Long,
 )
 
 class LightMemEgoApiException(
@@ -104,20 +101,13 @@ class LightMemEgoApiClient(
     private val audioUploadPaths = mutableMapOf<String, String>()
     private val statusPaths = mutableMapOf<String, String>()
     private val audioQuestionPaths = mutableMapOf<String, String>()
-    private val startDateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
-    private val dateLabelFormatter = DateTimeFormatter.ofPattern("yyyy.M.d")
 
     fun startRokidStream(
         inputMode: String = LightMemEgoConfig.INPUT_MODE,
-        parentSessionId: String? = null,
+        sessionId: String? = null,
         runId: String,
-        createParentSession: Boolean,
     ): LightMemEgoStartResult {
-        val requestedParentSessionId = parentSessionId?.trim().orEmpty()
-        val startTsMs = System.currentTimeMillis()
-        val zone = ZoneId.systemDefault()
-        val startInstant = Instant.ofEpochMilli(startTsMs)
-        val startDate = startInstant.atZone(zone).toLocalDate()
+        val requestedSessionId = sessionId?.trim().orEmpty()
         val metadata = JSONObject()
             .put("source", "rokid_glass")
             .put("device_type", "rokid")
@@ -125,29 +115,20 @@ class LightMemEgoApiClient(
             .put("sdk", "android_camera_x_audio_record")
             .put("timestamp_mode", "connector_relative_ts_ms")
             .put("run_id", runId)
-            .put("client_session_start_ts_ms", startTsMs)
-            .put("client_timezone_id", zone.id)
-            .put("client_timezone_offset_minutes", zone.rules.getOffset(startInstant).totalSeconds / 60)
-            .put("client_start_date", dateLabelFormatter.format(startDate))
-            .put("client_start_datetime", startDateTimeFormatter.format(startInstant.atZone(zone)))
-        if (requestedParentSessionId.isNotBlank()) {
-            metadata.put("parent_session_id", requestedParentSessionId)
-        }
+            .put("rokid_session_mode", "single_session")
         val body = JSONObject()
             .put("input_mode", inputMode)
             .put("chunk_duration", 1)
             .put("run_id", runId)
-            .put("create_parent_session", createParentSession)
             .put("metadata", metadata)
-        if (requestedParentSessionId.isNotBlank()) {
-            body.put("session_id", requestedParentSessionId)
-            body.put("parent_session_id", requestedParentSessionId)
+        if (requestedSessionId.isNotBlank()) {
+            body.put("session_id", requestedSessionId)
         }
 
         val json = postJson("/rokid/stream/start", body)
         val result = parseStartResult(
             json = json,
-            requestedParentSessionId = requestedParentSessionId,
+            requestedSessionId = requestedSessionId,
             inputMode = inputMode,
             runId = runId,
         )
@@ -162,32 +143,40 @@ class LightMemEgoApiClient(
 
     internal fun parseStartResult(
         json: JSONObject,
-        requestedParentSessionId: String,
+        requestedSessionId: String,
         inputMode: String,
         runId: String,
     ): LightMemEgoStartResult {
         val sessionId = json.optString("session_id")
-        val parentId = json.optString("parent_session_id", requestedParentSessionId)
-        val childId = json.optString("child_session_id", sessionId)
         val dayContext = json.optJSONObject("day_context")
             ?: json.optJSONObject("dayContext")
-            ?: JSONObject()
+            ?: throw IllegalStateException("Rokid stream start response missing day_context")
         val framePath = json.optString("frame_upload_url").ifBlank { "/rokid/$sessionId/frame" }
         val audioPath = json.optString("audio_upload_url").ifBlank { "/rokid/$sessionId/audio_chunk" }
         val statusPath = json.optString("status_url").ifBlank { "/rokid/$sessionId/status" }
         val audioQuestionPath = json.optString("audio_question_url").ifBlank { "/rokid/$sessionId/audio_question" }
-        val dayLabel = dayContext.firstDateLabel()
-            ?: json.firstDateLabel()
-            ?: currentDateLabel()
+        val dayLabel = dayContext.firstNonBlankString("day_label", "dayLabel")
+            ?: throw IllegalStateException("Rokid stream start day_context missing day_label")
         val dayIndex = dayContext.firstIntOrNull("day_index", "dayIndex", "index")
-            ?: json.firstIntOrNull("day_index", "dayIndex")
+            ?: throw IllegalStateException("Rokid stream start day_context missing day_index")
+        val weekdayLabel = dayContext.firstNonBlankString("weekday_label", "weekdayLabel")
+            ?: throw IllegalStateException("Rokid stream start day_context missing weekday_label")
+        val displayDayLabel = dayContext.firstNonBlankString("display_day_label", "displayDayLabel", "date", "date_label", "dateLabel")
+            ?: throw IllegalStateException("Rokid stream start day_context missing display_day_label")
+        val nextFrameIndex = json.firstIntOrNull("next_frame_index", "nextFrameIndex")
+            ?: dayContext.firstIntOrNull("next_frame_index", "nextFrameIndex")
             ?: 0
+        val nextAudioIndex = json.firstIntOrNull("next_audio_index", "nextAudioIndex")
+            ?: dayContext.firstIntOrNull("next_audio_index", "nextAudioIndex")
+            ?: 0
+        val relativeTsBaseMs = json.firstLongOrNull("relative_ts_base_ms", "relativeTsBaseMs")
+            ?: dayContext.firstLongOrNull("relative_ts_base_ms", "relativeTsBaseMs")
+            ?: 0L
         return LightMemEgoStartResult(
             sessionId = sessionId,
-            parentSessionId = parentId,
-            childSessionId = childId.ifBlank { sessionId },
             dayLabel = dayLabel,
             dayIndex = dayIndex,
+            displayDayLabel = displayDayLabel,
             runId = dayContext.optString("run_id", runId).ifBlank { runId },
             streamId = json.optString("stream_id"),
             canAsk = json.optBoolean("can_ask", false),
@@ -196,6 +185,9 @@ class LightMemEgoApiClient(
             audioUploadPath = audioPath,
             statusPath = statusPath,
             audioQuestionPath = audioQuestionPath,
+            nextFrameIndex = nextFrameIndex,
+            nextAudioIndex = nextAudioIndex,
+            relativeTsBaseMs = relativeTsBaseMs,
         )
     }
 
@@ -657,31 +649,11 @@ class LightMemEgoApiClient(
                 if (has(name) && !isNull(name)) optInt(name) else null
             }
 
-    private fun JSONObject.firstDateLabel(): String? =
-        firstNonBlankString(
-            "actual_date",
-            "actualDate",
-            "date",
-            "date_label",
-            "dateLabel",
-            "client_start_date",
-            "clientStartDate",
-            "client_start_datetime",
-            "clientStartDatetime",
-            "day_label",
-            "dayLabel",
-            "label",
-            "display_label",
-            "displayLabel",
-        )?.toDateLabel()
-
-    private fun String.toDateLabel(): String? {
-        val value = trim()
-        if (!value.isMeaningfulString() || value.startsWith("DAY", ignoreCase = true)) return null
-        parseFlexibleDate(value)?.let { return dateLabelFormatter.format(it) }
-        parseFlexibleDateTime(value)?.let { return dateLabelFormatter.format(it.toLocalDate()) }
-        return value
-    }
+    private fun JSONObject.firstLongOrNull(vararg names: String): Long? =
+        names.asSequence()
+            .firstNotNullOfOrNull { name ->
+                if (has(name) && !isNull(name)) optLong(name) else null
+            }
 
     private fun String.isMeaningfulString(): Boolean {
         val value = trim()
@@ -690,39 +662,4 @@ class LightMemEgoApiClient(
             !value.equals("none", ignoreCase = true)
     }
 
-    private fun currentDateLabel(): String =
-        dateLabelFormatter.format(LocalDate.now())
-
-    private fun parseFlexibleDate(value: String): LocalDate? {
-        val normalized = value.trim()
-        val directPatterns = listOf("yyyy.M.d", "yyyy-M-d", "yyyy/M/d", "yyyyMMdd")
-        directPatterns.forEach { pattern ->
-            runCatching { LocalDate.parse(normalized, DateTimeFormatter.ofPattern(pattern)) }
-                .getOrNull()
-                ?.let { return it }
-        }
-        val datePart = normalized
-            .substringBefore('T')
-            .substringBefore(' ')
-        if (datePart != normalized) return parseFlexibleDate(datePart)
-        return null
-    }
-
-    private fun parseFlexibleDateTime(value: String): LocalDateTime? {
-        val normalized = value.trim().replace('T', ' ')
-        val patterns = listOf(
-            "yyyy-M-d H:m:s",
-            "yyyy-M-d H:m",
-            "yyyy/M/d H:m:s",
-            "yyyy/M/d H:m",
-            "yyyy.M.d H:m:s",
-            "yyyy.M.d H:m",
-        )
-        patterns.forEach { pattern ->
-            runCatching { LocalDateTime.parse(normalized, DateTimeFormatter.ofPattern(pattern)) }
-                .getOrNull()
-                ?.let { return it }
-        }
-        return null
-    }
 }

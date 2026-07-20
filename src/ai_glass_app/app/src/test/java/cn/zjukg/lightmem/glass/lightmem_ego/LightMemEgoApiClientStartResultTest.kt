@@ -2,85 +2,68 @@ package cn.zjukg.lightmem.glass.lightmem_ego
 
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
-import java.time.LocalDate
-import java.time.format.DateTimeFormatter
 
 class LightMemEgoApiClientStartResultTest {
-    private val dateLabelFormatter = DateTimeFormatter.ofPattern("yyyy.M.d")
-
     @Test
-    fun parsesTopLevelDateLabelWhenDayContextIsMissing() {
+    fun parsesSingleSessionDayContextAndUploadOffsets() {
         val result = LightMemEgoApiClient().parseStartResult(
             json = JSONObject()
-                .put("session_id", "parent__day3")
-                .put("date_label", "2026.7.11")
-                .put("day_index", 3)
+                .put("session_id", "session-123")
+                .put("day_context", dayContextJson(dayLabel = "DAY2", weekdayLabel = "Tue", displayDayLabel = "DAY2 Tue", dayIndex = 2, runId = "run-2", relativeTsBaseMs = 90001))
+                .put("next_frame_index", 42)
+                .put("next_audio_index", 77)
                 .put("input_mode", "rokid_frame_audio"),
-            requestedParentSessionId = "",
+            requestedSessionId = "session-123",
             inputMode = "rokid_frame_audio",
-            runId = "run-1",
+            runId = "run-fallback",
         )
 
-        assertEquals("2026.7.11", result.dayLabel)
-        assertEquals(3, result.dayIndex)
+        assertEquals("session-123", result.sessionId)
+        assertEquals("DAY2", result.dayLabel)
+        assertEquals(2, result.dayIndex)
+        assertEquals("DAY2 Tue", result.displayDayLabel)
+        assertEquals("run-2", result.runId)
+        assertEquals(42, result.nextFrameIndex)
+        assertEquals(77, result.nextAudioIndex)
+        assertEquals(90001L, result.relativeTsBaseMs)
     }
 
     @Test
-    fun ignoresDayLabelFromChildSessionId() {
-        val result = LightMemEgoApiClient().parseStartResult(
-            json = JSONObject()
-                .put("session_id", "parent")
-                .put("child_session_id", "parent__day7")
-                .put("input_mode", "rokid_frame_audio"),
-            requestedParentSessionId = "",
-            inputMode = "rokid_frame_audio",
-            runId = "run-1",
-        )
-
-        assertEquals(dateLabelFormatter.format(LocalDate.now()), result.dayLabel)
-        assertNotEquals("DAY7", result.dayLabel)
-        assertEquals(0, result.dayIndex)
+    fun rejectsStartResultWhenBackendOmitsDayContext() {
+        try {
+            LightMemEgoApiClient().parseStartResult(
+                json = JSONObject()
+                    .put("session_id", "session-123")
+                    .put("input_mode", "rokid_frame_audio"),
+                requestedSessionId = "",
+                inputMode = "rokid_frame_audio",
+                runId = "run-1",
+            )
+            fail("Expected missing day_context to fail")
+        } catch (error: IllegalStateException) {
+            assertTrue(error.message.orEmpty().contains("day_context"))
+        }
     }
 
     @Test
-    fun ignoresNumericDayLabel() {
-        val result = LightMemEgoApiClient().parseStartResult(
-            json = JSONObject()
-                .put("session_id", "parent")
-                .put("day", "4")
-                .put("input_mode", "rokid_frame_audio"),
-            requestedParentSessionId = "",
-            inputMode = "rokid_frame_audio",
-            runId = "run-1",
-        )
-
-        assertEquals(dateLabelFormatter.format(LocalDate.now()), result.dayLabel)
-        assertNotEquals("4", result.dayLabel)
-        assertEquals(0, result.dayIndex)
-    }
-
-    @Test
-    fun ignoresNullStringDateLabel() {
-        val result = LightMemEgoApiClient().parseStartResult(
-            json = JSONObject()
-                .put("session_id", "parent")
-                .put(
-                    "day_context",
-                    JSONObject()
-                        .put("date_label", "null")
-                        .put("dayLabel", "None"),
-                )
-                .put("date_label", "null")
-                .put("input_mode", "rokid_frame_audio"),
-            requestedParentSessionId = "",
-            inputMode = "rokid_frame_audio",
-            runId = "run-1",
-        )
-
-        assertEquals(dateLabelFormatter.format(LocalDate.now()), result.dayLabel)
-        assertNotEquals("null", result.dayLabel)
+    fun rejectsStartResultWhenDayContextOmitsRequiredFields() {
+        try {
+            LightMemEgoApiClient().parseStartResult(
+                json = JSONObject()
+                    .put("session_id", "session-123")
+                    .put("day_context", JSONObject().put("mode", "single_session"))
+                    .put("input_mode", "rokid_frame_audio"),
+                requestedSessionId = "",
+                inputMode = "rokid_frame_audio",
+                runId = "run-1",
+            )
+            fail("Expected incomplete day_context to fail")
+        } catch (error: IllegalStateException) {
+            assertTrue(error.message.orEmpty().contains("day_label"))
+        }
     }
 
     @Test
@@ -88,8 +71,9 @@ class LightMemEgoApiClientStartResultTest {
         val result = LightMemEgoApiClient().parseStartResult(
             json = JSONObject()
                 .put("session_id", "session-123")
+                .put("day_context", dayContextJson())
                 .put("input_mode", "rokid_frame_audio"),
-            requestedParentSessionId = "",
+            requestedSessionId = "",
             inputMode = "rokid_frame_audio",
             runId = "run-1",
         )
@@ -100,4 +84,21 @@ class LightMemEgoApiClientStartResultTest {
         assertEquals("/rokid/session-123/status", result.statusPath)
         assertEquals("/rokid/session-123/audio_question", result.audioQuestionPath)
     }
+
+    private fun dayContextJson(
+        dayLabel: String = "DAY1",
+        weekdayLabel: String = "Mon",
+        displayDayLabel: String = "DAY1 Mon",
+        dayIndex: Int = 1,
+        runId: String = "run-1",
+        relativeTsBaseMs: Long = 0L,
+    ): JSONObject =
+        JSONObject()
+            .put("mode", "single_session")
+            .put("day_label", dayLabel)
+            .put("weekday_label", weekdayLabel)
+            .put("display_day_label", displayDayLabel)
+            .put("day_index", dayIndex)
+            .put("run_id", runId)
+            .put("relative_ts_base_ms", relativeTsBaseMs)
 }

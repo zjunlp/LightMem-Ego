@@ -18,6 +18,8 @@ import cn.zjukg.lightmem.glass.lightmem_ego.LightMemEgoStartResult
 import cn.zjukg.lightmem.glass.lightmem_ego.LightMemEgoStreamEvent
 import cn.zjukg.lightmem.glass.lightmem_ego.LightMemEgoUploadResult
 import cn.zjukg.lightmem.glass.lightmem_ego.LightMemEgoDiagnostics
+import cn.zjukg.lightmem.glass.lightmem_ego.LightMemEgoSessionPrefs
+import cn.zjukg.lightmem.glass.lightmem_ego.LightMemEgoSessionStartMode
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -34,11 +36,14 @@ import java.util.UUID
 data class LightMemEgoGlassUiState(
     val status: String = "disconnected",
     val sessionId: String = "",
-    val parentSessionId: String = "",
-    val childSessionId: String = "",
     val dayLabel: String = "",
     val dayIndex: Int = 0,
+    val displayDayLabel: String = "",
     val runId: String = "",
+    val startMode: LightMemEgoSessionStartMode = LightMemEgoSessionStartMode.NewSession,
+    val hasLastSession: Boolean = false,
+    val lastSessionId: String = "",
+    val lastSessionLabel: String = "",
     val streamStatus: String = "idle",
     val cameraGranted: Boolean = false,
     val audioGranted: Boolean = false,
@@ -74,11 +79,20 @@ data class LightMemEgoGlassUiState(
 
 class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(application) {
     private val api = LightMemEgoApiClient()
+    private val savedSession = LightMemEgoSessionPrefs.loadLastSession(application)
 
     private val _uiState = MutableStateFlow(
         LightMemEgoGlassUiState(
             cameraGranted = BarePermissions.hasCamera(application),
             audioGranted = BarePermissions.hasRecordAudio(application),
+            hasLastSession = savedSession != null,
+            lastSessionId = savedSession?.sessionId.orEmpty(),
+            lastSessionLabel = savedSession?.displayDayLabel.orEmpty(),
+            startMode = if (savedSession == null) {
+                LightMemEgoSessionStartMode.NewSession
+            } else {
+                LightMemEgoSessionStartMode.ContinueLast
+            },
         ),
     )
     val uiState: StateFlow<LightMemEgoGlassUiState> = _uiState.asStateFlow()
@@ -93,6 +107,7 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
     private var stopping = false
 
     private var streamStartElapsedMs = 0L
+    private var streamRelativeTsBaseMs = 0L
     private var lastFrameCaptureElapsedMs = 0L
     private var audioJob: Job? = null
     private var statusJob: Job? = null
@@ -132,6 +147,34 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
 
     fun setCameraReady(ready: Boolean) {
         _uiState.update { it.copy(cameraReady = ready) }
+    }
+
+    fun toggleSessionStartMode() {
+        _uiState.update { state ->
+            if (!state.hasLastSession) {
+                state.copy(startMode = LightMemEgoSessionStartMode.NewSession)
+            } else {
+                state.copy(
+                    startMode = if (state.startMode == LightMemEgoSessionStartMode.NewSession) {
+                        LightMemEgoSessionStartMode.ContinueLast
+                    } else {
+                        LightMemEgoSessionStartMode.NewSession
+                    },
+                    lastError = "",
+                )
+            }
+        }
+    }
+
+    fun setSessionStartMode(mode: LightMemEgoSessionStartMode) {
+        _uiState.update { state ->
+            val nextMode = if (mode == LightMemEgoSessionStartMode.ContinueLast && !state.hasLastSession) {
+                LightMemEgoSessionStartMode.NewSession
+            } else {
+                mode
+            }
+            state.copy(startMode = nextMode, lastError = "")
+        }
     }
 
     fun selectNextPresetQuestion() {
@@ -490,7 +533,7 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
                 LightMemEgoDiagnostics.log(
                     getApplication(),
                     "start-http-capture-success",
-                    "session=${result.sessionId} parent=${result.parentSessionId} mode=${result.inputMode}",
+                    "session=${result.sessionId} day=${result.displayDayLabel} mode=${result.inputMode}",
                 )
                 if (result.sessionId.isBlank()) {
                     failStart("Backend did not return session_id")
@@ -499,22 +542,26 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
                 streaming = true
                 stopping = false
                 streamStartElapsedMs = SystemClock.elapsedRealtime()
+                streamRelativeTsBaseMs = result.relativeTsBaseMs.coerceAtLeast(0L)
                 lastFrameCaptureElapsedMs = 0L
+                LightMemEgoSessionPrefs.saveLastSession(getApplication(), result)
                 _uiState.update {
                     it.copy(
                         status = "capturing",
                         sessionId = result.sessionId,
-                        parentSessionId = result.parentSessionId,
-                        childSessionId = result.childSessionId,
                         dayLabel = result.dayLabel,
                         dayIndex = result.dayIndex,
+                        displayDayLabel = result.displayDayLabel,
                         runId = result.runId,
+                        hasLastSession = true,
+                        lastSessionId = result.sessionId,
+                        lastSessionLabel = result.displayDayLabel,
                         streamStatus = "streaming",
                         running = true,
                         canAsk = false,
                         memoryReady = false,
-                        frameIndex = 0,
-                        audioIndex = 0,
+                        frameIndex = result.nextFrameIndex.coerceAtLeast(0),
+                        audioIndex = result.nextAudioIndex.coerceAtLeast(0),
                         frameUploadedCount = 0,
                         frameFailedCount = 0,
                         frameDroppedCount = 0,
@@ -564,10 +611,9 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
                 it.copy(
                     status = "stopped",
                     sessionId = "",
-                    parentSessionId = "",
-                    childSessionId = "",
                     dayLabel = "",
                     dayIndex = 0,
+                    displayDayLabel = "",
                     runId = "",
                     streamStatus = "stopped",
                     canAsk = false,
@@ -682,7 +728,7 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
                     val pcmBytes = pcm.toByteArray()
                     pcm = ByteArrayOutputStream()
                     val audioIndex = _uiState.value.audioIndex
-                    val relativeTsMs = (chunkStartElapsedMs - streamStartElapsedMs).coerceAtLeast(0L)
+                    val relativeTsMs = streamRelativeTsBaseMs + (chunkStartElapsedMs - streamStartElapsedMs).coerceAtLeast(0L)
                     val durationMs = now - chunkStartElapsedMs
                     chunkStartElapsedMs = now
                     _uiState.update { it.copy(audioIndex = audioIndex + 1) }
@@ -758,39 +804,43 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
 
     private fun startPreferredRokidSession(): LightMemEgoStartResult {
         val runId = UUID.randomUUID().toString()
-        val parentSessionId = configuredParentSessionId()
-        val createParentSession = LightMemEgoConfig.CREATE_NEW_PARENT_SESSION && parentSessionId.isNullOrBlank()
-        if (!parentSessionId.isNullOrBlank()) {
-            runCatching { api.getSessionState(parentSessionId) }.onSuccess { stateJson ->
-                val streamStatus = stateJson.optString("stream_status", stateJson.optString("status", "unknown"))
-                if (streamStatus in setOf("ended", "stopped", "aborted", "cancelled", "canceled", "done")) {
-                    _uiState.update { it.copy(status = "parent $streamStatus, starting day...") }
-                } else {
-                    _uiState.update { it.copy(status = "parent $streamStatus, starting day...") }
+        val state = _uiState.value
+        val requestedSessionId = if (
+            state.startMode == LightMemEgoSessionStartMode.ContinueLast &&
+            state.lastSessionId.isNotBlank()
+        ) {
+            state.lastSessionId
+        } else {
+            null
+        }
+        if (!requestedSessionId.isNullOrBlank()) {
+            _uiState.update { it.copy(status = "continuing ${state.lastSessionLabel.ifBlank { "session" }}...") }
+            val sessionExists = runCatching { api.getSessionState(requestedSessionId) }.isSuccess
+            if (!sessionExists) {
+                LightMemEgoSessionPrefs.clearLastSession(getApplication())
+                _uiState.update {
+                    it.copy(
+                        startMode = LightMemEgoSessionStartMode.NewSession,
+                        hasLastSession = false,
+                        lastSessionId = "",
+                        lastSessionLabel = "",
+                        status = "last session missing, creating new...",
+                    )
                 }
-            }.onFailure {
-                _uiState.update { it.copy(status = "starting parent day...") }
+                return api.startRokidStream(
+                    inputMode = LightMemEgoConfig.INPUT_MODE,
+                    sessionId = null,
+                    runId = runId,
+                )
             }
-        } else if (createParentSession) {
-            _uiState.update { it.copy(status = "creating parent...") }
+        } else {
+            _uiState.update { it.copy(status = "creating new session...") }
         }
         return api.startRokidStream(
             inputMode = LightMemEgoConfig.INPUT_MODE,
-            parentSessionId = parentSessionId,
+            sessionId = requestedSessionId,
             runId = runId,
-            createParentSession = createParentSession,
         )
-    }
-
-    private fun configuredParentSessionId(): String? {
-        if (LightMemEgoConfig.CREATE_NEW_PARENT_SESSION) {
-            return null
-        }
-        val sessionId = LightMemEgoConfig.PARENT_SESSION_ID.trim()
-        if (sessionId.isBlank()) {
-            throw IllegalStateException("PARENT_SESSION_ID is blank while CREATE_NEW_PARENT_SESSION is false")
-        }
-        return sessionId
     }
 
     private fun startStatusPolling(sessionId: String) {
@@ -837,7 +887,7 @@ class LightMemEgoGlassViewModel(application: Application) : AndroidViewModel(app
     }
 
     private fun relativeElapsedMs(): Long =
-        (SystemClock.elapsedRealtime() - streamStartElapsedMs).coerceAtLeast(0L)
+        streamRelativeTsBaseMs + (SystemClock.elapsedRealtime() - streamStartElapsedMs).coerceAtLeast(0L)
 
     private fun appendVoiceQuestionAudio(monoBytes: ByteArray) {
         if (!voiceQuestionCapturing) return
