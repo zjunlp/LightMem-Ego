@@ -1,0 +1,51 @@
+[build-system]
+requires = ["uv_build>=0.9.18,<0.10.0"]
+build-backend = "uv_build"
+
+[project]
+name = "em2mem"
+version = "0.1.1"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pip",
+    "torch==2.7.1",
+    "torchcodec==0.3",
+    "torchvision==0.22.1",
+    "huggingface_hub",
+    "transformers>=4.57.1",
+    "sentence-transformers",
+    "accelerate",
+    "peft",
+    "apex",
+    "flash-attn==2.8.0.post2",
+    "openai",
+    "tenacity",
+    "decord",
+    "pysrt",
+    "qwen-vl-utils",
+    "scikit-image",
+    "opencv-python",
+    "igraph",
+    "wheel",
+    "faiss-gpu-cu12",
+    "hipporag",
+    "egorag"
+]
+
+[[tool.uv.index]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/cu128"
+
+[tool.uv.sources]
+hipporag = { path = "src/HippoRAG", editable = true }
+egorag = { path = "src/EgoRAG", editable = true }
+torch = { index = "pytorch" }
+torchcodec = { index = "pytorch" }
+torchvision = { index = "pytorch" }
+
+[tool.uv]
+no-build-isolation-package = ['flash-attn']
+
+[tool.uv.extra-build-dependencies]
+flash-attn = ["torch"]

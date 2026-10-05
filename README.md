@@ -386,7 +386,7 @@ Against the strongest baseline (WorldMM, reproduced under the same evaluation se
 | Wall-clock evaluation time | **6,138 s** | 229,502 s | 37.4× faster |
 | Total tokens | **15.27M** | 42.03M | 63.7% fewer |
 
-EM²Mem moves multimodal alignment and graph organization into offline memory construction, so inference reads from pre-built event-indexed memory cells instead of re-aligning isolated fragments. Full per-category tables are in the [backend README](src/backend/README.md#results); reproduction scripts in [`experiments/egolife`](https://github.com/zjunlp/LightMem/tree/main/experiments/egolife#results).
+EM²Mem moves multimodal alignment and graph organization into offline memory construction, so inference reads from pre-built event-indexed memory cells instead of re-aligning isolated fragments. Full per-category tables are in the [EM²Mem research README](research/em2mem/README.md#reported-results); the online backend details are in the [backend README](src/backend/README.md#results).
 
 ---
 
@@ -423,6 +423,7 @@ Representative commercial assistants, text-based memory systems, and egocentric 
 | [`src/ai_glass_app/`](src/ai_glass_app/) | Android app for Rokid AI Glasses (Kotlin, Jetpack Compose, CameraX) | [README](src/ai_glass_app/README.md) |
 | [`src/frontend/`](src/frontend/) | Vite + React web UI for capture, sessions, QA, and evidence review | [README](src/frontend/README.md) |
 | [`src/backend/`](src/backend/) | FastAPI service plus the online worker pipeline (ASR, memory, retrieval, QA) | [README](src/backend/README.md) |
+| [`research/em2mem/`](research/em2mem/) | Offline EM²Mem research implementation, preprocessing, and evaluation code | [README](research/em2mem/README.md) |
 | [`compose.yaml`](compose.yaml), [`deploy/`](deploy/) | Docker Compose stack and deployment notes | [DOCKER.md](deploy/DOCKER.md) |
 
 ---
