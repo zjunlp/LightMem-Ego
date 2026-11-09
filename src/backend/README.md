@@ -18,6 +18,10 @@ The FastAPI service and worker pipeline behind [LightMem-Ego](../../README.md). 
 
 The installable package is named `em2mem-online-server`. The long-term memory tier (`M_lt`) is built by **EM²Mem** — our event-centric multimodal memory framework, accepted at **EMNLP 2026 Findings** ([arXiv:2609.00551](https://arxiv.org/abs/2609.00551)).
 
+The [online memory upgrade notes](docs/online_memory_upgrade.md) describe retrieval,
+evidence packing, cache/publication consistency, historical-video APIs, and the
+offline regression suite.
+
 ## ✨ Capabilities
 
 - **Multiple input modes** — full video upload, chunk fallback streams, realtime frame/audio HTTP input, and live media ingest (RTMP/WHIP via SRS).

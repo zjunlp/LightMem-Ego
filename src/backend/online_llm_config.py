@@ -4,6 +4,32 @@ import os
 from typing import Any
 
 
+def chat_response_text(response: Any) -> str:
+    """Read SDK objects and JSON/string responses from compatible gateways."""
+    import json
+    if isinstance(response, str):
+        try:
+            decoded = json.loads(response)
+        except (ValueError, TypeError):
+            return response
+        if isinstance(decoded, dict) and ("choices" in decoded or "output_text" in decoded):
+            return chat_response_text(decoded)
+        return response
+    choices = response.get("choices") if isinstance(response, dict) else getattr(response, "choices", None)
+    if choices:
+        first = choices[0]
+        message = first.get("message", {}) if isinstance(first, dict) else first.message
+        content = message.get("content") if isinstance(message, dict) else getattr(message, "content", None)
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return "\n".join(str(part.get("text", "")) for part in content if isinstance(part, dict))
+    output = response.get("output_text") if isinstance(response, dict) else getattr(response, "output_text", None)
+    if isinstance(output, str):
+        return output
+    raise ValueError("Model response contains no readable message text")
+
+
 LOCAL_QWEN_PROFILE = "local-qwen35"
 
 
@@ -85,3 +111,13 @@ def local_openai_base_url() -> str:
         "EM2MEM_LOCAL_LLM_BASE_URL",
         f"http://{os.getenv('EM2MEM_LOCAL_LLM_HOST', '127.0.0.1')}:{os.getenv('EM2MEM_LOCAL_LLM_PORT', '18100')}/v1",
     )
+
+
+def answer_openai_client_kwargs() -> dict[str, Any]:
+    """Route answer clients with the same local/remote choice as their profile."""
+    local = local_llm_enabled()
+    return {
+        "api_key": local_openai_api_key() if local else external_openai_api_key(),
+        "base_url": local_openai_base_url() if local else external_openai_base_url(),
+        "local_mode": local,
+    }

@@ -7,6 +7,8 @@ from typing import Any
 def empty_evidence_payload(transcript: str = "") -> dict[str, Any]:
     return {
         "fine_caption": transcript or "",
+        "visual_summary": "",
+        "visual_summary_status": "unavailable",
         "scene": None,
         "keyframe_captions": [],
         "visual_objects": [],
@@ -54,13 +56,20 @@ def build_fallback_payload(segment: dict[str, Any], error: str | None = None) ->
     payload["confidence"] = 0.1 if transcript else 0.0
     if error:
         payload["error"] = error
+        payload["visual_summary_status"] = "failed"
     return payload
 
 
 def normalize_caption_payload(payload: dict[str, Any], segment: dict[str, Any]) -> dict[str, Any]:
     fallback = build_fallback_payload(segment)
+    visual_summary = payload["visual_summary"].strip() if isinstance(payload.get("visual_summary"), str) else ""
+    visual_status = payload.get("visual_summary_status") or ("generated" if visual_summary else "unavailable")
+    if visual_status in {"failed", "unavailable"}:
+        visual_summary = ""
     normalized = {
         "fine_caption": normalize_string_or_none(payload.get("fine_caption")) or fallback["fine_caption"],
+        "visual_summary": visual_summary,
+        "visual_summary_status": visual_status,
         "scene": normalize_string_or_none(payload.get("scene")),
         "keyframe_captions": normalize_list(payload.get("keyframe_captions")),
         "visual_objects": normalize_list(payload.get("visual_objects")),

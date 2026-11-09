@@ -3,14 +3,12 @@ from __future__ import annotations
 import json
 import shutil
 import sys
-import types
 import unittest
 from pathlib import Path
 from uuid import uuid4
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
-sys.modules.setdefault("cv2", types.SimpleNamespace())
 TEST_TMP_ROOT = PROJECT_ROOT.parent / "work" / "lightmem_ego_test_tmp"
 TEST_TMP_ROOT.mkdir(parents=True, exist_ok=True)
 

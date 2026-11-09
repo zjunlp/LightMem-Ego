@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 import os
 import hashlib
 from pathlib import Path
@@ -12,6 +11,7 @@ from online_pipeline.stream_timeline import append_timeline_event
 from online_preprocess.io_utils import read_json, utc_now_iso, write_json_atomic
 from online_preprocess.task_queue import enqueue_mst_consolidation_task, enqueue_mst_refine_task
 from online_short_term.mst_store import MSTStore
+from online_short_term.time_windows import event_windows
 from online_short_term.refine_status import write_refine_status
 from online_short_term.schemas import build_retrieval_text
 from online_short_term.stream_chunk_manager import StreamChunkManager
@@ -23,17 +23,6 @@ def _overlaps(start_a: float, end_a: float, start_b: float, end_b: float) -> boo
 
 def transcript_dirty_windows_path(session_dir: Path) -> Path:
     return Path(session_dir) / "short_term" / "transcript_dirty_windows.json"
-
-
-def _window_for_event(event: dict[str, Any], window_seconds: float = 30.0) -> dict[str, Any]:
-    start = float(event.get("start_time", 0.0) or 0.0)
-    window_start = math.floor(start / window_seconds) * window_seconds
-    window_end = window_start + window_seconds
-    return {
-        "window_id": f"win_{int(window_start):06d}_{int(window_end):06d}",
-        "start_time": round(window_start, 3),
-        "end_time": round(window_end, 3),
-    }
 
 
 def load_transcript_dirty_windows(session_dir: Path) -> dict[str, Any]:
@@ -60,27 +49,27 @@ def mark_transcript_dirty_windows(session_dir: Path, events: list[dict[str, Any]
     now = utc_now_iso()
     changed: list[dict[str, Any]] = []
     for event in events:
-        window = _window_for_event(event)
-        existing = by_id.get(window["window_id"], {})
-        event_ids = list(existing.get("event_ids") or [])
-        event_id = str(event.get("event_id") or "")
-        if event_id and event_id not in event_ids:
-            event_ids.append(event_id)
-        payload = {
-            **existing,
-            **window,
-            "event_ids": event_ids,
-            "status": "dirty",
-            "reason": "transcript_backfill",
-            "updated_at": now,
-        }
-        by_id[window["window_id"]] = payload
-        changed.append(payload)
+        for window in event_windows(event):
+            existing = by_id.get(window["window_id"], {})
+            event_ids = list(existing.get("event_ids") or [])
+            event_id = str(event.get("event_id") or "")
+            if event_id and event_id not in event_ids:
+                event_ids.append(event_id)
+            payload = {
+                **existing,
+                **window,
+                "event_ids": event_ids,
+                "status": "dirty",
+                "reason": "transcript_backfill",
+                "updated_at": now,
+            }
+            by_id[window["window_id"]] = payload
+            changed.append(payload)
     state["windows"] = sorted(by_id.values(), key=lambda item: (float(item.get("start_time", 0.0)), str(item.get("window_id", ""))))
     state["dirty_version"] = int(state.get("dirty_version", 0) or 0) + 1
     state["updated_at"] = now
     write_json_atomic(path, state)
-    return changed
+    return sorted({item["window_id"]: item for item in changed}.values(), key=lambda item: item["start_time"])
 
 
 def mark_transcript_dirty_window_queued(session_dir: Path, window_start: float, window_end: float, task_id: str | None) -> None:
@@ -99,18 +88,27 @@ def mark_transcript_dirty_window_queued(session_dir: Path, window_start: float, 
 
 
 def mark_transcript_dirty_window_consolidated(session_dir: Path, window_start: float, window_end: float, task_id: str | None = None) -> None:
-    state = load_transcript_dirty_windows(session_dir)
-    now = utc_now_iso()
-    for item in state.get("windows", []) or []:
-        if not isinstance(item, dict):
-            continue
-        if abs(float(item.get("start_time", 0.0) or 0.0) - float(window_start)) < 1e-6 and abs(float(item.get("end_time", 0.0) or 0.0) - float(window_end)) < 1e-6:
-            item["status"] = "consolidated"
-            item["consolidated_at"] = now
-            item["consolidation_task_id"] = task_id or item.get("consolidation_task_id")
-            item["updated_at"] = now
-    state["updated_at"] = now
-    write_json_atomic(transcript_dirty_windows_path(session_dir), state)
+    store = MSTStore(Path(session_dir))
+    with store.mutation_lock():
+        # A newer ASR result can arrive after episode generation. Do not let
+        # completion of the older task clear its pending work.
+        for event in store.load_archive_events():
+            if (float(event.get("start_time", 0.0)) < window_end
+                    and float(event.get("end_time", 0.0)) > window_start
+                    and any(event.get(field) for field in ("needs_refine", "refined_stale", "needs_reconsolidation"))):
+                return
+        state = load_transcript_dirty_windows(session_dir)
+        now = utc_now_iso()
+        for item in state.get("windows", []) or []:
+            if not isinstance(item, dict):
+                continue
+            if abs(float(item.get("start_time", 0.0) or 0.0) - float(window_start)) < 1e-6 and abs(float(item.get("end_time", 0.0) or 0.0) - float(window_end)) < 1e-6:
+                item["status"] = "consolidated"
+                item["consolidated_at"] = now
+                item["consolidation_task_id"] = task_id or item.get("consolidation_task_id")
+                item["updated_at"] = now
+        state["updated_at"] = now
+        write_json_atomic(transcript_dirty_windows_path(session_dir), state)
 
 
 class TranscriptBackfiller:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import pickle
 import shutil
+from uuid import uuid4
 from pathlib import Path
 from typing import Any
 
@@ -59,7 +60,9 @@ def _write_visual_checkpoint(
     index_backend: str,
     item_count: int,
 ) -> str:
-    checkpoint_dir = session_dir / "em2mem" / "incremental" / "visual" / "checkpoints" / f"v{visual_version:06d}"
+    checkpoint_root = session_dir / "em2mem" / "incremental" / "visual" / "checkpoints"
+    target = checkpoint_root / f"v{visual_version:06d}_{uuid4().hex}"
+    checkpoint_dir = checkpoint_root / f".{target.name}.tmp"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     copied: dict[str, str] = {}
     for name in ("visual.faiss", "visual_embeddings.pkl", "visual_id_mapping.json", "visual_items.jsonl"):
@@ -67,7 +70,7 @@ def _write_visual_checkpoint(
         if src.exists():
             dst = checkpoint_dir / name
             shutil.copy2(src, dst)
-            copied[name] = dst.relative_to(session_dir).as_posix()
+            copied[name] = (target / name).relative_to(session_dir).as_posix()
     write_json(
         checkpoint_dir / "checkpoint_meta.json",
         {
@@ -79,7 +82,8 @@ def _write_visual_checkpoint(
             "created_at": utc_now_iso(),
         },
     )
-    return checkpoint_dir.relative_to(session_dir).as_posix()
+    checkpoint_dir.replace(target)
+    return target.relative_to(session_dir).as_posix()
 
 
 def build_visual_embeddings(

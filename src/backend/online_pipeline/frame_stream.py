@@ -192,6 +192,13 @@ class FrameStreamStore:
             os.replace(tmp_path, final_path)
             saved_path = final_path.relative_to(self.session_dir).as_posix()
             memory_accepted = self._should_accept_memory_frame(state, effective_relative_ts_ms)
+            acceptance_reason = "periodic" if memory_accepted else "sampling_interval"
+            promoted_change_score = 0.0
+            if not memory_accepted:
+                promoted_change_score = self._visual_change_score(state, final_path, effective_relative_ts_ms)
+                if promoted_change_score > 0 and promoted_change_score >= _env_float("EM2MEM_FRAME_STREAM_CHANGE_THRESHOLD", 0.12):
+                    memory_accepted = True
+                    acceptance_reason = "localized_visual_change"
             record = {
                 "frame_id": frame_id,
                 "frame_index": int(frame_index),
@@ -209,6 +216,8 @@ class FrameStreamStore:
                 "saved_path": saved_path,
                 "received_at": utc_now_iso(),
                 "memory_accepted": memory_accepted,
+                "memory_acceptance_reason": acceptance_reason,
+                "promoted_change_score": promoted_change_score,
             }
             frames = [item for item in state.get("frames", []) or [] if isinstance(item, dict)]
             frames.append(record)
@@ -399,6 +408,28 @@ class FrameStreamStore:
         interval_ms = max(1, int(round(1000.0 / fps)))
         return int(relative_ts_ms) - int(latest_memory_ts) >= interval_ms
 
+    def _visual_change_score(self, state: dict[str, Any], path: Path, relative_ts_ms: int) -> float:
+        """Let brief local changes through the periodic sampler, at a capped rate."""
+        if os.getenv("EM2MEM_FRAME_STREAM_CHANGE_PROMOTION", "1").lower() in {"0", "false", "off", "no"}:
+            return 0.0
+        previous = state.get("latest_memory_frame_path")
+        previous_ts = state.get("latest_memory_relative_ts_ms")
+        if not previous or previous_ts is None:
+            return 0.0
+        max_fps = max(0.01, _env_float("EM2MEM_FRAME_STREAM_CHANGE_MAX_FPS", 4.0))
+        if relative_ts_ms - int(previous_ts) < 1000 / max_fps:
+            return 0.0
+        try:
+            from PIL import Image, ImageChops, ImageStat
+            with Image.open(self.session_dir / previous) as image:
+                before = image.convert("RGB").resize((64, 36))
+            with Image.open(path) as image:
+                after = image.convert("RGB").resize((64, 36))
+            difference = ImageChops.difference(before, after)
+            return max(sum(ImageStat.Stat(difference.crop((x, y, x+16, y+9))).mean) / (3 * 255) for x in range(0, 64, 16) for y in range(0, 36, 9))
+        except (OSError, ValueError):
+            return 0.0
+
     def _append_recent_sample(
         self,
         samples: Any,
@@ -442,7 +473,10 @@ class FrameStreamStore:
             if saved_path in keep_paths:
                 pruned.append(item)
                 continue
-            if saved_path:
+            # Accepted memory frames can already be referenced by open/closed
+            # M_st events and later M_lt. Only preview-only images share the
+            # rolling preview lifetime; memory images live with the session.
+            if saved_path and not item.get("memory_accepted"):
                 try:
                     (self.session_dir / saved_path).unlink()
                 except FileNotFoundError:

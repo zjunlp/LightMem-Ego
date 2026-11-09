@@ -40,13 +40,11 @@ class RetrievalPlanner:
         mlt_top_k = budgets["M_lt"]
         if request_options.get("text_top_k") is not None:
             mlt_top_k = _coerce_positive_int(request_options.get("text_top_k"), mlt_top_k)
+        if request_options.get("short_term_top_k") is not None:
+            mst_top_k = _coerce_positive_int(request_options.get("short_term_top_k"), mst_top_k)
+        budgets.update({"M_st": mst_top_k, "M_lt": mlt_top_k})
         text_top_k = mlt_top_k
         visual_top_k = int(request_options.get("visual_top_k") or _env_int("EM2MEM_QUERY_ROUTER_VISUAL_TOP_K", 8))
-        requested_final_k = _coerce_positive_int(
-            request_options.get("final_evidence_k"),
-            _env_int("EM2MEM_FINAL_TEXT_EVIDENCE_K", _env_int("EM2MEM_QUERY_ROUTER_FINAL_EVIDENCE_K", 4)),
-        )
-        final_k = self._final_evidence_budget(query_type=query_type, requested=requested_final_k)
         frames_k = _env_int("EM2MEM_FINAL_EVIDENCE_FRAMES_K", _env_int("EM2MEM_QUERY_ROUTER_EVIDENCE_FRAMES_K", 5))
         max_images_default = _env_int("EM2MEM_FINAL_MAX_IMAGE_EVIDENCE", _env_int("EM2MEM_QUERY_ROUTER_MAX_IMAGE_EVIDENCE", 9))
 
@@ -117,13 +115,25 @@ class RetrievalPlanner:
             "use_image_evidence": bool(use_image),
             "use_image_evidence_source": use_image_source,
             "max_image_evidence": max_images,
-            "final_evidence_k": max(1, final_k),
             "evidence_frames_k": max(1, frames_k),
             "text_top_k": max(1, text_top_k),
             "visual_top_k": max(1, visual_top_k),
             "retrieval_mode": "current" if memory_route.get("use_current") and not memory_route.get("use_long_term") and not memory_route.get("use_short_term") else mlt_mode,
             "retrieval_mode_source": retrieval_mode_source,
         }
+        # Text capacity follows the enabled retrieval paths. A small fixed final
+        # cap otherwise discards already retrieved history when fine ST events
+        # dominate ranking. This does not increase the separate image allowance.
+        candidate_count = sum(
+            int(layer.get("candidate_budget") or 0)
+            for layer in plan["retrieval_plan"].values() if layer["enabled"]
+        )
+        default_final_k = self._final_evidence_budget(
+            query_type=query_type, requested=0, candidate_count=candidate_count,
+        )
+        plan["final_evidence_k"] = _coerce_positive_int(
+            request_options.get("final_evidence_k"), default_final_k,
+        )
         if plan["retrieval_plan"]["M_lt"]["enabled"] and mlt_mode in {"hybrid", "visual_only"} and not runtime_state.get("visual_embedding_ready"):
             if mlt_mode == "visual_only":
                 plan["retrieval_plan"]["M_lt"]["mode"] = "text_only"
@@ -144,7 +154,7 @@ class RetrievalPlanner:
     def _candidate_budgets(self, *, query_type: str, base_top_k: int) -> dict[str, int]:
         mcur = _env_int("EM2MEM_UNIFIED_MCUR_TOP_K", 1)
         mcache = _env_int("EM2MEM_UNIFIED_MCACHE_TOP_K", 3)
-        mst = max(base_top_k, _env_int("EM2MEM_UNIFIED_MST_TOP_K", 8))
+        mst = max(base_top_k, _env_int("EM2MEM_UNIFIED_MST_TOP_K", 16))
         mlt = max(base_top_k, _env_int("EM2MEM_UNIFIED_MLT_TOP_K", 8))
         if query_type == "current_perception":
             return {"M_cur": max(1, mcur), "M_st": min(mst, 2), "M_lt": min(mlt, 2), "M_cache": min(mcache, 2)}
@@ -157,14 +167,20 @@ class RetrievalPlanner:
             return {"M_cur": max(1, mcur), "M_st": max(mst, 6), "M_lt": max(mlt, 10), "M_cache": max(mcache, 3)}
         return {"M_cur": max(1, mcur), "M_st": mst, "M_lt": mlt, "M_cache": mcache}
 
-    def _final_evidence_budget(self, *, query_type: str, requested: int) -> int:
+    def _final_evidence_budget(self, *, query_type: str, requested: int, candidate_count: int = 0) -> int:
+        if requested > 0:
+            return requested
         if query_type == "current_perception":
-            return min(max(1, requested), _env_int("EM2MEM_CURRENT_FINAL_EVIDENCE_K", 4))
-        default_cap = _env_int("EM2MEM_UNIFIED_FINAL_EVIDENCE_K", 10)
+            return max(1, _env_int("EM2MEM_CURRENT_FINAL_EVIDENCE_K", 4))
         if query_type == "temporal_count":
-            default_cap = _env_int("EM2MEM_TEMPORAL_COUNT_FINAL_EVIDENCE_K", 12)
-        elif query_type in {"recent_recall", "followup"}:
-            default_cap = _env_int("EM2MEM_RECENT_FINAL_EVIDENCE_K", 10)
-        elif query_type == "long_term_summary":
-            default_cap = _env_int("EM2MEM_SUMMARY_FINAL_EVIDENCE_K", 10)
-        return max(requested, default_cap)
+            return max(1, _env_int("EM2MEM_TEMPORAL_COUNT_FINAL_EVIDENCE_K", 12))
+        if query_type == "long_term_summary":
+            return max(1, _env_int("EM2MEM_SUMMARY_FINAL_EVIDENCE_K", 10))
+        # Deployment limits and per-request limits remain authoritative.
+        names = ["EM2MEM_UNIFIED_FINAL_EVIDENCE_K"]
+        if query_type in {"recent_recall", "followup"}:
+            names.insert(0, "EM2MEM_RECENT_FINAL_EVIDENCE_K")
+        for name in names:
+            if os.getenv(name, "").strip():
+                return max(1, _env_int(name, 12))
+        return max(12, min(32, candidate_count))

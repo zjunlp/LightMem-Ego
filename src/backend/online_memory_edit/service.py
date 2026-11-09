@@ -909,7 +909,6 @@ class MemoryEditService:
         engine = load_query_engine(
             self.session_id,
             sessions_root=self.sessions_root,
-            fast_load=True,
             memory_config_override=(config_path, config),
         )
         return engine

@@ -339,6 +339,7 @@ def run_worker(args: argparse.Namespace) -> None:
     sessions_root = Path(args.sessions_root).resolve()
     last_task_id: str | None = None
     last_error: str | None = None
+    last_scan_at = 0.0
 
     _write_refine_runtime(
         project_root,
@@ -355,7 +356,8 @@ def run_worker(args: argparse.Namespace) -> None:
 
     while True:
         queued = list_queued_mst_refine_tasks(project_root)
-        if not queued and args.scan_sessions:
+        if args.scan_sessions and (not queued or time.monotonic() - last_scan_at >= max(1.0, args.poll_interval)):
+            last_scan_at = time.monotonic()
             for session_id in _discover_sessions(sessions_root, args.scan_limit_sessions):
                 if not session_is_active_or_allowed(project_root, session_id):
                     print(f"[mst_refine_worker] skip inactive scan session={session_id}", flush=True)

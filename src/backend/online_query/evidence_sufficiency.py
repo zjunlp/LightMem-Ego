@@ -326,9 +326,41 @@ class EvidenceSufficiencyEvaluator:
         short_term_results: list[dict[str, Any]] | None,
         current_results: list[dict[str, Any]] | None = None,
         explicit_long_term_override: bool = False,
+        query_constraints: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         results = [item for item in (short_term_results or []) if isinstance(item, dict)]
+        closed_end = max((_safe_float(item.get("end_time")) for item in results
+                          if not item.get("synthetic") and item.get("status") not in {"open", "provisional"}), default=None)
+        current_end = None
+        frame_times = []
+        for item in current_results or []:
+            context = item.get("current_context") or {}
+            if context.get("is_stale"):
+                continue
+            end = context.get("window_end_time")
+            if end is not None:
+                current_end = max(current_end if current_end is not None else float(end), float(end))
+            for frame in (item.get("current_selection") or {}).get("evidence_frames", []) or []:
+                timestamp = frame.get("timestamp", frame.get("capture_time_seconds"))
+                if timestamp is not None:
+                    frame_times.append(float(timestamp))
+        from online_query_constraints import resolve_query_constraints, constraint_windows
+        # The caller's original-question constraints are authoritative. Cache
+        # hints may appear in rewritten search text but are not user windows.
+        constraints = resolve_query_constraints(question, query_constraints=query_constraints, latest=current_end)
+        windows = constraint_windows(constraints)
+        tail_in_scope = not windows or any(span[1] > (closed_end if closed_end is not None else float("-inf")) for span in windows)
+        historical_only = constraints.get("scope") == "history" and not constraints.get("requires_current")
+        requires_tail = bool(str(query_type or "") == "recent_recall" and not historical_only and tail_in_scope and closed_end is not None
+                             and current_end is not None and current_end > closed_end)
         base = {
+            "requires_current_tail": requires_tail,
+            "current_tail_coverage": {
+                "closed_st_end": closed_end, "current_end": current_end,
+                "tail_range": [closed_end, current_end] if requires_tail else None,
+                "current_frame_times": sorted(set(t for t in frame_times if closed_end is None or t > closed_end)),
+                "provenance": "unrefined_current_window",
+            },
             "enabled": True,
             "evaluated": False,
             "sufficient": False,

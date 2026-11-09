@@ -30,6 +30,7 @@ USER_PROMPT_TEMPLATE = """Inputs:
 
 Return JSON with exactly these fields:
 fine_caption: string
+visual_summary: string; independently describe the visible environment, objects, appearances and observable actions in the attached images. Use transcript only as weak context; do not copy fine_caption or include speech, plans or hidden intentions as visual facts.
 scene: string or null
 keyframe_captions: list of objects with timestamp, path, caption, visible_entities, visual_objects
 visual_objects: list of objects with name, attributes, time_span, evidence_keyframes, confidence
@@ -159,7 +160,8 @@ class OpenAIVLMCaptioner(VLMCaptioner):
         keyframe_paths: list[str],
         transcript: str,
     ) -> dict[str, Any]:
-        selected_keyframes = select_keyframes_for_vlm(segment.get("keyframes", []) or [], self.max_keyframes)
+        frames = segment.get("keyframes", []) or [{"path": path} for path in keyframe_paths]
+        selected_keyframes = select_keyframes_for_vlm(frames, self.max_keyframes)
         keyframe_table = "\n".join(
             f"- {frame.get('timestamp')}: {frame.get('path')}"
             for frame in selected_keyframes
@@ -176,7 +178,7 @@ class OpenAIVLMCaptioner(VLMCaptioner):
         for frame in selected_keyframes:
             rel_path = str(frame.get("path", "")).strip()
             image_path = self.session_dir / rel_path
-            if not rel_path or not image_path.exists():
+            if not rel_path or not image_path.is_file():
                 continue
             content.append(
                 {
@@ -184,6 +186,11 @@ class OpenAIVLMCaptioner(VLMCaptioner):
                     "image_url": {"url": _image_data_url(image_path)},
                 }
             )
+
+        if not any(part.get("type") == "image_url" for part in content):
+            payload = build_fallback_payload({**segment, "transcript": transcript})
+            payload["visual_summary_status"] = "unavailable"
+            return normalize_caption_payload(payload, segment)
 
         request_kwargs = merge_local_chat_request_kwargs(_reasoning_effort_kwargs())
         if local_llm_enabled():
@@ -211,6 +218,9 @@ class OpenAIVLMCaptioner(VLMCaptioner):
             )
         raw_text = response.choices[0].message.content or ""
         parsed = _extract_json_object(raw_text)
+        parsed["visual_summary_status"] = (
+            "generated" if isinstance(parsed.get("visual_summary"), str) and parsed["visual_summary"].strip() else "failed"
+        )
         return normalize_caption_payload(parsed, segment)
 
 

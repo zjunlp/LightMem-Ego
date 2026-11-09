@@ -23,6 +23,8 @@ if [[ -f ".env" ]]; then
 fi
 # shellcheck disable=SC1091
 source "$ROOT_DIR/scripts/llm_profile.sh"
+# shellcheck disable=SC1091
+source "$ROOT_DIR/scripts/text_embedding_profile.sh"
 if [[ -n "$REQUESTED_PIPELINE_MODE" ]]; then
   EM2MEM_PIPELINE_MODE="$REQUESTED_PIPELINE_MODE"
 fi
@@ -238,7 +240,7 @@ if is_enabled "${EM2MEM_AUTO_VISUAL_EMBEDDING:-1}" && [[ "${EM2MEM_VISUAL_BACKEN
   fi
 fi
 
-if [[ "${EM2MEM_TEXT_EMBED_BACKEND:-local}" == "remote" ]]; then
+if [[ "$EM2MEM_TEXT_EMBED_BACKEND" == "remote" ]]; then
   if qwen3_embedding_ready; then
     echo "[start_online_all_workers] Qwen3 text embedding service already healthy at ${EM2MEM_TEXT_EMBED_URL:-http://${EM2MEM_TEXT_EMBED_HOST:-127.0.0.1}:${EM2MEM_TEXT_EMBED_PORT:-18096}}; reusing it"
   else

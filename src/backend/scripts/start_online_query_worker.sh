@@ -20,8 +20,8 @@ source "$PROJECT_ROOT/scripts/llm_profile.sh"
 # Query warmup and all queued/streaming queries share this worker's engine
 # cache. Keep text embeddings in the dedicated service to avoid loading the
 # Qwen3 model into every query-serving process.
-export EM2MEM_TEXT_EMBED_BACKEND="${EM2MEM_TEXT_EMBED_BACKEND:-remote}"
-export EM2MEM_TEXT_EMBED_URL="${EM2MEM_TEXT_EMBED_URL:-http://${EM2MEM_TEXT_EMBED_HOST:-127.0.0.1}:${EM2MEM_TEXT_EMBED_PORT:-18096}}"
+# shellcheck disable=SC1091
+source "$PROJECT_ROOT/scripts/text_embedding_profile.sh"
 
 if [ -z "${CUDA_VISIBLE_DEVICES:-}" ] && [ -n "${EM2MEM_QUERY_CUDA_VISIBLE_DEVICES:-}" ]; then
   export CUDA_VISIBLE_DEVICES="${EM2MEM_QUERY_CUDA_VISIBLE_DEVICES}"

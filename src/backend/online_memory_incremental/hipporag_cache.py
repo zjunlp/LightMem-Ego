@@ -5,6 +5,7 @@ import shutil
 import sys
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from online_memory.em2mem_layout import seconds_to_hhmmssff
@@ -305,21 +306,20 @@ def _build_em2mem_memory_for_cache(
 ):
     from em2mem.embedding import EmbeddingModel
     from em2mem.llm import LLMModel, PromptTemplateManager
-    from em2mem.memory import EM2Memory
+    from em2mem.memory.episodic.memory import EpisodicMemory
 
     embedding_model = EmbeddingModel()
     llm = LLMModel(model_name=model_name or os.getenv("EM2MEM_MEMORY_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-5.4")
-    em2mem_memory = EM2Memory(
+    # This compatibility cache stores HippoRAG parquet/graph artifacts. The
+    # main EM2Memory now uses dense RAG and has no native HippoRAG methods.
+    episodic_memory = EpisodicMemory(
         embedding_model=embedding_model,
-        retriever_llm_model=llm,
-        respond_llm_model=llm,
+        llm_model=llm,
         prompt_template_manager=PromptTemplateManager(),
-        max_rounds=1,
-        max_errors=3,
-        episodic_cache_tag=cache_tag,
+        cache_tag=cache_tag,
     )
-    em2mem_memory.load_episodic_captions(caption_files=_caption_file_map(session_dir))
-    return em2mem_memory
+    episodic_memory.load_captions_from_files(_caption_file_map(session_dir))
+    return SimpleNamespace(episodic_memory=episodic_memory, cleanup=episodic_memory.reset_index)
 
 
 def _sync_granularity_in_tmp(
@@ -449,23 +449,25 @@ def refresh_hipporag_cache(
                 target_tag=tmp_tag,
                 granularities=refresh_granularities,
             )
-            world_memory = _build_em2mem_memory_for_cache(session_dir=session_dir, cache_tag=tmp_tag, model_name=model_name)
-            for granularity in refresh_granularities:
-                info = (before.get("levels") or {}).get(granularity) or {}
-                operation_results.append(
-                    _sync_granularity_in_tmp(
-                        em2mem_memory=em2mem_memory,
-                        session_dir=session_dir,
-                        granularity=granularity,
-                        info=info,
-                        tmp_tag=tmp_tag,
-                        project_root=project_root,
-                    )
-                )
+            em2mem_memory = _build_em2mem_memory_for_cache(session_dir=session_dir, cache_tag=tmp_tag, model_name=model_name)
             try:
-                em2mem_memory.cleanup()
-            except Exception:
-                pass
+                for granularity in refresh_granularities:
+                    info = (before.get("levels") or {}).get(granularity) or {}
+                    operation_results.append(
+                        _sync_granularity_in_tmp(
+                            em2mem_memory=em2mem_memory,
+                            session_dir=session_dir,
+                            granularity=granularity,
+                            info=info,
+                            tmp_tag=tmp_tag,
+                            project_root=project_root,
+                        )
+                    )
+            finally:
+                try:
+                    em2mem_memory.cleanup()
+                except Exception:
+                    pass
         tmp_health = inspect_hipporag_cache_health(session_dir, project_root, cache_tag=tmp_tag)
         unhealthy_tmp = [
             granularity

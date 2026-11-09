@@ -27,6 +27,11 @@ from online_retrieval_scheme import normalize_long_term_retrieval_scheme
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
+_WORKER_CONTEXT = threading.local()
+
+
+def _runtime_name() -> str:
+    return getattr(_WORKER_CONTEXT, "name", "query")
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("openai").setLevel(logging.WARNING)
@@ -104,7 +109,8 @@ def _touch_runtime(
     last_error: str | None = None,
 ) -> None:
     queue_counts = _queue_counts(project_root)
-    worker_runtime_path = project_root / "runtime" / "workers" / "query.json"
+    runtime_name = _runtime_name()
+    worker_runtime_path = project_root / "runtime" / "workers" / f"{runtime_name}.json"
     existing_worker = read_json(worker_runtime_path, default={})
     if not isinstance(existing_worker, dict):
         existing_worker = {}
@@ -126,7 +132,7 @@ def _touch_runtime(
 
     write_worker_runtime(
         project_root,
-        "query",
+        runtime_name,
         status="ready" if state in {"idle", "running"} else state,
         model_name=os.getenv("EM2MEM_QUERY_RESPOND_MODEL") or os.getenv("EM2MEM_RESPOND_MODEL") or os.getenv("OPENAI_MODEL"),
         backend="openai-compatible",
@@ -138,7 +144,7 @@ def _touch_runtime(
         extra=preserved_extra,
     )
 
-    query_runtime_path = project_root / "online_tasks" / "query_runtime.json"
+    query_runtime_path = project_root / "online_tasks" / f"{runtime_name}_runtime.json"
     query_runtime = read_json(query_runtime_path, default={})
     if isinstance(query_runtime, dict):
         query_runtime["status"] = state
@@ -156,6 +162,7 @@ def _touch_runtime(
 
 class _TaskHeartbeat:
     def __init__(self, project_root: Path, task: dict[str, Any], claimed_path: Path, *, state: str = "running") -> None:
+        self.runtime_name = _runtime_name()
         self.project_root = project_root
         self.task = task
         self.claimed_path = claimed_path
@@ -207,6 +214,7 @@ class _TaskHeartbeat:
         )
 
     def _run(self) -> None:
+        _WORKER_CONTEXT.name = self.runtime_name
         while not self._stop.wait(self.interval_seconds):
             try:
                 self._write()
@@ -237,10 +245,11 @@ def _write_runtime(project_root: Path, cache: SessionEngineCache, state: str, ex
     payload["loaded_sessions"] = payload["cache"].get("loaded_sessions", [])
     if extra:
         payload.update(extra)
-    write_json_atomic(project_root / "online_tasks" / "query_runtime.json", payload)
+    runtime_name = _runtime_name()
+    write_json_atomic(project_root / "online_tasks" / f"{runtime_name}_runtime.json", payload)
     write_worker_runtime(
         project_root,
-        "query",
+        runtime_name,
         status="ready" if state in {"idle", "running"} else state,
         model_name=os.getenv("EM2MEM_QUERY_RESPOND_MODEL") or os.getenv("EM2MEM_RESPOND_MODEL") or os.getenv("OPENAI_MODEL"),
         backend="openai-compatible",
@@ -297,6 +306,55 @@ def _classify_upstream_error(error: BaseException | str) -> tuple[str | None, st
     if "timeout" in lowered or "timed out" in lowered or "readtimeout" in lowered or "connecttimeout" in lowered:
         return "upstream_timeout", "Model service timed out. Please retry later."
     return None, message
+
+
+class _TimingOnlyStreamHandler:
+    """No-op stream handler that only enables first-token timing.
+
+    The query engine wires the LLM ``on_chunk`` callback (and therefore records
+    ``latency.stream_model_first_token_ms``) only when it receives a *callable*
+    ``stream_handler``.  Non-SSE (async / polling) clients used to pass ``None``,
+    so TTFT was never measured for them.  Passing this callable in async mode
+    keeps client-facing behaviour identical (no events are written) while
+    enabling the server-side TTFT measurement.
+    """
+
+    def __call__(self, event: dict[str, Any]) -> None:
+        return None
+
+
+class _PollingProgressHandler:
+    """Publish bounded progress separately from the queue file being claimed."""
+
+    def __init__(self, project_root: Path, task_id: str) -> None:
+        self.path = project_root / "online_tasks" / "query_progress" / f"{task_id}.json"
+        self.text = ""
+        self.stage = "retrieving"
+        self.last_write = 0.0
+        self({"type": "progress", "stage": self.stage})
+
+    def __call__(self, event: dict[str, Any]) -> None:
+        previous = self.stage
+        if event.get("type") == "progress":
+            self.stage = event.get("stage", self.stage)
+            if event.get("reset_answer"):
+                self.text = ""
+        elif event.get("type") == "delta":
+            self.stage = "streaming"
+            self.text = (self.text + str(event.get("delta") or event.get("text") or ""))[:16000]
+        elif event.get("type") == "final":
+            self.stage = "finalizing"
+        else:
+            return
+        now = time.monotonic()
+        if self.stage == previous and now - self.last_write < .5:
+            return
+        self.last_write = now
+        write_json_atomic(self.path, {"stage": self.stage, "partial_answer": self.text,
+                                      "updated_at": utc_now_iso()})
+
+    def close(self) -> None:
+        self.path.unlink(missing_ok=True)
 
 
 def _attach_answer_audio_for_task(
@@ -471,8 +529,8 @@ def _process_task(
     top_k = int(task.get("top_k") or 5)
     retrieval_mode = str(task.get("retrieval_mode") or "auto")
     use_image_evidence = task.get("use_image_evidence", "auto")
-    max_image_frames = int(task.get("max_image_frames") or 3)
-    max_image_evidence = int(task.get("max_image_evidence") or 9)
+    max_image_frames = int(task["max_image_frames"] if task.get("max_image_frames") is not None else 3)
+    max_image_evidence = int(task["max_image_evidence"] if task.get("max_image_evidence") is not None else 9)
     text_top_k = task.get("text_top_k")
     visual_top_k = task.get("visual_top_k")
     final_evidence_k = task.get("final_evidence_k")
@@ -494,6 +552,10 @@ def _process_task(
     response_mode = str(task.get("response_mode") or "async").strip().lower()
     is_streaming = response_mode in {"stream", "streaming", "progressive"}
     stream_writer = None
+    # Always hand the engine a callable so it records stream_model_first_token_ms.
+    # Polling clients receive progress snapshots; SSE clients use the writer.
+    engine_stream_handler: Any = _PollingProgressHandler(project_root, task_id)
+    polling_progress = engine_stream_handler
     if is_streaming:
         configured_stream_path = str(task.get("stream_events_path") or "").strip()
         if configured_stream_path:
@@ -507,8 +569,10 @@ def _process_task(
         else:
             stream_path = query_stream_events_path(project_root, task_id)
         stream_writer = QueryStreamEventWriter(stream_path)
+        engine_stream_handler = stream_writer
 
     if not session_id or not question:
+        polling_progress.close()
         finish_query_task(
             project_root=project_root,
             claimed_path=claimed_path,
@@ -547,7 +611,7 @@ def _process_task(
                 debug_router=debug_router,
                 cache_mode=cache_mode,
                 long_term_retrieval_scheme=long_term_retrieval_scheme,
-                stream_handler=stream_writer,
+                stream_handler=engine_stream_handler,
             )
         try:
             from online_query.stream_query_context import load_stream_query_context
@@ -592,7 +656,14 @@ def _process_task(
                 error=error_message or "",
                 task_id=task_id,
                 response_mode="stream" if is_streaming else "async",
-                metadata={"long_term_retrieval_scheme": long_term_retrieval_scheme},
+                metadata={"long_term_retrieval_scheme": long_term_retrieval_scheme,
+                          "generation_status": result.get("generation_status"),
+                          "error_type": result.get("error_type"),
+                          "latency": {"total_ms": (result.get("latency") or {}).get("total_ms")},
+                          "used_memory_sources": result.get("used_memory_sources", []),
+                          "evidence_count": result.get("sent_image_count", 0),
+                          "question_submitted_at": task.get("created_at"),
+                          "original_client_source": client_source},
             )
         except Exception as history_exc:
             print(f"[query_worker] qa_history append failed task={task_id} session={session_id}: {history_exc}", flush=True)
@@ -648,7 +719,54 @@ def _process_task(
             error=readable,
         )
         print(f"[query_worker] task={task_id} failed error_type={error_type}: {exc}", flush=True)
+    finally:
+        polling_progress.close()
     return True
+
+
+def _is_current_lane_task(task_path: Path) -> bool:
+    """Only independent current-only requests may bypass the history queue."""
+    from online_query_constraints import parse_query_constraints
+    try:
+        task = read_json(task_path, default={})
+    except FileNotFoundError:
+        # The other lane may have claimed it since the queue was listed.
+        return False
+    if not isinstance(task, dict) or task.get("task_type", "query") != "query":
+        return False
+    if any(_coerce_optional_bool(task.get(key)) is True for key in ("use_short_term", "use_long_term")):
+        return False
+    if _coerce_optional_bool(task.get("use_current")) is False:
+        return False
+    if str(task.get("retrieval_mode") or "").lower() == "current" or str(task.get("memory_mode") or "").lower() == "current":
+        return True
+    if _coerce_optional_bool(task.get("use_current")) is True and all(_coerce_optional_bool(task.get(key)) is False for key in ("use_short_term", "use_long_term")):
+        return True
+    constraints = parse_query_constraints(str(task.get("question") or ""))
+    if constraints.get("scope") != "current" or constraints.get("summary") or constraints.get("time_explicit"):
+        return False
+    from online_query.memory_router import MemoryRouter
+    decision = MemoryRouter().route(str(task.get("question") or ""), {}, {"current_ready": True, "current_stale": False, "short_term_ready": True, "long_term_ready": True})
+    route = decision["memory_route"]
+    return decision["query_type"] == "current_perception" and not route.get("use_short_term") and not route.get("use_long_term")
+
+
+def _run_current_lane(project_root: Path, sessions_root: Path, stop_event: threading.Event, poll_interval: float) -> None:
+    _WORKER_CONTEXT.name = "query_current"
+    cache = SessionEngineCache(max_sessions=1)
+    try:
+        while not stop_event.is_set():
+            for task_path in list_queued_query_tasks(project_root):
+                if stop_event.is_set():
+                    break
+                if _is_current_lane_task(task_path):
+                    _process_task(project_root, sessions_root, cache, task_path)
+            stop_event.wait(max(0.05, min(0.5, poll_interval)))
+    except Exception as exc:
+        print(f"[query_worker] current lane stopped unexpectedly: {exc}", flush=True)
+    finally:
+        cache.clear()
+        _write_runtime(project_root, cache, "stopped")
 
 
 def run_worker(args: argparse.Namespace) -> None:
@@ -656,14 +774,23 @@ def run_worker(args: argparse.Namespace) -> None:
     sessions_root = (project_root / args.sessions_root).resolve() if not Path(args.sessions_root).is_absolute() else Path(args.sessions_root)
     cache = SessionEngineCache(max_sessions=args.cache_max_sessions, ttl_seconds=args.ttl_seconds)
     stop = False
+    current_stop = threading.Event()
+    current_thread = None
 
     def _handle_stop(signum: int, frame: object) -> None:
         nonlocal stop
         del signum, frame
         stop = True
+        current_stop.set()
 
     signal.signal(signal.SIGTERM, _handle_stop)
     signal.signal(signal.SIGINT, _handle_stop)
+
+    if not args.once and getattr(args, "current_lane", True) and _env_bool("EM2MEM_QUERY_CURRENT_FAST_PATH", True):
+        # Start before index/model preloads so even the first history engine
+        # initialization cannot hold up independent current-only requests.
+        current_thread = threading.Thread(target=_run_current_lane, args=(project_root, sessions_root, current_stop, args.poll_interval), name="query-current-lane", daemon=True)
+        current_thread.start()
 
     print("[query_worker] starting", flush=True)
     print(f"[query_worker] project_root={project_root}", flush=True)
@@ -698,16 +825,9 @@ def run_worker(args: argparse.Namespace) -> None:
 
     while not stop:
         processed = False
-        reload_results = cache.reload_changed(
-            lambda sid, scheme: load_query_engine(
-                sid,
-                sessions_root=sessions_root,
-                long_term_retrieval_scheme=scheme,
-            )
-        )
-        if reload_results:
-            _write_runtime(project_root, cache, "running", {"reload_results": reload_results[-20:]})
         for task_path in list_queued_query_tasks(project_root):
+            if current_thread is not None and current_thread.is_alive() and _is_current_lane_task(task_path):
+                continue
             processed = _process_task(project_root, sessions_root, cache, task_path) or processed
             _write_runtime(project_root, cache, "running", {"last_task_path": str(task_path)})
             if args.once:
@@ -716,9 +836,21 @@ def run_worker(args: argparse.Namespace) -> None:
         if args.once:
             break
         if not processed:
+            # Claim queued work first. A full background engine rebuild used to
+            # delay even current-only questions before they could be claimed.
+            reload_results = cache.reload_changed(
+                lambda sid, scheme: load_query_engine(sid, sessions_root=sessions_root, long_term_retrieval_scheme=scheme)
+            )
+            if reload_results:
+                _write_runtime(project_root, cache, "running", {"reload_results": reload_results[-20:]})
             _write_runtime(project_root, cache, "idle")
             time.sleep(args.poll_interval)
 
+    current_stop.set()
+    if current_thread is not None:
+        # Finish a claimed current request just as the history lane finishes
+        # its current task; do not abandon it after a fixed five-second grace.
+        current_thread.join()
     cache.clear()
     _write_runtime(project_root, cache, "stopped")
     print("[query_worker] stopped", flush=True)
@@ -735,6 +867,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--preload-sessions", default=os.getenv("EM2MEM_PRELOAD_QUERY_SESSIONS", ""))
     parser.add_argument("--preload-recent-memory-ready", type=int, default=int(os.getenv("EM2MEM_PRELOAD_RECENT_MEMORY_READY", "0")))
     parser.add_argument("--once", action="store_true", help="Process queued tasks once and exit.")
+    parser.add_argument("--current-lane", action=argparse.BooleanOptionalAction, default=_env_bool("EM2MEM_QUERY_CURRENT_LANE", True), help="Serve independent current-only requests alongside history/index tasks.")
     return parser.parse_args()
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import json
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
@@ -65,16 +66,22 @@ def is_auto_refine_eligible(
         return True
     if status != "refine_failed":
         return False
+    refine = event.get("refine") if isinstance(event.get("refine"), dict) else {}
+    error = str(refine.get("last_refine_error") or "").lower()
+    if re.search(r"authentication|permissiondenied|invalid api.key|\b401\b|\b403\b", error):
+        return False
     max_attempts = _env_int("EM2MEM_MST_REFINE_MAX_ATTEMPTS", 3) if max_attempts is None else int(max_attempts)
     if max_attempts >= 0 and refine_attempts(event) >= max_attempts:
         return False
+    transient = bool(re.search(r"connection|timeout|timed out|ratelimit|rate.limit|\b429\b|\b50[234]\b|empty.*response", error))
+    default_backoff = min(120.0, 15.0 * 2 ** max(0, min(3, refine_attempts(event)-1))) if transient else 300.0
     retry_backoff_seconds = (
-        _env_float("EM2MEM_MST_REFINE_RETRY_BACKOFF_SECONDS", 300.0)
+        _env_float("EM2MEM_MST_REFINE_RETRY_BACKOFF_SECONDS", default_backoff)
         if retry_backoff_seconds is None
         else float(retry_backoff_seconds)
     )
     refine = event.get("refine") if isinstance(event.get("refine"), dict) else {}
-    last_refine_at = _parse_timestamp(refine.get("last_refine_at"))
+    last_refine_at = _parse_timestamp(refine.get("last_refine_failed_at") or refine.get("last_refine_at"))
     if last_refine_at is None or retry_backoff_seconds <= 0:
         return True
     now = now or datetime.now(timezone.utc)
@@ -123,6 +130,7 @@ _REFINE_RESULT_FIELDS = {
     "visual_objects",
     "main_actions",
     "state_changes",
+    "visual_observations",
     "entities",
     "confidence",
     "caption_source",

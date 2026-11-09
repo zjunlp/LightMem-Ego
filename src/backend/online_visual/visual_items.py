@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from online_preprocess.io_utils import ensure_dir, read_json
+from online_time import frame_capture_seconds
 
 
 def _safe_id(value: str) -> str:
@@ -74,7 +75,7 @@ def build_visual_items(session_dir: Path, limit_items: int | None = None, eviden
                 "evidence_doc_id": evidence_doc_id,
                 "start_time": doc.get("start_time"),
                 "end_time": doc.get("end_time"),
-                "timestamp": frame_meta.get("timestamp", doc.get("start_time")),
+                "timestamp": frame_capture_seconds(keyframe_path, frame_meta),
                 "image_path": keyframe_path,
                 "keyframe_caption": str(frame_meta.get("caption") or ""),
                 "segment_caption": str(doc.get("fine_caption") or doc.get("caption") or ""),

@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from online_pipeline.runtime_state import collect_pipeline_runtime
+from online_pipeline.runtime_state import WORKER_NAMES, collect_pipeline_runtime
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -45,9 +45,9 @@ def _print_table(runtime: dict[str, Any], *, show_timeline: bool = False) -> Non
     )
     print("")
     print("Workers")
-    print("worker          inst  role             status        pid  age    warmup  model/client                         queue  last_error")
+    print("worker          inst  role             status        pid  age    warmup  filter          model/client                         queue  last_error")
     workers = runtime.get("workers") or {}
-    for name in ("stream", "live_ingest", "preprocess", "evidence", "refine", "consolidation", "visual", "memory", "query"):
+    for name in WORKER_NAMES:
         item = workers.get(name) or {}
         model = item.get("model_name") or item.get("backend") or "-"
         loaded = item.get("model_loaded") or item.get("client_loaded")
@@ -56,6 +56,7 @@ def _print_table(runtime: dict[str, Any], *, show_timeline: bool = False) -> Non
             f"{str(bool(item.get('pid_alive'))):<4} "
             f"{_age(item.get('heartbeat_age_seconds')):<6} "
             f"{str(bool(item.get('warmup_done'))):<7} "
+            f"{_short(item.get('task_filter')):<15} "
             f"{_short(model)[:36]:<36} "
             f"{int(item.get('queue_pending') or 0):<6} "
             f"{_short(item.get('last_error'))[:80]}"

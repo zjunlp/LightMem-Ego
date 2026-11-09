@@ -164,7 +164,6 @@ def warm_query_session(
                             sid,
                             sessions_root=sessions_root,
                             long_term_retrieval_scheme=long_term_retrieval_scheme,
-                            fast_load=_env_bool("EM2MEM_QUERY_FAST_LOAD", False),
                         ),
                     )
                     del engine

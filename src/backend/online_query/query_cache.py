@@ -5,6 +5,7 @@ import threading
 import time
 import gc
 from collections import OrderedDict
+from contextlib import contextmanager
 from typing import Callable
 
 from .query_engine import LoadedQueryEngine
@@ -18,6 +19,36 @@ class SessionEngineCache:
         self._items: OrderedDict[str, LoadedQueryEngine] = OrderedDict()
         self._lock = threading.RLock()
         self._load_locks: dict[str, threading.Lock] = {}
+        self._users: dict[int, int] = {}
+        self._retired: dict[int, LoadedQueryEngine] = {}
+
+    def _retire_locked(self, engine: LoadedQueryEngine) -> None:
+        if self._users.get(id(engine), 0):
+            self._retired[id(engine)] = engine
+        else:
+            self._close_engine(engine)
+
+    def release(self, engine: LoadedQueryEngine) -> None:
+        """Release a query lease; a retired generation closes after its last user."""
+        with self._lock:
+            users = self._users.get(id(engine), 0)
+            if users <= 0:
+                raise RuntimeError("query engine lease was not acquired")
+            if users > 1:
+                self._users[id(engine)] = users - 1
+            else:
+                self._users.pop(id(engine), None)
+                retired = self._retired.pop(id(engine), None)
+                if retired is not None:
+                    self._close_engine(retired)
+
+    @contextmanager
+    def borrow(self, session_id, loader, long_term_retrieval_scheme=None):
+        result = self.get_or_load(session_id, loader, long_term_retrieval_scheme, acquire=True)
+        try:
+            yield result
+        finally:
+            self.release(result[0])
 
     def _load_lock(self, cache_key: str) -> threading.Lock:
         with self._lock:
@@ -52,13 +83,13 @@ class SessionEngineCache:
         ]
         for session_id in expired:
             engine = self._items.pop(session_id)
-            self._close_engine(engine)
+            self._retire_locked(engine)
             print(f"[query_cache] evicted expired session={session_id}", flush=True)
 
     def _evict_lru_locked(self) -> None:
         while len(self._items) > self.max_sessions:
             session_id, engine = self._items.popitem(last=False)
-            self._close_engine(engine)
+            self._retire_locked(engine)
             print(f"[query_cache] evicted lru session={session_id}", flush=True)
 
     def get_or_load(
@@ -66,6 +97,7 @@ class SessionEngineCache:
         session_id: str,
         loader: Callable[[str], LoadedQueryEngine],
         long_term_retrieval_scheme: str | None = None,
+        *, acquire: bool = False,
     ) -> tuple[LoadedQueryEngine, bool, int]:
         scheme = normalize_long_term_retrieval_scheme(long_term_retrieval_scheme)
         cache_key = retrieval_scheme_cache_key(session_id, scheme)
@@ -78,8 +110,8 @@ class SessionEngineCache:
                 engine = self._items.get(cache_key)
                 if engine is not None:
                     if engine.needs_reload():
-                        old_engine = self._items.pop(cache_key)
-                        self._close_engine(old_engine)
+                        # Keep the working engine installed until the new
+                        # immutable snapshot has loaded successfully.
                         print(
                             f"[query_cache] reloading session={session_id} scheme={scheme} because memory_config changed",
                             flush=True,
@@ -88,6 +120,8 @@ class SessionEngineCache:
                     else:
                         engine.touch()
                         self._items.move_to_end(cache_key)
+                        if acquire:
+                            self._users[id(engine)] = self._users.get(id(engine), 0) + 1
                         return engine, True, 0
 
             start = time.perf_counter()
@@ -97,9 +131,11 @@ class SessionEngineCache:
             with self._lock:
                 old_engine = self._items.pop(cache_key, None)
                 if old_engine is not None and old_engine is not engine:
-                    self._close_engine(old_engine)
+                    self._retire_locked(old_engine)
                 self._items[cache_key] = engine
                 self._items.move_to_end(cache_key)
+                if acquire:
+                    self._users[id(engine)] = self._users.get(id(engine), 0) + 1
                 self._evict_expired_locked()
                 self._evict_lru_locked()
             return engine, False, engine_load_ms
@@ -110,26 +146,20 @@ class SessionEngineCache:
     ) -> list[dict]:
         results = []
         with self._lock:
-            cache_keys = list(self._items.keys())
-        for cache_key in cache_keys:
+            cached = list(self._items.items())
+        for cache_key, _ in cached:
             with self._lock:
                 engine = self._items.get(cache_key)
                 if engine is None or not engine.needs_reload():
                     continue
-                old_engine = self._items.pop(cache_key, None)
-            if old_engine is not None:
-                self._close_engine(old_engine)
-            start = time.perf_counter()
+            session_id = getattr(engine, "session_id", cache_key)
+            scheme = normalize_long_term_retrieval_scheme(getattr(engine, "long_term_retrieval_scheme", None))
             try:
-                session_id = getattr(old_engine, "session_id", cache_key)
-                scheme = normalize_long_term_retrieval_scheme(
-                    getattr(old_engine, "long_term_retrieval_scheme", None)
+                # Share the per-session load lock with foreground queries and
+                # warmup. Keep the previous engine usable if loading fails.
+                new_engine, _cache_hit, engine_load_ms = self.get_or_load(
+                    session_id, lambda sid: loader(sid, scheme), scheme
                 )
-                new_engine = loader(session_id, scheme)
-                engine_load_ms = int(round((time.perf_counter() - start) * 1000))
-                with self._lock:
-                    self._items[cache_key] = new_engine
-                    self._items.move_to_end(cache_key)
                 results.append(
                     {
                         "session_id": session_id,
@@ -141,14 +171,10 @@ class SessionEngineCache:
                     }
                 )
             except Exception as exc:
-                if old_engine is not None:
-                    with self._lock:
-                        self._items[cache_key] = old_engine
-                        self._items.move_to_end(cache_key)
                 results.append(
                     {
-                        "session_id": getattr(old_engine, "session_id", cache_key),
-                        "long_term_retrieval_scheme": getattr(old_engine, "long_term_retrieval_scheme", None),
+                        "session_id": session_id,
+                        "long_term_retrieval_scheme": scheme,
                         "status": "reload_failed",
                         "error": str(exc),
                     }
@@ -173,8 +199,8 @@ class SessionEngineCache:
                     engine = self._items.pop(cache_key, None)
                     if engine is not None:
                         engines.append(engine)
-        for engine in engines:
-            self._close_engine(engine)
+            for engine in engines:
+                self._retire_locked(engine)
         return bool(engines)
 
     def install(self, engine: LoadedQueryEngine) -> None:
@@ -182,7 +208,7 @@ class SessionEngineCache:
 
         Memory editing preloads a candidate runtime before publishing it.  The
         regular query path may still be using an older instance, so replacement
-        happens under the cache lock and the old instance is closed afterwards.
+        happens under the cache lock; the old instance closes after its last user.
         """
         session_id = getattr(engine, "session_id", None)
         if not session_id:
@@ -196,15 +222,15 @@ class SessionEngineCache:
             self._items.move_to_end(cache_key)
             self._evict_expired_locked()
             self._evict_lru_locked()
-        if old is not None and old is not engine:
-            self._close_engine(old)
+            if old is not None and old is not engine:
+                self._retire_locked(old)
 
     def clear(self) -> None:
         with self._lock:
             engines = list(self._items.values())
             self._items.clear()
-        for engine in engines:
-            self._close_engine(engine)
+            for engine in engines:
+                self._retire_locked(engine)
 
     def runtime_info(self) -> dict:
         with self._lock:

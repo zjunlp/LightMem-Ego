@@ -145,6 +145,7 @@ class FrameDiffEventDetector:
     def _compute_frame_diffs(self, frames: list[CandidateFrame]) -> None:
         prev_img = None
         prev_hash = None
+        prev_timestamp = None
         for frame in frames:
             img = cv2.imread(str(self.session_dir / frame.path))
             if img is None:
@@ -163,6 +164,7 @@ class FrameDiffEventDetector:
                 frame.diff_score = round(0.6 * hist_diff + 0.4 * phash_diff, 4)
             prev_img = img
             prev_hash = current_hash
+            prev_timestamp = frame.timestamp
 
     def _compute_stream_frame_diffs(self, frames: list[CandidateFrame], previous_state: dict[str, Any]) -> list[dict[str, Any]]:
         diff_records: list[dict[str, Any]] = []

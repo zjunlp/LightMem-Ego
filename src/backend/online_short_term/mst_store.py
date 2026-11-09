@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from online_preprocess.io_utils import read_json, utc_now_iso, write_json_atomic
+from online_short_term.time_windows import event_windows
 from online_short_term.schemas import (
     DEFAULT_SESSIONS_ROOT,
     build_retrieval_text,
@@ -151,6 +152,9 @@ class MSTStore:
             _write_jsonl(self.events_path, events)
             self._write_index(events)
             self._write_state(events)
+        # Only enqueue here; embedding never holds the store mutation lock.
+        from .semantic_index import schedule_semantic_index
+        schedule_semantic_index(self.session_dir, events)
 
     def save_archive_events(self, events: list[dict[str, Any]], bump_version: bool = True) -> None:
         with self.mutation_lock():
@@ -256,10 +260,11 @@ class MSTStore:
                 if bool(updated.get("merged_to_long_term")):
                     updated["needs_reconsolidation"] = True
                     updated["dirty_reason"] = "transcript_backfill"
-                    window = self._transcript_dirty_window_for_event(updated)
-                    updated["dirty_window_id"] = window["window_id"]
-                    updated["dirty_time_range"] = [window["start_time"], window["end_time"]]
-                    recon_windows.append(window)
+                    windows = event_windows(updated)
+                    updated["dirty_window_id"] = windows[0]["window_id"]
+                    updated["dirty_window_ids"] = [window["window_id"] for window in windows]
+                    updated["dirty_time_range"] = [windows[0]["start_time"], windows[-1]["end_time"]]
+                    recon_windows.extend(windows)
                 updated["retrieval_text"] = build_retrieval_text(updated)
                 updated_events.append(updated)
 
@@ -365,16 +370,6 @@ class MSTStore:
         for item in incoming:
             by_key[key(item)] = {**by_key.get(key(item), {}), **dict(item)}
         return sorted(by_key.values(), key=lambda item: (float(item.get("start", 0.0) or 0.0), float(item.get("end", 0.0) or 0.0), str(item.get("segment_id") or "")))
-
-    def _transcript_dirty_window_for_event(self, event: dict[str, Any]) -> dict[str, Any]:
-        start = float(event.get("start_time", 0.0) or 0.0)
-        window_start = int(start // 30.0) * 30.0
-        window_end = window_start + 30.0
-        return {
-            "window_id": f"win_{int(window_start):06d}_{int(window_end):06d}",
-            "start_time": round(window_start, 3),
-            "end_time": round(window_end, 3),
-        }
 
     def _dedupe_windows(self, windows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         by_id = {str(window.get("window_id")): dict(window) for window in windows if window.get("window_id")}

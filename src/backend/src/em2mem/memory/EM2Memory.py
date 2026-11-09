@@ -232,10 +232,6 @@ class EM2Memory:
     # -----------------------------------------------------
 
     def index(self, until_time: int) -> None:
-        if self.indexed_time >= until_time:
-            logger.debug(f"Already indexed up to {self.indexed_time}, skipping")
-            return
-
         logger.info(f"Indexing all memories up to {transform_timestamp(str(until_time))}")
 
         if hasattr(self.episodic_memory, "build_dense_index"):
@@ -253,16 +249,17 @@ class EM2Memory:
 
     def _tokenize(self, text: str) -> Set[str]:
         toks = re.findall(r"[a-zA-Z0-9_/-]+", str(text).lower())
-        return {t for t in toks if len(t) > 1 and t not in STOPWORDS}
+        tokens = {t for t in toks if len(t) > 1 and t not in STOPWORDS}
+        for run in re.findall(r"[\u3400-\u9fff]+", str(text)):
+            tokens.update(run[i:i + 2] for i in range(max(1, len(run) - 1)))
+        return tokens
 
     def _normalize_dict(self, score_map: Dict[str, float]) -> Dict[str, float]:
         if not score_map:
             return {}
-        values = list(score_map.values())
-        mn, mx = min(values), max(values)
-        if abs(mx - mn) < 1e-8:
-            return {k: 1.0 for k in score_map}
-        return {k: (v - mn) / (mx - mn) for k, v in score_map.items()}
+        # A missing/zero signal remains zero, including singleton pools.
+        # Use an absolute, pool-independent mapping for accumulated scores.
+        return {k: max(0.0, float(v)) / (1.0 + max(0.0, float(v))) for k, v in score_map.items()}
 
     def _episodic_weight_for_granularity(self, granularity: str) -> float:
         if granularity == "30sec":
@@ -306,15 +303,6 @@ class EM2Memory:
         for line in entry.metadata.get("critical_speech_lines", []) or []:
             toks.update(self._tokenize(str(line)))
 
-        parent = None
-        if hasattr(self.episodic_memory, "get_parent_caption"):
-            parent = self.episodic_memory.get_parent_caption(doc_id, "3min")
-        if parent is not None:
-            toks.update(self._tokenize(parent.text))
-            toks.update(self._tokenize(parent.visual_summary))
-            for line in parent.metadata.get("critical_speech_lines", []) or []:
-                toks.update(self._tokenize(str(line)))
-
         for tri in self.episodic_memory.get_triplets_by_doc_id(doc_id, "30sec")[:8]:
             if isinstance(tri, list) and len(tri) == 3:
                 toks.update(self._tokenize(" ".join(map(str, tri))))
@@ -333,7 +321,10 @@ class EM2Memory:
     def _project_episodic_candidates_to_30s(
         self,
         candidates: List[Tuple[CaptionEntryRAG, float]],
+        query: str = "",
     ) -> Dict[str, float]:
+        if query:
+            return self.episodic_memory._project_ranked_candidates_to_30s(query, candidates)
         projected = defaultdict(float)
         if not candidates:
             return projected
@@ -602,6 +593,20 @@ class EM2Memory:
         semantic_norm: Dict[str, float],
         semantic_support_map: Dict[str, List[SemanticTripleEntry]],
     ) -> List[Dict[str, Any]]:
+        from online_query_constraints import resolve_query_constraints, constraint_windows, reserve_time_coverage
+        from online_evidence_coverage import select_coverage
+        constraints = resolve_query_constraints(query, query_constraints=getattr(
+            getattr(self.episodic_memory, "_thread_local", None), "query_constraints", None))
+        overview = constraints.get("summary")
+        if overview:
+            # Overview coverage must consider the already indexed prefix, not
+            # just the dense top-k. Never inspect later loaded captions.
+            prefix = self.episodic_memory._get_thread_prefix_size("30sec") if hasattr(self.episodic_memory, "_get_thread_prefix_size") else 0
+            available = getattr(self.episodic_memory, "captions", {}).get("30sec", [])[:prefix]
+            episodic_norm = dict(episodic_norm)
+            for entry in available:
+                if self.episodic_memory._matches_requested_time(entry):
+                    episodic_norm.setdefault(entry.doc_id, 0.0)
         role_scores = self._compute_event_role_scores(
             query=query,
             episodic_norm=episodic_norm,
@@ -617,8 +622,41 @@ class EM2Memory:
         broader_sorted = [doc_id for doc_id, _ in sorted(role_scores.items(), key=lambda x: -x[1]["broader"])[: self.selector_broader_top_n]]
 
         ordered_doc_ids: List[str] = []
+        windows = constraint_windows(constraints)
+        # Window representatives enter the selector pool before role/global
+        # truncation. Projected coarse events may otherwise hide a late side.
+        if len(windows) > 1:
+            pool = []
+            for doc_id in sorted(episodic_norm, key=lambda d: -episodic_norm[d]):
+                entry = self.episodic_memory.get_caption_by_doc_id(doc_id, "30sec")
+                if entry is not None and self.episodic_memory._matches_requested_time(entry):
+                    pool.append({"doc_id": doc_id, "start_time": entry.start_time, "end_time": entry.end_time})
+            ordered_doc_ids.extend(item["doc_id"] for item in reserve_time_coverage(pool, windows, min(len(windows), self.selector_max_candidates)))
+        if overview:
+            # Coverage may add candidates, but it must not consume the slots
+            # needed by the strongest retrieval results. State labels are only
+            # approximate and are often missing from otherwise good narratives.
+            primary = sorted(episodic_norm, key=lambda doc: -episodic_norm[doc])
+            primary_count = min(getattr(self, "episodic_top_k", self.selector_global_top_n), self.selector_max_candidates)
+            primary_additions = [doc for doc in primary[:primary_count] if doc not in ordered_doc_ids]
+            ordered_doc_ids.extend(primary_additions[:max(0, self.selector_max_candidates - len(ordered_doc_ids))])
+            timeline = []
+            for doc_id in episodic_norm:
+                entry = self.episodic_memory.get_caption_by_doc_id(doc_id, "30sec")
+                if entry is not None:
+                    timeline.append({"doc_id": doc_id, "start_time": transform_timestamp(str(entry.timestamp_int[0])),
+                                     "caption": entry.text, "visual_summary": entry.visual_summary,
+                                     "metadata": entry.metadata, "score": episodic_norm[doc_id]})
+            remaining = self.selector_max_candidates - len(ordered_doc_ids)
+            # Rank the coverage alternatives before removing duplicates, so a
+            # primary event does not use the remaining allowance twice.
+            coverage = select_coverage(query, timeline, min(len(timeline), max(2, remaining + len(ordered_doc_ids))))
+            alternatives = [item["doc_id"] for item in coverage if item["doc_id"] not in ordered_doc_ids]
+            ordered_doc_ids.extend(alternatives[:max(0, remaining)])
         for group in [global_sorted, trigger_sorted, antecedent_sorted, broader_sorted]:
             for doc_id in group:
+                if len(ordered_doc_ids) >= self.selector_max_candidates:
+                    break
                 if doc_id not in ordered_doc_ids:
                     ordered_doc_ids.append(doc_id)
                 if len(ordered_doc_ids) >= self.selector_max_candidates:
@@ -637,7 +675,7 @@ class EM2Memory:
         candidates: List[Dict[str, Any]] = []
         for idx, doc_id in enumerate(ordered_doc_ids, start=1):
             entry = self.episodic_memory.get_caption_by_doc_id(doc_id, "30sec")
-            if entry is None:
+            if entry is None or not self.episodic_memory._matches_requested_time(entry):
                 continue
             parent = None
             if hasattr(self.episodic_memory, "get_parent_caption"):
@@ -657,6 +695,7 @@ class EM2Memory:
                 "end_time": transform_timestamp(str(entry.timestamp_int[1])),
                 "caption": entry.text,
                 "visual_summary": entry.visual_summary,
+                "metadata": entry.metadata,
                 "critical_speech_lines": list(entry.metadata.get("critical_speech_lines", []) or [])[:4],
                 "episodic_score": round(float(episodic_norm.get(doc_id, 0.0)), 4),
                 "semantic_score": round(float(semantic_norm.get(doc_id, 0.0)), 4),
@@ -774,6 +813,23 @@ class EM2Memory:
             pass
         return meta
 
+    @staticmethod
+    def _retain_retrieval_alternative(selected, candidates, limit):
+        """Retain one independently ranked alternative to a single LLM choice.
+
+        This pool already passed session, cutoff and requested-time checks.
+        Scores and the selected order are preserved; there is no extra model call.
+        """
+        selected = list(selected)[:max(0,limit)]
+        if len(selected) != 1 or limit < 2:
+            return selected, None
+        alternatives = [candidate for candidate in candidates if candidate.get("doc_id") not in selected
+                        and float(candidate.get("episodic_score") or 0) > 0]
+        if not alternatives:
+            return selected, None
+        alternative = max(alternatives, key=lambda item: float(item.get("episodic_score") or 0))["doc_id"]
+        return selected + [alternative], alternative
+
     def _select_top_events_with_llm(
         self,
         query: str,
@@ -784,6 +840,13 @@ class EM2Memory:
     ) -> Tuple[List[str], str]:
         if not selector_candidates:
             return [], ""
+        if os.getenv("EM2MEM_LLM_EVENT_SELECTOR_ENABLED", "1").strip().lower() in {"0", "false", "no", "off"}:
+            # Keep the existing retrieval scores and event budget when the
+            # optional API reranker is disabled (e.g. during a live demo).
+            ranked = sorted(selector_candidates, key=lambda candidate: -float(candidate.get("episodic_score") or 0))
+            return [candidate["doc_id"] for candidate in ranked[:max(0, final_top_k)]], (
+                "LLM event selector disabled; using existing episodic retrieval score ranking."
+            )
         if len(selector_candidates) <= final_top_k:
             return [c["doc_id"] for c in selector_candidates], "Selector shortcut: number of candidates <= final_top_k."
 
@@ -835,6 +898,10 @@ class EM2Memory:
                     "For source questions require an earlier location or transfer; for plans require an explicit "
                     "commitment; for habits prefer repeated evidence; never infer these from presence alone. "
                     "Avoid near-duplicate events. Parent contexts are shared by the parent id in each candidate."
+                    " For comparisons, include direct evidence for EACH compared action, even when they occur in different periods. "
+                    "If an action recurs both before and after the other action, preserve evidence for both phases; do not silently select only one. "
+                    "For whole-video summaries include the beginning, major state changes, and the latest available period. "
+                    "A cluster of recent repetitive events is not a complete timeline."
                 ),
             },
             {
@@ -1204,7 +1271,11 @@ class EM2Memory:
         stream_handler: Any = None,
         prompt_context: Optional[str] = None,
         generate_answer: bool = True,
+        query_constraints: Optional[Dict[str, Any]] = None,
     ) -> QAResult:
+        from online_query_constraints import resolve_query_constraints
+        query_constraints = resolve_query_constraints(query, query_constraints=query_constraints)
+        self.episodic_memory.set_query_constraints(query_constraints)
         if answer_mode not in {"auto", "open_ended", "multiple_choice"}:
             raise ValueError(f"Unsupported answer_mode: {answer_mode}")
 
@@ -1215,7 +1286,7 @@ class EM2Memory:
             logger.warning("multiple_choice answer_mode requested without choices; falling back to open_ended")
             effective_answer_mode = "open_ended"
 
-        if until_time and until_time > self.indexed_time:
+        if until_time is not None:
             self.index(until_time)
 
         query_for_prompt = query
@@ -1228,6 +1299,7 @@ class EM2Memory:
             until_time=until_time,
         )
 
+        retrieval_start = time.perf_counter()
         episodic_ranked = self.episodic_memory.retrieve_ranked(
             query=query,
             top_k_per_granularity={
@@ -1279,9 +1351,11 @@ class EM2Memory:
                 ],
             )
 
-        episodic_projected = self._project_episodic_candidates_to_30s(episodic_ranked)
+        episodic_projected = self._project_episodic_candidates_to_30s(episodic_ranked, query=query)
         semantic_projected, semantic_support_map = self._project_semantic_to_30s(semantic_entries)
 
+        episodic_projected = {doc_id: score for doc_id, score in episodic_projected.items()
+                              if self.episodic_memory._matches_requested_time(self.episodic_memory.get_caption_by_doc_id(doc_id, "30sec"))}
         candidate_doc_ids = set(episodic_projected.keys())
         if not candidate_doc_ids:
             logger.warning("No candidate events found from episodic retrieval")
@@ -1298,6 +1372,10 @@ class EM2Memory:
                     round_history=[],
                     num_rounds=1,
                     answer_mode=effective_answer_mode,
+                    timing_ms={
+                        "retrieval_ms": int(round((time.perf_counter() - retrieval_start) * 1000)),
+                        "selector_ms": 0, "pack_ms": 0, "generation_ms": 0,
+                    },
                 )
 
         episodic_norm = self._normalize_dict(
@@ -1324,7 +1402,6 @@ class EM2Memory:
             ],
         )
 
-        retrieval_start = time.perf_counter()
         selector_candidates = self._build_event_selector_candidates(
             query=query,
             episodic_norm=episodic_norm,
@@ -1367,7 +1444,8 @@ class EM2Memory:
                 "Coarse episodic ranking was used instead."
             )
         else:
-            # Keep selector output only. Do NOT globally pad from coarse ranking.
+            # A single LLM choice is not proof that all other retrieved events
+            # are irrelevant. Keep one bounded alternative from the same pool.
             top_doc_ids = []
             for doc_id in selected_doc_ids:
                 if doc_id not in top_doc_ids:
@@ -1375,11 +1453,23 @@ class EM2Memory:
 
             top_doc_ids = top_doc_ids[: max(self.episodic_top_k, 1)]
 
+            top_doc_ids, alternative = self._retain_retrieval_alternative(
+                top_doc_ids, selector_candidates, max(self.episodic_top_k, 1))
+            if alternative:
+                selector_reason += f" Recall alternative from coarse retrieval: {alternative}; unverified candidate."
+
             logger.info(
-                "Selector returned %d valid doc_ids; keeping selector-only events without global padding: %s",
+                "Keeping %d event anchors including bounded recall alternative if needed: %s",
                 len(top_doc_ids),
                 top_doc_ids,
             )
+
+        from online_query_constraints import constraint_windows, reserve_time_coverage
+        windows = constraint_windows(query_constraints)
+        if len(windows) > 1:
+            selected_pool = sorted(selector_candidates, key=lambda item: (item["doc_id"] not in top_doc_ids, -item.get("episodic_score", 0)))
+            top_doc_ids = [item["doc_id"] for item in reserve_time_coverage(selected_pool, windows, max(self.episodic_top_k, 1))]
+            selector_reason += " Explicit time-window representatives reserved after selection."
 
         logger.info("Selector reason summary: %s", selector_reason)
 
@@ -1590,6 +1680,15 @@ class EM2Memory:
             answer_mode=effective_answer_mode,
             qa_template_name=qa_template_name,
             selected_doc_ids=top_doc_ids,
+            # A later targeted observation pass may recover a candidate that
+            # the selector omitted. Preserve its original projected score,
+            # rather than replacing it with an unrelated rule-match score.
+            event_scores={doc_id: {"raw_score": float(episodic_projected.get(doc_id, 0.0)),
+                                   "score": float(anchor_scores.get(doc_id, 0.0)),
+                                   "semantic_score": float(semantic_norm.get(doc_id, 0.0)),
+                                   "score_policy": "absolute_projected_score_s_over_1_plus_s",
+                                   "score_provenance": "episodic_projection"}
+                          for doc_id in candidate_doc_ids},
             selector_reason=selector_reason,
             semantic_fact_ids=semantic_fact_ids,
             visual_event_image_counts=visual_event_image_counts,

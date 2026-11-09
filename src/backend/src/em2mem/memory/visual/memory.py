@@ -1201,6 +1201,7 @@ from dataclasses import dataclass, field
 from PIL import Image
 
 from ...embedding import EmbeddingModel
+from ..query_index import query_index_property
 
 logger = logging.getLogger(__name__)
 
@@ -1306,6 +1307,11 @@ class VisualMemory:
     but it is no longer required for the main pipeline.
     """
 
+    indexed_entries = query_index_property("indexed_entries", list)
+    indexed_time = query_index_property("indexed_time", int)
+    embeddings = query_index_property("embeddings", lambda: None)
+    index_to_pos = query_index_property("index_to_pos", dict)
+
     def __init__(self, embedding_model: Optional[EmbeddingModel] = None):
         self.embedding_model = embedding_model
         self.base_dir: Optional[str] = None
@@ -1345,6 +1351,10 @@ class VisualMemory:
         with open(embeddings_path, 'rb') as f:
             self.video_path_to_embedding = pickle.load(f)
 
+        for entry in self.clips:
+            entry.embedding = self.video_path_to_embedding.get(entry.video_path)
+        self._query_data_generation = getattr(self, "_query_data_generation", 0) + 1
+
         logger.info(f"Loaded {len(self.video_path_to_embedding)} video embeddings from {embeddings_path}")
 
     def load_clips_from_file(self, clips_path: str) -> None:
@@ -1362,6 +1372,7 @@ class VisualMemory:
         return f"visual_{idx}"
 
     def load_clips_from_data(self, data: List[Dict[str, Any]]) -> None:
+        self._query_data_generation = getattr(self, "_query_data_generation", 0) + 1
         self.clips = []
         self.clip_id_to_entry = {}
         self.doc_id_to_entry = {}
@@ -1397,7 +1408,7 @@ class VisualMemory:
     # -----------------------------------------------------
 
     def index(self, until_time: int) -> None:
-        if self.indexed_time >= until_time:
+        if self.indexed_time == until_time:
             logger.debug(f"Already indexed visual memory up to {self.indexed_time}, skipping")
             return
 
@@ -1619,7 +1630,7 @@ class VisualMemory:
             start_sec = self._timestamp_diff_seconds(clip_start, overlap_start)
             end_sec = self._timestamp_diff_seconds(clip_start, overlap_end)
             frames = self._extract_frames(
-                clip.video_path,
+                self._resolve_path(clip.video_path),
                 fps=fps,
                 max_frames=None,
                 start_sec=start_sec,
@@ -1748,6 +1759,7 @@ class VisualMemory:
             torch.cuda.empty_cache()
 
     def reset_index(self) -> None:
+        self._query_data_generation = getattr(self, "_query_data_generation", 0) + 1
         self.embeddings = None
         self.indexed_entries = []
         self.indexed_time = 0

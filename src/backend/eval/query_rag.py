@@ -174,6 +174,8 @@ def summarize_selected_events(em2mem_memory: EM2Memory, doc_ids: List[str]) -> L
             "start_time": getattr(entry, "start_time", ""),
             "end_time": getattr(entry, "end_time", ""),
             "text": getattr(entry, "text", ""),
+            "visual_summary": getattr(entry, "visual_summary", ""),
+            "metadata": dict(getattr(entry, "metadata", {}) or {}),
             "video_path": getattr(visual_entry, "video_path", "") if visual_entry is not None else "",
             "keyframe_paths": list(getattr(visual_entry, "keyframe_paths", []) or []) if visual_entry is not None else [],
             "num_keyframes": len(list(getattr(visual_entry, "keyframe_paths", []) or [])) if visual_entry is not None else 0,
@@ -186,7 +188,8 @@ def summarize_selected_events(em2mem_memory: EM2Memory, doc_ids: List[str]) -> L
 def summarize_semantic_facts(em2mem_memory: EM2Memory, fact_ids: List[str]) -> List[Dict[str, Any]]:
     summaries: List[Dict[str, Any]] = []
     for fact_id in fact_ids:
-        entry = em2mem_memory.semantic_memory.triple_id_to_entry.get(fact_id)
+        semantic = em2mem_memory.semantic_memory
+        entry = next((entry for entry in semantic.indexed_entries if entry.id == fact_id), None)
         if entry is None:
             continue
         summaries.append({

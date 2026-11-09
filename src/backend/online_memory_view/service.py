@@ -9,6 +9,7 @@ from typing import Any
 from .normalizer import MemoryNormalizer, episodic_sort_key, semantic_sort_key, visual_sort_key
 from .repository import LongTermMemoryRepository, MemoryRepositoryError
 from .schemas import EPISODIC_GRANULARITIES, MEMORY_SOURCE, SCHEMA_VERSION
+from .session_labels import session_labels
 from online_memory_edit.schemas import edit_policy
 
 
@@ -108,11 +109,18 @@ class LongTermMemoryViewService:
             semantic_version = memory_version
         if visual and visual_version is None:
             visual_version = memory_version
+        can_edit = active.kind == "em2mem" and any(
+            record.get("editable") for record in episodic["30sec"]
+        )
+        edit_disabled_reason = None if can_edit else (
+            "unsupported_source_record" if active.kind != "em2mem" else "no_editable_30sec"
+        )
 
         payload = {
             "schema_version": SCHEMA_VERSION,
             "status": "ok",
             "session_id": self.session_id,
+            **session_labels(repository.session_dir),
             "memory_source": MEMORY_SOURCE,
             "memory_version": memory_version,
             "memoryVersion": memory_version,
@@ -137,6 +145,8 @@ class LongTermMemoryViewService:
             "semantic": semantic,
             "visual": visual,
             "editPolicy": edit_policy(),
+            "canEdit": can_edit,
+            "editDisabledReason": edit_disabled_reason,
             "canRollback": _can_rollback(config_after, memory_version),
             "propagation": (
                 config_after.get("memory_edit_propagation")

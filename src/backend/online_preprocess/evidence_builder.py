@@ -85,6 +85,8 @@ def _build_evidence_doc(
         "transcript": str(segment.get("transcript", "")).strip(),
         "transcript_segments": transcript_segments,
         "fine_caption": payload["fine_caption"],
+        "visual_summary": payload.get("visual_summary", ""),
+        "visual_summary_status": payload.get("visual_summary_status"),
         "scene": payload["scene"],
         "keyframe_captions": payload["keyframe_captions"],
         "visual_objects": payload["visual_objects"],
@@ -109,6 +111,8 @@ def _build_captioned_entry(segment: dict[str, Any], evidence_doc: dict[str, Any]
             "video_path": evidence_doc["source_video_path"],
             "caption": evidence_doc["fine_caption"],
             "fine_caption": evidence_doc["fine_caption"],
+            "visual_summary": evidence_doc.get("visual_summary", ""),
+            "visual_summary_status": evidence_doc.get("visual_summary_status"),
             "scene": evidence_doc["scene"],
             "keyframe_paths": evidence_doc["keyframe_paths"],
             "keyframe_caption": [

@@ -29,6 +29,7 @@ def consolidate_short_term_to_em2mem(
     model_name: str | None = None,
     verbose: bool = False,
     generation_backend: str | None = None,
+    queue_memory_handoff: bool | None = None,
 ) -> dict[str, Any]:
     session_dir = Path(sessions_root) / session_id
     result = build_episodic_from_mst(
@@ -37,6 +38,7 @@ def consolidate_short_term_to_em2mem(
         backend=backend,
         force=force,
         dry_run=dry_run,
+        queue_memory_handoff=update_em2mem if queue_memory_handoff is None else queue_memory_handoff,
         window_start=window_start,
         window_end=window_end,
         limit_windows=limit_windows,
@@ -47,7 +49,6 @@ def consolidate_short_term_to_em2mem(
         result["em2mem_update_mode"] = None
         return result
     if generation_backend:
-        import os
         os.environ["EM2MEM_MEMORY_GENERATION_BACKEND"] = generation_backend
 
     captioned_path = session_dir / "captions" / "mst_session_30sec_captioned.json"

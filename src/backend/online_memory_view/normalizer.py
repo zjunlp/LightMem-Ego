@@ -6,6 +6,7 @@ import math
 from datetime import datetime
 from typing import Any
 
+from online_time import event_time_seconds
 from online_memory.content import effective_episodic_content, effective_episodic_content_field
 
 from .schemas import (
@@ -238,24 +239,7 @@ def _number_or_none(value: Any) -> int | float | None:
 
 
 def _time_number(value: Any) -> float | None:
-    if isinstance(value, bool) or value is None:
-        return None
-    if isinstance(value, (int, float)):
-        parsed = float(value)
-        return parsed if math.isfinite(parsed) else None
-    text = str(value).strip()
-    try:
-        parsed = float(text)
-        return parsed if math.isfinite(parsed) else None
-    except ValueError:
-        pass
-    parts = text.split(":")
-    if len(parts) == 3:
-        try:
-            return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
-        except ValueError:
-            return None
-    return None
+    return event_time_seconds(value)
 
 
 def _sortable_time(value: Any) -> float | str | None:

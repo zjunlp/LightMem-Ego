@@ -44,6 +44,8 @@ def main() -> None:
         if result.get("status") != "failed":
             refresh_session_pipeline_state(Path(args.sessions_root) / args.session_id)
         print(json.dumps(result, ensure_ascii=False, indent=2))
+        if result.get("status") == "failed" or result.get("healthy") is False:
+            raise SystemExit(1)
         return
 
     if not args.append_ready_episodes and not args.episode_ids:

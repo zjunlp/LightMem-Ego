@@ -2526,6 +2526,8 @@ import torch.nn.functional as F
 import igraph as ig
 
 from ...embedding import EmbeddingModel
+from ..query_index import query_index_property
+from ...embedding.cache_identity import embedding_cache_identity
 
 logger = logging.getLogger(__name__)
 
@@ -2613,6 +2615,15 @@ def _transform_timestamp(ts_str: str) -> str:
 
 
 class SemanticMemory:
+    indexed_entries = query_index_property("indexed_entries", list)
+    indexed_time = query_index_property("indexed_time", int)
+    indexed_timestamp = query_index_property("indexed_timestamp", int)
+    graph = query_index_property("graph", lambda: None)
+    embeddings = query_index_property("embeddings", lambda: None)
+    triple_to_entities = query_index_property("triple_to_entities", dict)
+    entity_to_vertex = query_index_property("entity_to_vertex", dict)
+    indexed_signature = query_index_property("indexed_signature", lambda: None)
+
     def __init__(self, embedding_model: EmbeddingModel):
         self.embedding_model = embedding_model
 
@@ -2659,15 +2670,27 @@ class SemanticMemory:
         self.load_triples_from_data(data)
 
     def _embedding_model_id(self) -> str:
-        model_name = getattr(self.embedding_model, "text_model_name", None)
-        if model_name:
-            return str(model_name)
-        text_model = getattr(self.embedding_model, "_text_model", None)
-        if text_model is not None:
-            nested_name = getattr(text_model, "model_name", None)
-            if nested_name:
-                return str(nested_name)
-        return type(self.embedding_model).__name__
+        identity = embedding_cache_identity(self.embedding_model)
+        return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+
+    def _configured_embedding_dimension(self) -> Optional[int]:
+        identity = embedding_cache_identity(self.embedding_model)
+        for config in (identity, identity.get("loaded_text_model", {})):
+            for name in ("dimension", "embedding_dimension"):
+                value = config.get(name)
+                if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+                    return value
+        return None
+
+    def _validate_embedding_matrix(self, embeddings: np.ndarray, expected_count: int) -> np.ndarray:
+        embeddings = np.asarray(embeddings, dtype=np.float32)
+        dimension = self._configured_embedding_dimension()
+        if (embeddings.ndim != 2 or embeddings.shape[0] != expected_count
+                or embeddings.shape[1] <= 0
+                or (dimension is not None and embeddings.shape[1] != dimension)
+                or not np.isfinite(embeddings).all()):
+            raise ValueError(f"invalid semantic embedding matrix: {embeddings.shape}")
+        return embeddings
 
     def _semantic_cache_key(
         self,
@@ -2678,14 +2701,11 @@ class SemanticMemory:
     ) -> tuple[str, str]:
         hasher = hashlib.sha256()
         model_id = self._embedding_model_id()
+        hasher.update(b"semantic-vector-cache-v2\n")
         hasher.update(f"model={model_id}\n".encode("utf-8"))
-        hasher.update(f"mode={self.index_mode}\n".encode("utf-8"))
-        hasher.update(f"until={until_time}\nclosest={closest_timestamp}\n".encode("utf-8"))
+        # The selected ordered fact texts define this matrix. Query cutoffs and
+        # support weights affect the view/graph, not the vectors for that view.
         for entry in entries:
-            hasher.update(str(entry.id).encode("utf-8", errors="ignore"))
-            hasher.update(b"\0")
-            hasher.update(str(entry.timestamp).encode("utf-8"))
-            hasher.update(b"\0")
             hasher.update(entry.text.encode("utf-8", errors="ignore"))
             hasher.update(b"\0")
         return hasher.hexdigest(), model_id
@@ -2718,8 +2738,7 @@ class SemanticMemory:
                 if manifest.get("cache_key") != cache_key:
                     raise ValueError("semantic embedding cache key mismatch")
                 embeddings = np.asarray(data["embeddings"], dtype=np.float32)
-            if embeddings.ndim != 2 or embeddings.shape[0] != expected_count:
-                raise ValueError(f"semantic embedding cache shape mismatch: {embeddings.shape}")
+            embeddings = self._validate_embedding_matrix(embeddings, expected_count)
             self.embedding_cache_status = {
                 "enabled": self.embedding_cache_enabled,
                 "hit": True,
@@ -2764,7 +2783,7 @@ class SemanticMemory:
                 "entry_count": int(embeddings.shape[0]),
                 "dim": int(embeddings.shape[1]) if embeddings.ndim == 2 else 0,
             }
-            tmp_path = cache_path.with_name(cache_path.name + ".tmp")
+            tmp_path = cache_path.with_name(cache_path.name + ".tmp-" + os.urandom(8).hex())
             with tmp_path.open("wb") as handle:
                 np.savez_compressed(
                     handle,
@@ -2792,16 +2811,65 @@ class SemanticMemory:
                 "error": str(exc),
             }
             logger.warning("Failed to save semantic embedding cache %s: %s", cache_path, exc)
+        finally:
+            if "tmp_path" in locals():
+                tmp_path.unlink(missing_ok=True)
 
     def _get_query_embedding(self, query: str) -> np.ndarray:
-        cached = self._query_embedding_cache.get(query)
+        key = (self._embedding_model_id(), query)
+        cached = self._query_embedding_cache.get(key)
         if cached is not None:
             return cached
-        query_embedding = self.embedding_model.encode_text(query)
+        encode_query = getattr(self.embedding_model, "encode_query", None)
+        query_embedding = encode_query(query) if callable(encode_query) else self.embedding_model.encode_text(query)
         if len(query_embedding.shape) == 1:
             query_embedding = query_embedding.reshape(1, -1)
-        self._query_embedding_cache[query] = query_embedding
+        query_embedding = self._validate_embedding_matrix(query_embedding, 1)
+        self._query_embedding_cache[key] = query_embedding
         return query_embedding
+
+    def _encode_fact_texts(self, entries: List[SemanticTripleEntry]) -> np.ndarray:
+        """Reuse unchanged fact vectors across incremental index versions."""
+        if self.embedding_cache_dir is None or not self.embedding_cache_enabled:
+            return self._validate_embedding_matrix(
+                self.embedding_model.encode_text([entry.text for entry in entries]), len(entries))
+        root = self.embedding_cache_dir / "fact_vectors"
+        root.mkdir(parents=True, exist_ok=True)
+        model_id = self._embedding_model_id()
+        vectors = [None] * len(entries)
+        missing = {}
+        paths = []
+        for i, entry in enumerate(entries):
+            key = hashlib.sha256((model_id + "\n" + entry.text).encode()).hexdigest()
+            path = root / (key + ".npy")
+            paths.append(path)
+            try:
+                vector = np.load(path, allow_pickle=False)
+                dimension = self._configured_embedding_dimension()
+                if (vector.ndim != 1 or vector.size == 0
+                        or (dimension is not None and vector.size != dimension)
+                        or not np.isfinite(vector).all()):
+                    raise ValueError("invalid fact vector")
+                vectors[i] = vector
+            except (OSError, ValueError):
+                missing.setdefault(entry.text, []).append(i)
+        if missing:
+            texts = list(missing)
+            encoded = self._validate_embedding_matrix(self.embedding_model.encode_text(texts), len(texts))
+            for text, vector in zip(texts, encoded):
+                for i in missing[text]:
+                    vectors[i] = vector
+                path = paths[missing[text][0]]
+                temporary = path.with_suffix(".tmp-" + os.urandom(8).hex())
+                try:
+                    with temporary.open("wb") as stream:
+                        np.save(stream, vector, allow_pickle=False)
+                    temporary.replace(path)
+                finally:
+                    temporary.unlink(missing_ok=True)
+        self.embedding_cache_status["fact_vector_reused"] = len(entries) - sum(map(len, missing.values()))
+        self.embedding_cache_status["fact_vector_encoded"] = len(missing)
+        return self._validate_embedding_matrix(vectors, len(entries))
 
     def _safe_int(self, x: Any, default: int) -> int:
         try:
@@ -2849,6 +2917,37 @@ class SemanticMemory:
 
             triple = fact.get("triple", []) or []
             if not isinstance(triple, list) or len(triple) < 3:
+                continue
+
+            records = [record for record in fact.get("support_records", []) if isinstance(record, dict) and record.get("doc_id")]
+            if records:
+                # Materialize cumulative support snapshots. An early query must
+                # not inherit later support counts, confidence, or document ids.
+                by_time = defaultdict(list)
+                for record in records:
+                    day_match = re.search(r"(\d+)", str(record.get("date") or "DAY1"))
+                    day = int(day_match.group(1)) if day_match else 1
+                    code = str(record.get("end_time") or record.get("start_time") or "00000000").zfill(8)
+                    if not code.isdigit():
+                        continue
+                    by_time[int(f"{day}{code}")].append(record)
+                visible = {}
+                for timestamp in sorted(by_time):
+                    for record in by_time[timestamp]:
+                        visible[str(record["doc_id"])] = record
+                    ids = list(visible)
+                    all_visible = len(visible) == len({str(record["doc_id"]) for record in records})
+                    normalized_data[str(timestamp)]["facts"].append({
+                        "fact_id": fact.get("fact_id"), "head": triple[0], "relation": triple[1], "tail": triple[2],
+                        "head_type": fact.get("head_type", ""), "tail_type": fact.get("tail_type", ""),
+                        "semantic_summary": fact.get("semantic_summary", "") if all_visible else " ".join(map(str, triple)),
+                        "support_count": len(ids), "raw_support_count": len(ids),
+                        "support_days": sorted({str(record.get("date") or "DAY1") for record in visible.values()}),
+                        "support_scales": sorted({str(record.get("scale") or "30sec") for record in visible.values()}),
+                        "confidence": max(self._safe_float(record.get("confidence"), 0.5) for record in visible.values()),
+                        "habit_strength": fact.get("habit_strength", "low") if all_visible else "low",
+                        "evidence_event_ids": ids, "source_doc_ids": ids, "provenance_root_ids": ids,
+                    })
                 continue
 
             last_seen = fact.get("last_seen") or fact.get("first_seen") or {}
@@ -2904,6 +3003,9 @@ class SemanticMemory:
         return normalized_data
 
     def load_triples_from_data(self, data: Dict[str, Any]) -> None:
+        # Every worker lazily discards its own derived index on next access.
+        # Public loaders are publication boundaries, not concurrent ingest APIs.
+        self._query_data_generation = getattr(self, "_query_data_generation", 0) + 1
         self.triple_id_to_entry.clear()
         self.timestamp_to_triples.clear()
         self.available_timestamps = []
@@ -3058,31 +3160,41 @@ class SemanticMemory:
         if closest_timestamp is None:
             logger.debug(f"No semantic timestamp found up to {until_time}")
             self.indexed_entries = []
+            self.embeddings = None
             self.indexed_time = until_time
             self.indexed_timestamp = 0
+            self.indexed_signature = None
             return
 
         if self.index_mode == "flat_facts":
-            if self.indexed_time == until_time and self.indexed_entries:
-                logger.debug(f"Already indexed cumulative semantic facts up to {until_time}, skipping")
-                return
-
             entries_to_index: List[SemanticTripleEntry] = []
             for ts in self.available_timestamps:
                 if ts > until_time:
                     break
                 entries_to_index.extend(self.timestamp_to_triples.get(ts, []))
+            # A fact has one as-of view, even if its support grew over time.
+            entries_to_index = list({entry.id: entry for entry in entries_to_index}.values())
         else:
-            if self.indexed_timestamp == closest_timestamp:
-                logger.debug(f"Already indexed semantic timestamp {closest_timestamp}, skipping")
-                return
             entries_to_index = self.timestamp_to_triples.get(closest_timestamp, [])
 
         if not entries_to_index:
             self.indexed_entries = []
+            self.embeddings = None
             self.indexed_time = until_time
             self.indexed_timestamp = closest_timestamp
+            self.indexed_signature = None
             logger.debug("No semantic entries available after indexing filter")
+            return
+
+        cache_key, model_id = self._semantic_cache_key(
+            entries=entries_to_index, until_time=until_time, closest_timestamp=closest_timestamp)
+        # Include the complete fact view: confidence/support count affect graph
+        # weights and support IDs must also advance when provenance changes.
+        signature = (cache_key, json.dumps([vars(entry) for entry in entries_to_index], sort_keys=True))
+        if (self.indexed_signature == signature and self.embeddings is not None
+                and self.graph is not None):
+            self.indexed_time = until_time
+            self.indexed_timestamp = closest_timestamp
             return
 
         self.triple_to_entities = {}
@@ -3121,11 +3233,6 @@ class SemanticMemory:
                 self.graph.add_edges(edges)
                 self.graph.es["weight"] = weights
 
-        cache_key, model_id = self._semantic_cache_key(
-            entries=entries_to_index,
-            until_time=until_time,
-            closest_timestamp=closest_timestamp,
-        )
         cache_path = self._semantic_cache_path(cache_key)
         all_embeddings = self._load_embedding_cache(
             cache_path=cache_path,
@@ -3133,8 +3240,7 @@ class SemanticMemory:
             expected_count=len(entries_to_index),
         )
         if all_embeddings is None:
-            all_texts = [entry.text for entry in entries_to_index]
-            all_embeddings = self.embedding_model.encode_text(all_texts)
+            all_embeddings = self._encode_fact_texts(entries_to_index)
             self._save_embedding_cache(
                 cache_path=cache_path,
                 cache_key=cache_key,
@@ -3149,6 +3255,7 @@ class SemanticMemory:
         self.indexed_entries = entries_to_index
         self.indexed_time = until_time
         self.indexed_timestamp = closest_timestamp
+        self.indexed_signature = signature
 
         if self.index_mode == "flat_facts":
             logger.info(
@@ -3172,11 +3279,7 @@ class SemanticMemory:
     def _min_max_norm(self, values: List[float]) -> List[float]:
         if not values:
             return []
-        vmin = min(values)
-        vmax = max(values)
-        if abs(vmax - vmin) < 1e-8:
-            return [1.0 for _ in values]
-        return [(v - vmin) / (vmax - vmin) for v in values]
+        return [max(0.0, float(v)) / (1.0 + max(0.0, float(v))) for v in values]
 
     def retrieve(self, query: str, top_k: int = 10, as_context: bool = True) -> Union[List[SemanticTripleEntry], str]:
         if not self.indexed_entries or self.embeddings is None:
@@ -3326,6 +3429,7 @@ class SemanticMemory:
             torch.cuda.empty_cache()
 
     def reset_index(self) -> None:
+        self._query_data_generation = getattr(self, "_query_data_generation", 0) + 1
         self.graph = None
         self.embeddings = None
         self._query_embedding_cache = {}

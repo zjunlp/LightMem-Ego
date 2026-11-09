@@ -16,9 +16,13 @@ from online_preprocess.task_queue import (
     enqueue_memory_task,
     finish_mst_consolidation_task,
     list_queued_mst_consolidation_tasks,
+    ensure_queue_dirs,
 )
 from online_streaming.transcript_backfill import mark_transcript_dirty_window_consolidated
 from online_short_term.schemas import DEFAULT_SESSIONS_ROOT
+from online_short_term.mst_store import MSTStore
+from online_short_term.consolidation_state import load_consolidation_state, memory_handoff, write_consolidation_state
+from online_memory_incremental.append_log import MemoryAppendLog, READY_STATUSES
 
 
 def _ready_window_count(session_dir: Path) -> int:
@@ -38,6 +42,119 @@ def _ready_window_count(session_dir: Path) -> int:
     return count
 
 
+def _drain_memory_handoffs(project_root: Path, session_dir: Path, *, reason: str, enabled: bool = True) -> dict:
+    """Retry durable handoffs, without regenerating already committed episodes.
+
+    Keep intent until the append log confirms this source version, rather than
+    merely until enqueue succeeds. Failed tasks can then be enqueued again;
+    in-progress ownership/recovery remains the memory worker's responsibility.
+    The M_st lock serializes drains with consolidation and other drain workers.
+    """
+    if not (session_dir / "short_term/consolidation_state.json").exists():
+        return {}
+    store = MSTStore(session_dir)
+    with store.mutation_lock():
+        state = load_consolidation_state(session_dir, session_dir.name)
+        pending = dict(state.get("pending_memory_handoffs", {}))
+        episodes = read_json(session_dir / "em2mem/mst_episodic/mst_30sec_episodes.json", default=[])
+        by_id = {str(ep["episode_id"]): ep for ep in episodes if isinstance(ep, dict) and ep.get("episode_id")}
+        latest = MemoryAppendLog(session_dir / "em2mem/incremental/memory_append_log.jsonl").latest_by_episode()
+        caption_items = read_json(session_dir / "em2mem/caption_root" / f"{session_dir.name}_30sec.json", default=[])
+        present_ids = {str(row.get("episode_id") or row.get("source_episode_id") or row.get("doc_id") or "")
+                       for row in caption_items if isinstance(row, dict)}
+        config = read_json(session_dir / "em2mem/memory_config.json", default={})
+        known_lt = bool(config.get("memory_version") or config.get("latest_ready_memory_version")
+                        or config.get("latest_fast_ready_version") or config.get("memory_edit_propagation")
+                        or config.get("long_term_partial_ready") or config.get("episodic_index_ready")
+                        or config.get("status") == "memory_ready")
+
+        def delivered(episode_id, version):
+            entry = latest.get(episode_id, {})
+            return (entry.get("status") in READY_STATUSES
+                    and int(entry.get("episode_version", 1) or 1) >= version)
+
+        # Bounded legacy repair: completed windows with saved episodes missing
+        # from both LT captions and successful append history. Do not replay
+        # old full builds/edited LT roots just because they have no append log.
+        for episode_id in set(state.get("window_to_episode", {}).values()):
+            if not enabled:
+                break
+            episode = by_id.get(str(episode_id))
+            if episode is None or str(episode_id) in pending:
+                continue
+            # Without source-version history an absent row in an existing LT
+            # could be an intentional edit/deletion. Only infer legacy intent
+            # for an uninitialized LT or an explicitly failed append.
+            known_entry = latest.get(str(episode_id))
+            if (str(episode_id) not in present_ids and not config.get("memory_edit_propagation")
+                    and (not known_lt or known_entry)
+                    and not delivered(str(episode_id), int(episode.get("version", 1) or 1))):
+                pending[str(episode_id)] = memory_handoff(episode)
+
+        # Existing queued/in-progress work may cover a subset of the pending
+        # set. Wait for it, then retry any newer version it did not consume.
+        dirs = ensure_queue_dirs(project_root)
+        busy_ids = set()
+        busy_all = False
+        for key in ("memory_queued", "memory_in_progress"):
+            for path in dirs[key].glob("*.json"):
+                try:
+                    task = read_json(path, default={})
+                except (FileNotFoundError, json.JSONDecodeError):
+                    continue
+                if not isinstance(task, dict) or task.get("session_id") != session_dir.name:
+                    continue
+                if task.get("source", "auto") not in {"auto", "mst_episodic", "mst", "mst_micro_events"}:
+                    continue
+                ids = task.get("episode_ids")
+                if ids:
+                    busy_ids.update(str(value) for value in ids)
+                else:
+                    busy_all = True
+
+        groups = {False: [], True: []}
+        for episode_id, intent in list(pending.items()):
+            episode = by_id.get(episode_id)
+            version = int(intent.get("episode_version", 1) or 1)
+            if episode is not None and int(episode.get("version", 1) or 1) > version:
+                intent = memory_handoff(episode, force=bool(intent.get("force")), requested=bool(intent.get("requested")))
+                pending[episode_id] = intent
+                version = int(intent["episode_version"])
+            if delivered(episode_id, version):
+                pending.pop(episode_id)
+                continue
+            if episode is None or int(episode.get("version", 1) or 1) < version:
+                continue
+            if (enabled or intent.get("requested")) and not busy_all and episode_id not in busy_ids:
+                groups[bool(intent.get("force"))].append(episode_id)
+
+        # Save recovery/migration intent before any queue operation can fail.
+        if pending != state.get("pending_memory_handoffs", {}):
+            state["pending_memory_handoffs"] = pending
+            write_consolidation_state(session_dir, state)
+        paths = []
+        queued_ids = []
+        for force, episode_ids in groups.items():
+            if not episode_ids:
+                continue
+            path = enqueue_memory_task(
+                project_root=project_root, session_id=session_dir.name, force=force,
+                skip_visual_embedding=os.getenv("EM2MEM_SKIP_VISUAL_EMBEDDING", "1").lower() in {"1", "true", "yes", "on"},
+                skip_semantic=os.getenv("EM2MEM_SKIP_SEMANTIC_MEMORY", "0").lower() in {"1", "true", "yes", "on"},
+                source="mst_episodic", update_mode="incremental_append",
+                append_ready_episodes=True, episode_ids=sorted(episode_ids), reason=reason,
+            )
+            paths.append(str(path))
+            queued_ids.extend(episode_ids)
+            append_timeline_event(session_dir, "memory_append_queued",
+                                  metadata={"task_id": path.stem, "episode_ids": sorted(episode_ids)})
+        return {
+            "updated_em2mem": False, "memory_update_queued": bool(paths or busy_all or busy_ids),
+            "memory_task_path": paths[0] if paths else None, "memory_task_paths": paths,
+            "memory_queued_episode_ids": queued_ids, "pending_memory_handoff_count": len(pending),
+        }
+
+
 def run_worker(
     *,
     sessions_root: Path,
@@ -47,6 +164,7 @@ def run_worker(
     limit_windows: int | None,
     once: bool,
     verbose: bool,
+    scan_sessions: bool = True,
 ) -> None:
     runtime_path = Path("online_tasks") / "mst_consolidation_runtime.json"
     project_root = Path(__file__).resolve().parent
@@ -113,6 +231,7 @@ def run_worker(
                         sessions_root=sessions_root,
                         backend=task_backend,
                         update_em2mem=False,
+                        queue_memory_handoff=requested_update_em2mem,
                         force=bool(task.get("force", False)),
                         limit_windows=task.get("limit_windows") or limit_windows,
                         window_start=task.get("window_start"),
@@ -120,31 +239,11 @@ def run_worker(
                         verbose=verbose,
                     )
                 generated_episode_ids = result.get("generated_episode_ids") if isinstance(result.get("generated_episode_ids"), list) else []
-                if requested_update_em2mem and generated_episode_ids:
-                    memory_task = enqueue_memory_task(
-                        project_root=project_root,
-                        session_id=session_id,
-                        force=bool(task.get("force", False)),
-                        skip_visual_embedding=os.getenv("EM2MEM_SKIP_VISUAL_EMBEDDING", "1").lower() in {"1", "true", "yes", "on"},
-                        skip_semantic=os.getenv("EM2MEM_SKIP_SEMANTIC_MEMORY", "0").lower() in {"1", "true", "yes", "on"},
-                        source="mst_episodic",
-                        update_mode="incremental_append",
-                        append_ready_episodes=True,
-                        episode_ids=generated_episode_ids,
-                        reason=str(task.get("reason") or "mst_consolidation"),
-                    )
-                    result["memory_task_path"] = str(memory_task)
-                    result["updated_em2mem"] = False
-                    result["memory_update_queued"] = True
-                    append_timeline_event(
-                        sessions_root / session_id,
-                        "memory_append_queued",
-                        metadata={"task_id": memory_task.stem, "episode_ids": generated_episode_ids},
-                    )
-                elif requested_update_em2mem:
-                    result["updated_em2mem"] = False
-                    result["memory_update_queued"] = False
-                    result["memory_skip_reason"] = "no newly generated episodes"
+                if requested_update_em2mem:
+                    result.update(_drain_memory_handoffs(
+                        project_root, sessions_root / session_id,
+                        reason=str(task.get("reason") or "mst_consolidation"), enabled=update_em2mem,
+                    ))
                 if str(task.get("reason") or "") == "transcript_backfill" and task.get("window_start") is not None and task.get("window_end") is not None:
                     mark_transcript_dirty_window_consolidated(
                         sessions_root / session_id,
@@ -170,15 +269,18 @@ def run_worker(
                 finish_mst_consolidation_task(project_root, claimed_path, task, status="failed", error=str(exc))
                 results.append({"session_id": session_id, "status": "error", "message": str(exc)})
 
-        for session_dir in sorted(sessions_root.iterdir() if sessions_root.exists() else []):
+        for session_dir in sorted(sessions_root.iterdir() if scan_sessions and sessions_root.exists() else []):
             if not session_dir.is_dir():
                 continue
             if not session_is_active_or_allowed(project_root, session_dir.name):
                 continue
-            ready_count = _ready_window_count(session_dir)
-            if ready_count <= 0:
-                continue
             try:
+                handoff_result = _drain_memory_handoffs(project_root, session_dir, reason="mst_handoff_recovery", enabled=update_em2mem)
+                ready_count = _ready_window_count(session_dir)
+                if ready_count <= 0:
+                    if handoff_result.get("pending_memory_handoff_count"):
+                        results.append({"session_id": session_dir.name, **handoff_result})
+                    continue
                 scan_task = {
                     "task_id": f"{session_dir.name}_consolidation_scan",
                     "task_type": "mst_consolidation_scan",
@@ -204,36 +306,14 @@ def run_worker(
                         sessions_root=sessions_root,
                         backend=backend,
                         update_em2mem=False,
+                        queue_memory_handoff=update_em2mem,
                         force=False,
                         limit_windows=limit_windows,
                         verbose=verbose,
                     )
                 generated_episode_ids = result.get("generated_episode_ids") if isinstance(result.get("generated_episode_ids"), list) else []
-                if update_em2mem and generated_episode_ids:
-                    memory_task = enqueue_memory_task(
-                        project_root=project_root,
-                        session_id=session_dir.name,
-                        force=False,
-                        skip_visual_embedding=os.getenv("EM2MEM_SKIP_VISUAL_EMBEDDING", "1").lower() in {"1", "true", "yes", "on"},
-                        skip_semantic=os.getenv("EM2MEM_SKIP_SEMANTIC_MEMORY", "0").lower() in {"1", "true", "yes", "on"},
-                        source="mst_episodic",
-                        update_mode="incremental_append",
-                        append_ready_episodes=True,
-                        episode_ids=generated_episode_ids,
-                        reason="mst_consolidation_scan",
-                    )
-                    result["memory_task_path"] = str(memory_task)
-                    result["updated_em2mem"] = False
-                    result["memory_update_queued"] = True
-                    append_timeline_event(
-                        session_dir,
-                        "memory_append_queued",
-                        metadata={"task_id": memory_task.stem, "episode_ids": generated_episode_ids},
-                    )
-                elif update_em2mem:
-                    result["updated_em2mem"] = False
-                    result["memory_update_queued"] = False
-                    result["memory_skip_reason"] = "no newly generated episodes"
+                if update_em2mem:
+                    result.update(_drain_memory_handoffs(project_root, session_dir, reason="mst_consolidation_scan"))
                 results.append(result)
                 refresh_session_pipeline_state(session_dir)
                 append_timeline_event(
@@ -284,6 +364,8 @@ def main() -> None:
     parser.add_argument("--update-em2mem", action="store_true", default=os.getenv("EM2MEM_MST_CONSOLIDATE_UPDATE_EM2MEM", "1").lower() in {"1", "true", "yes", "on"})
     parser.add_argument("--interval-seconds", type=float, default=float(os.getenv("EM2MEM_MST_CONSOLIDATION_INTERVAL_SECONDS", "30")))
     parser.add_argument("--limit-windows", type=int, default=None)
+    parser.add_argument("--scan-sessions", action=argparse.BooleanOptionalAction, default=True,
+                        help="Scan all sessions for ready windows and pending memory handoffs in addition to processing queued tasks.")
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
@@ -295,6 +377,7 @@ def main() -> None:
         limit_windows=args.limit_windows,
         once=args.once,
         verbose=args.verbose,
+        scan_sessions=args.scan_sessions,
     )
 
 

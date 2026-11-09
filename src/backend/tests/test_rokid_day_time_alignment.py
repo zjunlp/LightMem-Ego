@@ -1,6 +1,4 @@
 import json
-import sys
-import types
 from pathlib import Path
 
 
@@ -9,20 +7,7 @@ def _write_json(path: Path, data: object) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
 
-def _install_lightweight_import_stubs() -> None:
-    online_preprocess = sys.modules.get("online_preprocess") or types.ModuleType("online_preprocess")
-    online_preprocess.__path__ = []
-    io_utils = sys.modules.get("online_preprocess.io_utils") or types.ModuleType("online_preprocess.io_utils")
-    io_utils.read_json = lambda path, default=None: json.loads(Path(path).read_text(encoding="utf-8")) if Path(path).exists() else default
-    io_utils.utc_now_iso = lambda: "2026-07-08T00:00:00+00:00"
-    io_utils.write_json_atomic = lambda path, data: _write_json(Path(path), data)
-    sys.modules["online_preprocess"] = online_preprocess
-    sys.modules["online_preprocess.io_utils"] = io_utils
-
-
-_install_lightweight_import_stubs()
-
-from online_pipeline.rokid_day import (  # noqa: E402
+from online_pipeline.rokid_day import (
     apply_demo_day_fields,
     build_rokid_time_context,
     reserve_single_session_day_run,
