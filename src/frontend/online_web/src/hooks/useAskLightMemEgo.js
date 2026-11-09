@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   appendQaHistory,
+  askSessionMemory,
   askQuestion,
   normalizeEvidenceFrames,
   pollQueryTask,
@@ -41,6 +42,8 @@ export function useAskLightMemEgo(sessionId, options = {}) {
   const syncBeforeAskRef = useRef(options.syncBeforeAsk)
   const askBaseUrlRef = useRef(options.askBaseUrl)
   const askStreamEndpointRef = useRef(options.askStreamEndpoint)
+  const memoryScopeRef = useRef(options.memoryScope || 'live')
+  const requestControllerRef = useRef(null)
   const [state, setState] = useState(initialAskState)
 
   useEffect(() => {
@@ -50,9 +53,12 @@ export function useAskLightMemEgo(sessionId, options = {}) {
   useEffect(() => {
     askBaseUrlRef.current = options.askBaseUrl
     askStreamEndpointRef.current = options.askStreamEndpoint
-  }, [options.askBaseUrl, options.askStreamEndpoint])
+    memoryScopeRef.current = options.memoryScope || 'live'
+  }, [options.askBaseUrl, options.askStreamEndpoint, options.memoryScope])
 
   useEffect(() => {
+    requestControllerRef.current?.abort()
+    requestControllerRef.current = null
     sessionIdRef.current = sessionId
     queryEpochRef.current += 1
     setState((current) => ({
@@ -63,11 +69,19 @@ export function useAskLightMemEgo(sessionId, options = {}) {
     }))
   }, [sessionId])
 
+  useEffect(() => () => {
+    requestControllerRef.current?.abort()
+    requestControllerRef.current = null
+    queryEpochRef.current += 1
+  }, [])
+
   const setQuestion = useCallback((question) => {
     setState((current) => ({ ...current, question }))
   }, [])
 
   const reset = useCallback(() => {
+    requestControllerRef.current?.abort()
+    requestControllerRef.current = null
     queryEpochRef.current += 1
     setState((current) => ({
       ...initialAskState,
@@ -98,7 +112,6 @@ export function useAskLightMemEgo(sessionId, options = {}) {
     const epoch = queryEpochRef.current + 1
     const startedAt = performance.now()
     queryEpochRef.current = epoch
-
     setState((current) => ({
       ...current,
       question: finalQuestion,
@@ -236,7 +249,7 @@ export function useAskLightMemEgo(sessionId, options = {}) {
     }))
   }, [sessionId])
 
-  const askStream = useCallback(async (targetSessionId, finalQuestion, epoch, longTermRetrievalScheme, inputMethod = 'manual') => {
+  const askStream = useCallback(async (targetSessionId, finalQuestion, epoch, longTermRetrievalScheme, inputMethod = 'manual', signal) => {
     let streamAnswer = ''
     let receivedTerminalEvent = false
     let serverErrorMessage = ''
@@ -254,6 +267,7 @@ export function useAskLightMemEgo(sessionId, options = {}) {
       baseUrl: askBaseUrlRef.current,
       endpoint: askStreamEndpointRef.current || undefined,
       inputMethod,
+      signal,
       ...(options.isDemoMode
         ? {
             useCurrent: true,
@@ -411,8 +425,8 @@ export function useAskLightMemEgo(sessionId, options = {}) {
     if (!targetSessionId) {
       setState((current) => ({
         ...current,
-        error: 'Please start Live View first.',
-        answer: current.answer || 'Start a live session before asking.'
+        error: memoryScopeRef.current === 'long_term' ? 'Imported memory Session is not ready.' : 'Please start Live View first.',
+        answer: current.answer || (memoryScopeRef.current === 'long_term' ? 'Imported memory Session is not ready.' : 'Start a live session before asking.')
       }))
       return
     }
@@ -422,13 +436,15 @@ export function useAskLightMemEgo(sessionId, options = {}) {
     const epoch = queryEpochRef.current + 1
     const longTermRetrievalScheme = state.longTermRetrievalScheme || LONG_TERM_RETRIEVAL_SCHEMES.EM2MEMORY
     queryEpochRef.current = epoch
+    const requestController = new AbortController()
+    requestControllerRef.current = requestController
 
     setState((current) => ({
       ...current,
       question: finalQuestion,
       loading: true,
       queryStatus: 'submitting',
-      answerPhase: answerModeRef.current === ANSWER_MODES.STREAM ? 'starting' : 'idle',
+      answerPhase: memoryScopeRef.current === 'long_term' ? 'idle' : (answerModeRef.current === ANSWER_MODES.STREAM ? 'starting' : 'idle'),
       queryTaskId: '',
       error: '',
       answer: '',
@@ -438,17 +454,23 @@ export function useAskLightMemEgo(sessionId, options = {}) {
     }))
 
     try {
-      if (syncBeforeAskRef.current) {
+      if (memoryScopeRef.current !== 'long_term' && syncBeforeAskRef.current) {
         await syncBeforeAskRef.current()
         if (queryEpochRef.current !== epoch || sessionIdRef.current !== targetSessionId) return
       }
 
-      if (answerModeRef.current === ANSWER_MODES.STREAM) {
-        await askStream(targetSessionId, finalQuestion, epoch, longTermRetrievalScheme, inputMethod)
+      if (memoryScopeRef.current !== 'long_term' && answerModeRef.current === ANSWER_MODES.STREAM) {
+        await askStream(targetSessionId, finalQuestion, epoch, longTermRetrievalScheme, inputMethod, requestController.signal)
         return
       }
 
-      const response = await askQuestion(targetSessionId, finalQuestion, {
+      const response = memoryScopeRef.current === 'long_term'
+        ? await askSessionMemory(targetSessionId, finalQuestion, {
+            baseUrl: '/api',
+            inputMethod,
+            signal: requestController.signal
+          })
+        : await askQuestion(targetSessionId, finalQuestion, {
         mode: 'async',
         responseMode: ANSWER_MODES.LEGACY,
         priority: 'high',
@@ -460,6 +482,7 @@ export function useAskLightMemEgo(sessionId, options = {}) {
         topK: 5,
         baseUrl: askBaseUrlRef.current,
         inputMethod,
+        signal: requestController.signal,
         ...(options.isDemoMode
           ? {
               useCurrent: true,
@@ -467,7 +490,7 @@ export function useAskLightMemEgo(sessionId, options = {}) {
               useLongTerm: false
             }
           : {})
-      })
+          })
 
       if (queryEpochRef.current !== epoch || sessionIdRef.current !== targetSessionId) return
 
@@ -489,6 +512,7 @@ export function useAskLightMemEgo(sessionId, options = {}) {
           intervalMs: 900,
           timeoutMs: 120000,
           shouldContinue: () => queryEpochRef.current === epoch && sessionIdRef.current === targetSessionId,
+          signal: requestController.signal,
           onPoll: (info) => {
             if (queryEpochRef.current !== epoch || sessionIdRef.current !== targetSessionId) return
             setState((current) => ({
@@ -530,6 +554,8 @@ export function useAskLightMemEgo(sessionId, options = {}) {
         answer: current.answer || message,
         rawDebug: error.raw || error
       }))
+    } finally {
+      if (requestControllerRef.current === requestController) requestControllerRef.current = null
     }
   }, [applyFinalResult, askStream, options.isDemoMode, sessionId, state.loading, state.longTermRetrievalScheme, state.question])
 
@@ -575,11 +601,12 @@ function sleep(ms) {
 function formatAskError(error) {
   const status = error?.status || error?.raw?.httpStatus
   const message = error?.message || 'Ask request failed.'
-  if (status === 409 || String(message).includes('not_ready')) {
-    return 'Demo memory is not ready yet. The frontend sent a fresh tick; please retry in a moment.'
+  const code = error?.code || error?.raw?.code || error?.raw?.error?.code || ''
+  if (code === 'memory_import_memory_not_ready' || code === 'memory_import_query_not_ready' || String(message).includes('query_not_ready') || String(message).includes('not_ready')) {
+    return ['The imported memory query service is not ready yet. Refresh status and try again.', code, error?.requestId && `Request ID: ${error.requestId}`].filter(Boolean).join(' · ')
   }
   if (error?.retryable) {
     return 'Streaming connection closed before the final done event. Please retry.'
   }
-  return message
+  return [message, code, error?.requestId && `Request ID: ${error.requestId}`].filter(Boolean).join(' · ')
 }

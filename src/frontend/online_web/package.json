@@ -8,7 +8,9 @@
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:history": "node --test ../history_demo/tests/core.test.js ../history_demo/tests/memory-editor.test.js ../history_demo/tests/i18n.test.js ../history_demo/tests/video-upload.test.js",
+    "test:browser": "npm run build && node ../history_demo/tests/browser.test.js && node ../history_demo/tests/nav.test.js"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",
@@ -21,9 +23,11 @@
     "vite": "^6.0.7"
   },
   "devDependencies": {
+    "@testing-library/dom": "^10.4.2",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.3",
     "jsdom": "^26.1.0",
+    "playwright": "1.64.1",
     "vitest": "^3.2.7"
   }
 }

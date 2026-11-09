@@ -10,8 +10,10 @@ import {
   SwitchCamera,
   Video
 } from 'lucide-react'
+import { useLanguage } from '../i18n.jsx'
 
 export default function LiveView({ stream, onOpenAsk, onReset }) {
+  const { t } = useLanguage()
   const statusLabel = getStatusLabel(stream.status)
   const hideHeroOverlay = stream.isDemoTestMode && !stream.isLive && !stream.isPaused && stream.status !== 'starting'
   const hideDemoVideoBeforeStart = stream.isDemoTestMode && !stream.isLive && !stream.isPaused && stream.status !== 'starting'
@@ -21,22 +23,22 @@ export default function LiveView({ stream, onOpenAsk, onReset }) {
     <section className="live-view">
       <header className="top-header">
         <div>
-          <div className="brand">LightMem-Ego</div>
-          <div className="subtitle">Online Video Memory</div>
+          <h1 className="brand">{t('Live capture')}</h1>
+          <div className="subtitle">{t('Online Video Memory')}</div>
         </div>
         <div className={`status-pill status-${stream.status}`}>
           <span className={`live-dot ${stream.isLive ? 'pulse' : ''}`} />
-          <span>{statusLabel}</span>
+          <span>{t(statusLabel)}</span>
         </div>
       </header>
 
       <div className={`video-hero state-${stream.status} ${hideDemoVideoBeforeStart ? 'demo-test-idle' : ''}`}>
 
         {stream.isImageUploadMode ? (
-          <div className="live-video photo-stream-preview" aria-label="Photo and audio upload status">
+          <div className="live-video photo-stream-preview" aria-label={t("Photo and audio upload status")}>
             <Images size={48} />
-            <strong>{stream.imageUploadStatus === 'completed' ? 'Photo / Audio Stream complete' : 'Photo / Audio Stream ready'}</strong>
-            <span>Uploaded {Math.min(stream.imageUploadIndex, stream.imageUploadQueue.length)} / {stream.imageUploadQueue.length}</span>
+            <strong>{stream.imageUploadStatus === 'completed' ? t('Photo / Audio Stream complete') : t('Photo / Audio Stream ready')}</strong>
+            <span>{t("Uploaded")} {Math.min(stream.imageUploadIndex, stream.imageUploadQueue.length)} / {stream.imageUploadQueue.length}</span>
           </div>
         ) : stream.isDemoMode ? (
           <video
@@ -53,7 +55,7 @@ export default function LiveView({ stream, onOpenAsk, onReset }) {
             <img
               className="live-video rokid-preview-image"
               src={stream.rokidPreviewUrl}
-              alt="Rokid Glass live preview"
+              alt={t("Rokid Glass live preview")}
             />
           ) : (
             <div className="live-video rokid-preview-pending" aria-hidden="true" />
@@ -74,8 +76,8 @@ export default function LiveView({ stream, onOpenAsk, onReset }) {
             <div className="hero-empty-mark">
               {stream.isImageUploadMode ? <Images size={36} /> : (stream.isWebRtcMode || stream.isRokidLiveMode ? <Radio size={36} /> : <Video size={36} />)}
             </div>
-            <h1>{stream.status === 'stopped' ? 'Realtime understanding stopped' : 'Start realtime understanding'}</h1>
-          <p>{stream.isImageUploadMode ? 'Select local images or audio from Advanced / Tools, then start Photo / Audio Stream.' : (stream.isDemoMode ? ((stream.isDemoTestMode ? stream.demoTestSession.sessionId : stream.demoSession.sessionId) ? 'Demo video is ready. Start to play it as a live memory stream.' : 'Upload demo video assets from Advanced / Tools.') : (stream.isRokidLiveMode ? 'Rokid RTMP is ingesting on the backend. Web preview is intentionally black.' : (stream.isWebRtcMode ? 'Publish camera and microphone through WHIP.' : 'Live video memory is idle.')))}</p>
+            <h2>{t(stream.status === 'stopped' ? 'Realtime understanding stopped' : 'Start realtime understanding')}</h2>
+          <p>{t(stream.isImageUploadMode ? 'Select local images or audio from Advanced / Tools, then start Photo / Audio Stream.' : (stream.isDemoMode ? ((stream.isDemoTestMode ? stream.demoTestSession.sessionId : stream.demoSession.sessionId) ? 'Demo video is ready. Start to play it as a live memory stream.' : 'Upload demo video assets from Advanced / Tools.') : (stream.isRokidLiveMode ? 'Rokid RTMP is ingesting on the backend. Web preview is intentionally black.' : (stream.isWebRtcMode ? 'Publish camera and microphone through WHIP.' : 'Live video memory is idle.'))))}</p>
           </div>
         )}
 
@@ -84,9 +86,9 @@ export default function LiveView({ stream, onOpenAsk, onReset }) {
             <div className="hero-overlay-top">
               <div className="glass-pill">
                 <span className={`live-dot ${stream.isLive ? 'pulse' : ''}`} />
-                <span>{statusLabel}</span>
+                <span>{t(statusLabel)}</span>
               </div>
-              <div className="glass-pill">{stream.isLegacyDemoMode ? 'Demo Video' : (stream.isImageUploadMode ? 'Photo / Audio Stream' : (stream.isRokidMode ? (stream.isRokidLiveMode ? 'Rokid RTMP' : 'Rokid Glass') : (stream.isWebRtcMode ? 'WebRTC' : 'Frame / Audio')))}</div>
+              <div className="glass-pill">{stream.isLegacyDemoMode ? t("Demo Video") : (stream.isImageUploadMode ? t("Photo / Audio Stream") : (stream.isRokidMode ? (stream.isRokidLiveMode ? t("Rokid RTMP") : t("Rokid Glass")) : (stream.isWebRtcMode ? t("WebRTC") : t("Frame / Audio"))))}</div>
             </div>
 
             {!stream.isDemoTestMode && (
@@ -95,38 +97,38 @@ export default function LiveView({ stream, onOpenAsk, onReset }) {
                   <>
                     <div className="signal-chip">
                       <Video size={15} />
-                      <span>{stream.demoSession.prepared ? 'Prepared' : 'Uploaded'}</span>
+                      <span>{stream.demoSession.prepared ? t("Prepared") : t("Uploaded")}</span>
                     </div>
                     <div className="signal-chip">
                       <Camera size={15} />
-                      <span>{stream.demoSession.frameCount ? `${stream.demoSession.frameCount} frames` : 'Tick ready'}</span>
+                      <span>{stream.demoSession.frameCount ? t("{value1} frames", { value1: stream.demoSession.frameCount }) : t("Tick ready")}</span>
                     </div>
                   </>
                 ) : stream.isImageUploadMode ? (
                   <>
-                    <div className="signal-chip"><Images size={15} /><span>{stream.imageUploadStatus}</span></div>
-                    <div className="signal-chip"><Camera size={15} /><span>{Math.min(stream.imageUploadIndex, stream.imageUploadQueue.length)} / {stream.imageUploadQueue.length} uploaded</span></div>
+                    <div className="signal-chip"><Images size={15} /><span>{t(stream.imageUploadStatus)}</span></div>
+                    <div className="signal-chip"><Camera size={15} /><span>{Math.min(stream.imageUploadIndex, stream.imageUploadQueue.length)} / {stream.imageUploadQueue.length} {t("uploaded")}</span></div>
                   </>
                 ) : (stream.isWebRtcMode || stream.isRokidLiveMode) ? (
                   <>
                     <div className="signal-chip">
                       <Radio size={15} />
-                      <span>{stream.webrtcState}</span>
+                      <span>{t(stream.webrtcState)}</span>
                     </div>
                     <div className="signal-chip">
                       <Video size={15} />
-                      <span>Ingest {stream.liveIngestStatus}</span>
+                      <span>{t('Ingest')} {t(stream.liveIngestStatus)}</span>
                     </div>
                   </>
                 ) : (
                   <>
                     <div className="signal-chip">
                       <Camera size={15} />
-                      <span>{stream.isRokidMode ? `HTTP preview ${formatFps(stream.rokidPreviewFps)}` : (stream.stats.firstFrameUploaded ? `${stream.stats.frameUploadedCount} frames` : 'Frame ready')}</span>
+                      <span>{stream.isRokidMode ? t("HTTP preview {value1}", { value1: t(formatFps(stream.rokidPreviewFps)) }) : (stream.stats.firstFrameUploaded ? t("{value1} frames", { value1: stream.stats.frameUploadedCount }) : t("Frame ready"))}</span>
                     </div>
                     <div className="signal-chip">
                       <Mic size={15} />
-                      <span>{stream.isRokidMode ? `Memory sampling ${formatFps(stream.rokidMemoryFps || stream.rokidMemoryTargetFps)}` : (stream.stats.audioUploadedCount ? `${stream.stats.audioUploadedCount} audio` : 'Audio ready')}</span>
+                      <span>{stream.isRokidMode ? t("Memory sampling {value1}", { value1: t(formatFps(stream.rokidMemoryFps || stream.rokidMemoryTargetFps)) }) : (stream.stats.audioUploadedCount ? t("{value1} audio", { value1: stream.stats.audioUploadedCount }) : t("Audio ready"))}</span>
                     </div>
                   </>
                 )}
@@ -142,7 +144,7 @@ export default function LiveView({ stream, onOpenAsk, onReset }) {
 
       {(stream.streamError || stream.audioError) && (
         <div className="live-error">
-          {stream.streamError || stream.audioError}
+          {t(stream.streamError || stream.audioError)}
         </div>
       )}
 
@@ -150,35 +152,35 @@ export default function LiveView({ stream, onOpenAsk, onReset }) {
         {stream.canStartSelectedMode && (
           <button className="main-action" type="button" onClick={stream.start}>
             <Play size={20} fill="currentColor" />
-            <span>{stream.status === 'stopped' ? 'Restart' : 'Start Live Understanding'}</span>
+          <span>{t(stream.status === 'stopped' ? 'Restart' : 'Start Live Understanding')}</span>
           </button>
         )}
 
         {stream.status === 'starting' && (
           <button className="main-action shimmer" type="button" disabled>
             <span className="button-spinner" />
-            <span>Starting</span>
+            <span>{t('Starting')}</span>
           </button>
         )}
 
         {stream.isLive && (
           <button className="main-action stop-action" type="button" onClick={stream.stop}>
             <Square size={18} fill="currentColor" />
-            <span>Stop Live Understanding</span>
+          <span>{t('Stop Live Understanding')}</span>
           </button>
         )}
 
         {stream.isPaused && (
           <button className="main-action" type="button" onClick={stream.resume}>
             <Play size={20} fill="currentColor" />
-            <span>Resume Live Understanding</span>
+          <span>{t('Resume Live Understanding')}</span>
           </button>
         )}
 
         {stream.status === 'stopping' && (
           <button className="main-action shimmer" type="button" disabled>
             <span className="button-spinner" />
-            <span>Stopping</span>
+            <span>{t('Stopping')}</span>
           </button>
         )}
       </div>
@@ -186,18 +188,18 @@ export default function LiveView({ stream, onOpenAsk, onReset }) {
       <div className="secondary-controls">
         <button className="icon-button secondary" type="button" onClick={stream.pause} disabled={!stream.canPause}>
           <Pause size={16} />
-          <span>Pause</span>
+          <span>{t('Pause')}</span>
         </button>
         <button className="icon-button secondary" type="button" onClick={stream.toggleCamera} disabled={!stream.canFlipCamera}>
           <SwitchCamera size={16} />
-          <span>{stream.cameraSwitching ? 'Switching' : stream.cameraFacingLabel}</span>
+          <span>{stream.cameraSwitching ? t('Switching') : t(stream.cameraFacingLabel)}</span>
         </button>
         <button className="icon-button secondary" type="button" onClick={onReset}>
           <RotateCcw size={16} />
-          <span>Reset</span>
+          <span>{t('Reset')}</span>
         </button>
         <button className="icon-button secondary ask-switch" type="button" onClick={onOpenAsk}>
-          <span>Ask</span>
+          <span>{t('Ask')}</span>
         </button>
       </div>
     </section>

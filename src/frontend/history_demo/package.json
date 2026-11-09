@@ -1,0 +1,10 @@
+{
+  "name": "lightmem-history-demo",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/core.test.js tests/memory-editor.test.js tests/i18n.test.js tests/video-upload.test.js",
+    "test:browser": "npm --prefix ../online_web run test:browser"
+  }
+}

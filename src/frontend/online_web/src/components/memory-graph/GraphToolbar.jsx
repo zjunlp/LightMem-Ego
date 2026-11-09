@@ -1,28 +1,30 @@
+import { useLanguage } from '../../i18n.jsx'
 import { RotateCcw, Search } from 'lucide-react'
 import { formatTimelineSeconds } from '../../utils/memoryGraphUtils.js'
 
 export default function GraphToolbar({ filters, relationOptions, timeDomain, onChange, onReset }) {
+  const { t } = useLanguage()
   const start = Number.isFinite(filters.startSeconds) ? filters.startSeconds : timeDomain.start
   const end = Number.isFinite(filters.endSeconds) ? filters.endSeconds : timeDomain.end
   const rangeDisabled = timeDomain.end <= timeDomain.start
 
   return (
-    <div className="memory-graph-toolbar" aria-label="Memory graph filters">
+    <div className="memory-graph-toolbar" aria-label={t("Memory graph filters")}>
       <label className="memory-graph-search">
-        <span>Search</span>
+        <span>{t("Search")}</span>
         <span className="memory-graph-input-shell">
           <Search size={14} />
           <input
             type="search"
             value={filters.query}
-            placeholder="Events, entities, relations…"
+            placeholder={t("Events, entities, relations…")}
             onChange={(event) => onChange({ query: event.target.value })}
           />
         </span>
       </label>
 
       <div className="memory-graph-range-control">
-        <span>Time range</span>
+        <span>{t("Time range")}</span>
         <div className="memory-graph-range-labels">
           <output>{formatTimelineSeconds(start)}</output>
           <output>{formatTimelineSeconds(end)}</output>
@@ -35,7 +37,7 @@ export default function GraphToolbar({ filters, relationOptions, timeDomain, onC
             step="1"
             value={start}
             disabled={rangeDisabled}
-            aria-label="Memory graph start time"
+            aria-label={t("Memory graph start time")}
             onChange={(event) => onChange({ startSeconds: Math.min(Number(event.target.value), end) })}
           />
           <input
@@ -45,14 +47,14 @@ export default function GraphToolbar({ filters, relationOptions, timeDomain, onC
             step="1"
             value={end}
             disabled={rangeDisabled}
-            aria-label="Memory graph end time"
+            aria-label={t("Memory graph end time")}
             onChange={(event) => onChange({ endSeconds: Math.max(Number(event.target.value), start) })}
           />
         </div>
       </div>
 
       <details className="memory-graph-relations">
-        <summary>Relations{filters.relations.length ? ` (${filters.relations.length})` : ''}</summary>
+        <summary>{t("Relations")}{filters.relations.length ? ` (${filters.relations.length})` : ''}</summary>
         <div className="memory-graph-relation-menu">
           {relationOptions.length ? relationOptions.map((relation) => (
             <label key={relation}>
@@ -67,12 +69,12 @@ export default function GraphToolbar({ filters, relationOptions, timeDomain, onC
               />
               <span>{relation}</span>
             </label>
-          )) : <span className="memory-graph-menu-empty">No relations</span>}
+          )) : <span className="memory-graph-menu-empty">{t("No relations")}</span>}
         </div>
       </details>
 
       <label className="memory-graph-number-filter">
-        <span>Episodic confidence</span>
+        <span>{t("Episodic confidence")}</span>
         <input
           type="number"
           min="0"
@@ -84,7 +86,7 @@ export default function GraphToolbar({ filters, relationOptions, timeDomain, onC
       </label>
 
       <label className="memory-graph-number-filter">
-        <span>Semantic confidence</span>
+        <span>{t("Semantic confidence")}</span>
         <input
           type="number"
           min="0"
@@ -96,7 +98,7 @@ export default function GraphToolbar({ filters, relationOptions, timeDomain, onC
       </label>
 
       <label className="memory-graph-number-filter">
-        <span>Min support</span>
+        <span>{t("Min support")}</span>
         <input
           type="number"
           min="1"
@@ -108,7 +110,7 @@ export default function GraphToolbar({ filters, relationOptions, timeDomain, onC
 
       <button className="icon-button secondary memory-graph-reset" type="button" onClick={onReset}>
         <RotateCcw size={14} />
-        <span>Reset</span>
+        <span>{t("Reset")}</span>
       </button>
     </div>
   )

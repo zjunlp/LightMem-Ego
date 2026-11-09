@@ -1,7 +1,18 @@
-import { ChevronDown, ChevronUp, X } from 'lucide-react'
-import { lazy, memo, Suspense, useCallback, useEffect, useId, useRef, useState } from 'react'
+import { ChevronDown, ChevronUp, LoaderCircle, Sparkles, X } from 'lucide-react'
+import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { fetchLongTermMemories } from '../api/lightmem_egoApi.js'
+import {
+  buildMemoryExportFilename,
+  exportLongTermMemoryJson,
+  fetchLongTermMemories
+} from '../api/lightmem_egoApi.js'
+import SessionTitleEditor from './SessionTitleEditor.jsx'
+import ImportedMemoryAsk from './ImportedMemoryAsk.jsx'
+import SessionMemoryEditor from './SessionMemoryEditor.jsx'
+import { useSessionQueryReadiness } from '../hooks/useSessionQueryReadiness.js'
+import { MemoryRecordCard, ReadonlyValue, humanizeKey } from './MemoryRecordCard.jsx'
+export { MemoryRecordCard, ReadonlyValue } from './MemoryRecordCard.jsx'
+import { useLanguage } from '../i18n.jsx'
 
 const MemoryGraphView = lazy(() => import('./memory-graph/MemoryGraphView.jsx'))
 
@@ -22,46 +33,153 @@ function createVisibleCounts() {
   return Object.fromEntries(GROUP_IDS.map((key) => [key, PAGE_SIZE]))
 }
 
-function createExpandedGroups(memory) {
-  const groups = new Set()
-  const episodicCount = EPISODIC_GROUPS.reduce((total, [key]) => total + (memory?.episodic?.[key]?.length || 0), 0)
-  if (episodicCount > 0) groups.add('episodic')
-  for (const [key] of EPISODIC_GROUPS) {
-    if (memory?.episodic?.[key]?.length) groups.add(`episodic-${key}`)
-  }
-  if (memory?.semantic?.length) groups.add('semantic')
-  if (memory?.visual?.length) groups.add('visual')
-  return groups
+function createExpandedGroups() {
+  return new Set()
 }
 
 export default function MemoryDialog({
   session,
+  active = true,
   cachedMemory,
-  authoritativeUpdate,
+  authoritativeUpdate: externalUpdate,
+  onPublication,
   openerElement,
   fallbackFocusElement,
   onMemoryLoaded,
+  onSessionTitleUpdated,
   onSessionUnavailable,
-  onClose
+  onClose,
+  initialTab = 'graph'
 }) {
-  const [activeTab, setActiveTab] = useState('graph')
+  const { t } = useLanguage()
+  const isImported = session.sessionKind === 'imported_memory'
+  const [localUpdate, setLocalUpdate] = useState(null)
+  const lastPublicationRef = useRef(null)
+  const matchingExternalUpdate = externalUpdate?.sessionId === session.sessionId ? externalUpdate : null
+  const matchingLocalUpdate = localUpdate?.sessionId === session.sessionId ? localUpdate : null
+  const candidate = !matchingExternalUpdate ? matchingLocalUpdate
+    : !matchingLocalUpdate ? matchingExternalUpdate
+      : comparePublicationUpdates(matchingExternalUpdate, matchingLocalUpdate) >= 0
+        ? matchingExternalUpdate : matchingLocalUpdate
+  if (candidate?.sessionId === session.sessionId && (!lastPublicationRef.current
+    || candidate.memory.memoryVersion > lastPublicationRef.current.memory.memoryVersion
+    || (candidate.memory.memoryVersion === lastPublicationRef.current.memory.memoryVersion
+      && candidate.revision > lastPublicationRef.current.revision))) lastPublicationRef.current = candidate
+  const authoritativeUpdate = lastPublicationRef.current
+  const [editing, setEditing] = useState({ open: false, blocking: false, dirty: false })
+  const previousActiveRef = useRef(active)
+  const handleEditingChange = useCallback((next) => setEditing((current) =>
+    current.open === next.open && current.blocking === next.blocking && current.dirty === next.dirty ? current : next), [])
+  const editorCloseRef = useRef(null)
+  const exportGenerationRef = useRef(0)
+  const latestMemoryRef = useRef(cachedMemory)
+  const handlePublication = useCallback((update) => {
+    setLocalUpdate(update)
+    onPublication?.(update)
+    onMemoryLoaded?.({ ...update.memory, ...(update.queryReady !== undefined ? { queryReady: update.queryReady } : {}) })
+  }, [onPublication, onMemoryLoaded])
+  const handleClose = () => {
+    if (editorCloseRef.current && !editorCloseRef.current()) return
+    onClose()
+  }
+  useEffect(() => {
+    const wasActive = previousActiveRef.current
+    previousActiveRef.current = active
+    if (wasActive && !active) handleClose()
+  }, [active])
+  const [activeTab, setActiveTab] = useState(initialTab)
   const [memory, setMemory] = useState(cachedMemory)
+  const editorMemory = useMemo(() => memory ? { ...memory, sessionKind: memory.sessionKind || session.sessionKind } : null, [memory, session.sessionKind])
+  const queryState = useSessionQueryReadiness({ ...session, memoryVersion: memory?.memoryVersion || session.memoryVersion }, { publication: authoritativeUpdate, active: isImported })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
-  const [expandedGroups, setExpandedGroups] = useState(() => createExpandedGroups(cachedMemory))
+  const [expandedGroups, setExpandedGroups] = useState(createExpandedGroups)
   const [visibleCounts, setVisibleCounts] = useState(createVisibleCounts)
+  const [exportingMemoryId, setExportingMemoryId] = useState('')
+  const [exportNotice, setExportNotice] = useState(null)
   const titleId = useId()
   const dialogRef = useRef(null)
   const closeButtonRef = useRef(null)
-  const scrollRootRef = useRef(null)
+  const scrollRootRef = dialogRef
   const requestControllerRef = useRef(null)
   const requestGenerationRef = useRef(0)
   const mountedRef = useRef(true)
   const onMemoryLoadedRef = useRef(onMemoryLoaded)
   const onSessionUnavailableRef = useRef(onSessionUnavailable)
+  const exportNoticeTimerRef = useRef(null)
 
   onMemoryLoadedRef.current = onMemoryLoaded
   onSessionUnavailableRef.current = onSessionUnavailable
+
+  const reportExportEvent = useCallback((event, payload = {}) => {
+    const detail = { event, ...payload }
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('memory_export', { detail }))
+      window.analytics?.track?.(event, detail)
+    }
+  }, [])
+
+  const showExportNotice = useCallback((notice) => {
+    window.clearTimeout(exportNoticeTimerRef.current)
+    setExportNotice(notice)
+    if (notice?.tone !== 'error') {
+      exportNoticeTimerRef.current = window.setTimeout(() => setExportNotice(null), 5000)
+    }
+  }, [])
+
+  const handleExport = useCallback(async (record) => {
+    if (exportingMemoryId) return
+
+    const exportGeneration = exportGenerationRef.current
+    const startedAt = performance.now()
+    const memoryId = record?.id || ''
+    reportExportEvent('export_click', { memoryId, sessionId: session.sessionId })
+    setExportingMemoryId(memoryId || '__missing_memory_id__')
+    setExportNotice(null)
+
+    try {
+      const result = await exportLongTermMemoryJson({
+        sessionId: session.sessionId,
+        memoryId,
+        memory: record
+      })
+      if (!mountedRef.current) return
+      if (exportGeneration !== exportGenerationRef.current) {
+        showExportNotice({ tone: 'error', message: 'Memory changed during export. Export the latest record again.' })
+        return
+      }
+      const objectUrl = URL.createObjectURL(result.blob)
+      const link = document.createElement('a')
+      link.href = objectUrl
+      link.download = normalizeDownloadFilename(result.filename, record)
+      link.style.display = 'none'
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(objectUrl)
+      reportExportEvent('export_success', {
+        memoryId,
+        sessionId: session.sessionId,
+        durationMs: Math.round(performance.now() - startedAt),
+        bytes: result.blob.size,
+        requestId: result.requestId
+      })
+      showExportNotice({ tone: 'success', message: 'JSON downloaded.' })
+    } catch (exportError) {
+      if (exportError?.name === 'AbortError') return
+      reportExportEvent('export_fail', {
+        memoryId,
+        sessionId: session.sessionId,
+        durationMs: Math.round(performance.now() - startedAt),
+        statusCode: exportError?.status,
+        errorCode: exportError?.code || '',
+        requestId: exportError?.requestId || ''
+      })
+      showExportNotice({ tone: 'error', message: formatExportError(exportError) })
+    } finally {
+      if (mountedRef.current) setExportingMemoryId('')
+    }
+  }, [exportingMemoryId, reportExportEvent, session.sessionId, showExportNotice])
 
   const loadMemory = useCallback(async ({ force = false } = {}) => {
     if (requestControllerRef.current && !force) return
@@ -84,15 +202,16 @@ export default function MemoryDialog({
         || result.sessionId !== session.sessionId
       ) return
 
+      if (result.memoryVersion < (latestMemoryRef.current?.memoryVersion || 0)) return
+      latestMemoryRef.current = result
       setMemory(result)
-      setExpandedGroups(createExpandedGroups(result))
       setVisibleCounts(createVisibleCounts())
-      onMemoryLoadedRef.current(result)
+      onMemoryLoadedRef.current?.(result)
     } catch (loadError) {
       if (loadError?.name === 'AbortError') return
       if (!mountedRef.current || generation !== requestGenerationRef.current) return
       if (loadError?.code === 'session_not_found' || loadError?.status === 404) {
-        onSessionUnavailableRef.current(session.sessionId)
+        onSessionUnavailableRef.current?.(session.sessionId)
         return
       }
       setError(loadError)
@@ -108,9 +227,12 @@ export default function MemoryDialog({
       mountedRef.current = false
       requestControllerRef.current?.abort()
       requestControllerRef.current = null
+      window.clearTimeout(exportNoticeTimerRef.current)
       requestGenerationRef.current += 1
     }
-  }, [cachedMemory, loadMemory])
+  }, [loadMemory])
+
+  useEffect(() => { void loadMemory() }, [loadMemory])
 
   const showRecords = () => {
     setActiveTab('records')
@@ -118,12 +240,26 @@ export default function MemoryDialog({
   }
 
   useEffect(() => {
+    setActiveTab(initialTab)
+  }, [initialTab, session.sessionId])
+
+  useEffect(() => {
+    if (activeTab === 'records' && !memory && !requestControllerRef.current) loadMemory()
+  }, [activeTab, loadMemory, memory])
+
+  useEffect(() => {
     const authoritativeMemory = authoritativeUpdate?.memory
     if (!authoritativeMemory || authoritativeMemory.sessionId !== session.sessionId) return
+    if (authoritativeMemory.memoryVersion < (latestMemoryRef.current?.memoryVersion || 0)) return
+    requestControllerRef.current?.abort()
+    requestGenerationRef.current += 1
+    exportGenerationRef.current += 1
+    latestMemoryRef.current = authoritativeMemory
+    setLoading(false)
+    setError(null)
     setMemory(authoritativeMemory)
-    setExpandedGroups(createExpandedGroups(authoritativeMemory))
     setVisibleCounts(createVisibleCounts())
-  }, [authoritativeUpdate?.revision, session.sessionId])
+  }, [authoritativeUpdate, session.sessionId])
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow
@@ -156,7 +292,12 @@ export default function MemoryDialog({
   const handleKeyDown = (event) => {
     if (event.key === 'Escape') {
       event.preventDefault()
-      onClose()
+      if (exportNotice?.tone === 'error') {
+        setExportNotice(null)
+        return
+      }
+      if (editing.open) editorCloseRef.current?.()
+      else handleClose()
       return
     }
     if (event.key !== 'Tab') return
@@ -195,12 +336,12 @@ export default function MemoryDialog({
     <div
       className="memory-dialog-overlay fade-in"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose()
+        if (event.target === event.currentTarget) handleClose()
       }}
     >
       <section
         ref={dialogRef}
-        className="memory-dialog"
+        className={`memory-dialog${editing.open ? ' is-editing' : ''}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
@@ -210,22 +351,36 @@ export default function MemoryDialog({
         <header className="memory-dialog-header">
           <div className="memory-dialog-title-block">
             <div>
-              <span>Complete business-level M_lt</span>
-              <h2 id={titleId}>{session.sessionId}</h2>
+              <span>{t('Complete business-level M_lt')}</span>
+              <h2 id={titleId}>{session.title || session.sessionId}</h2>
+              <small className="memory-dialog-session-id">{session.sessionId}</small>
+              <SessionTitleEditor
+                sessionId={session.sessionId}
+                title={session.title || session.sessionId}
+                onUpdated={onSessionTitleUpdated}
+                className="memory-dialog-title-editor"
+              />
             </div>
-            <div className="memory-dialog-version-chips" aria-label="Memory component versions">
-              <span>M_lt v{session.memoryVersion}</span>
-              <span>Episodic {formatVersion(session.componentVersions?.episodic)}</span>
-              <span>Semantic {formatVersion(session.componentVersions?.semantic)}</span>
+            <div className="memory-dialog-version-chips" aria-label={t("Memory component versions")}>
+              <span>{t("M_lt v")}{memory?.memoryVersion || session.memoryVersion}</span>
+              <span>{t('Episodic')} {t(formatVersion(memory?.componentVersions?.episodic ?? session.componentVersions?.episodic))}</span>
+              <span>{t('Semantic')} {t(formatVersion(memory?.componentVersions?.semantic ?? session.componentVersions?.semantic))}</span>
             </div>
           </div>
-          <button ref={closeButtonRef} className="icon-button secondary" type="button" aria-label="Close Memory" onClick={onClose}>
+          <button ref={closeButtonRef} className="icon-button secondary" type="button" aria-label={t('Close Memory')} disabled={editing.blocking} onClick={handleClose}>
             <X size={17} />
-            <span>Close</span>
+            <span>{t('Close')}</span>
           </button>
         </header>
 
-        <div className="memory-dialog-tabs" role="tablist" aria-label="Long-term memory detail view">
+        <div className="memory-history-editor">
+          <SessionMemoryEditor embedded sessionId={session.sessionId} sessionTitle={session.title || session.sessionId}
+            initialMemory={editorMemory}
+            onSessionTitleUpdated={onSessionTitleUpdated} onPublication={handlePublication} queryState={queryState}
+            closeRequestRef={editorCloseRef} onEditingChange={handleEditingChange} />
+        </div>
+        <div className="memory-dialog-body-wrap" hidden={editing.open}>
+        <div className="memory-dialog-tabs" role="tablist" aria-label={t('Long-term memory detail view')}>
           <button
             id={`${titleId}-graph-tab`}
             type="button"
@@ -235,7 +390,7 @@ export default function MemoryDialog({
             className={activeTab === 'graph' ? 'active' : ''}
             onClick={() => setActiveTab('graph')}
           >
-            Graph
+            {t('Graph')}
           </button>
           <button
             id={`${titleId}-records-tab`}
@@ -246,30 +401,70 @@ export default function MemoryDialog({
             className={activeTab === 'records' ? 'active' : ''}
             onClick={showRecords}
           >
-            Records
+            {t('Records')}
           </button>
+          {isImported && (
+            <button
+              id={`${titleId}-ask-tab`}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'ask'}
+              aria-controls={`${titleId}-ask-panel`}
+              className={activeTab === 'ask' ? 'active' : ''}
+              onClick={() => { setActiveTab('ask'); queryState.refresh() }}
+            >
+              {t('Ask Memory')}
+            </button>
+          )}
         </div>
 
-        <div ref={scrollRootRef} className={`memory-dialog-body is-${activeTab}`}>
-          <div
-            id={`${titleId}-graph-panel`}
-            role="tabpanel"
-            aria-labelledby={`${titleId}-graph-tab`}
-            hidden={activeTab !== 'graph'}
-          >
-            <Suspense fallback={(
-              <div className="memory-graph-request-state" aria-live="polite">
-                <span className="memory-spinner" />
-                <strong>Loading graph viewer…</strong>
-              </div>
-            )}>
-              <MemoryGraphView
-                session={session}
-                authoritativeUpdate={authoritativeUpdate}
-                onSessionUnavailable={onSessionUnavailableRef.current}
-              />
-            </Suspense>
+        {exportNotice?.tone === 'success' && (
+          <div className="memory-export-notice is-success" role="status">
+            {t(exportNotice.message)}
           </div>
+        )}
+
+        {exportNotice?.tone === 'error' && (
+          <div className="memory-export-error-overlay" onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setExportNotice(null)
+          }}>
+            <section
+              className="memory-export-error-dialog"
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby={`${titleId}-export-error-title`}
+              aria-describedby={`${titleId}-export-error-message`}
+            >
+              <div>
+                <strong id={`${titleId}-export-error-title`}>{t("Unable to export JSON")}</strong>
+                <p id={`${titleId}-export-error-message`}>{t(exportNotice.message)}</p>
+              </div>
+              <button className="icon-button secondary" type="button" autoFocus onClick={() => setExportNotice(null)}>{t("OK")}</button>
+            </section>
+          </div>
+        )}
+
+        <div className={`memory-dialog-body is-${activeTab}`}>
+          {activeTab === 'graph' && (
+            <div
+              id={`${titleId}-graph-panel`}
+              role="tabpanel"
+              aria-labelledby={`${titleId}-graph-tab`}
+            >
+              <Suspense fallback={(
+                <div className="memory-graph-request-state" aria-live="polite">
+                  <span className="memory-spinner" />
+                  <strong>{t('Loading graph viewer…')}</strong>
+                </div>
+              )}>
+                <MemoryGraphView
+                  session={session}
+                  authoritativeUpdate={authoritativeUpdate}
+                  onSessionUnavailable={onSessionUnavailableRef.current}
+                />
+              </Suspense>
+            </div>
+          )}
 
           <div
             id={`${titleId}-records-panel`}
@@ -280,15 +475,15 @@ export default function MemoryDialog({
             {loading && !memory && (
               <div className="memory-loading" aria-live="polite">
                 <span className="memory-spinner" />
-                Loading complete long-term memory…
+                {t('Loading complete long-term memory…')}
               </div>
             )}
 
             {formattedError && (
               <div className="inline-error memory-error" role="alert">
-                <span>{formattedError}</span>
+                <span>{t(formattedError)}</span>
                 {retryAllowed && (
-                  <button className="icon-button secondary" type="button" onClick={() => loadMemory({ force: true })}>Retry</button>
+                  <button className="icon-button secondary" type="button" onClick={() => loadMemory({ force: true })}>{t("Retry")}</button>
                 )}
               </div>
             )}
@@ -301,13 +496,30 @@ export default function MemoryDialog({
                 scrollRootRef={scrollRootRef}
                 onToggleGroup={toggleGroup}
                 onShowMore={showMore}
+                sessionId={session.sessionId}
+                onExport={handleExport}
+                exportingMemoryId={exportingMemoryId}
               />
             )}
 
             {!loading && !memory && !formattedError && (
-              <div className="memory-empty">Open Records to load the complete long-term memory.</div>
+              <div className="memory-empty">{t('Open Records to load the complete long-term memory.')}</div>
             )}
           </div>
+
+          {isImported && (
+            <div
+              id={`${titleId}-ask-panel`}
+              role="tabpanel"
+              aria-labelledby={`${titleId}-ask-tab`}
+              hidden={activeTab !== 'ask'}
+            >
+              <ImportedMemoryAsk session={{ ...session, memoryVersion: memory?.memoryVersion || session.memoryVersion }}
+                queryState={queryState} publication={authoritativeUpdate}
+                active={activeTab === 'ask' && !editing.open} />
+            </div>
+          )}
+        </div>
         </div>
       </section>
     </div>,
@@ -315,7 +527,18 @@ export default function MemoryDialog({
   )
 }
 
-function MemoryContent({ memory, expandedGroups, visibleCounts, scrollRootRef, onToggleGroup, onShowMore }) {
+function MemoryContent({
+  memory,
+  expandedGroups,
+  visibleCounts,
+  scrollRootRef,
+  onToggleGroup,
+  onShowMore,
+  sessionId,
+  onExport,
+  exportingMemoryId
+}) {
+  const { t } = useLanguage()
   const overviewItems = [
     ['Total', memory.counts.total],
     ['Episodic', memory.counts.episodic],
@@ -327,16 +550,16 @@ function MemoryContent({ memory, expandedGroups, visibleCounts, scrollRootRef, o
     <>
       <div className="memory-panel-heading">
         <div>
-          <span>Complete business-level memory</span>
-          <strong>M_lt · v{memory.memoryVersion}</strong>
-          <small>{formatUpdatedAt(memory.updatedAt)}</small>
+          <span>{t("Complete business-level memory")}</span>
+          <strong>{t("M_lt · v")}{memory.memoryVersion}</strong>
+          <small>{formatUpdatedAt(memory.updatedAt, t)}</small>
         </div>
       </div>
 
-      <div className="memory-overview" aria-label="Long-term memory overview">
+      <div className="memory-overview" aria-label={t("Long-term memory overview")}>
         {overviewItems.map(([label, value]) => (
           <div className="memory-overview-item" key={label}>
-            <span>{label}</span>
+            <span>{t(label)}</span>
             <strong>{value}</strong>
           </div>
         ))}
@@ -344,33 +567,30 @@ function MemoryContent({ memory, expandedGroups, visibleCounts, scrollRootRef, o
 
       <div className="memory-status-row">
         <span className={`memory-status-badge ${memory.qaAligned ? 'is-ready' : 'is-warning'}`}>
-          {memory.qaAligned ? 'QA aligned' : 'Legacy M_lt'}
+          {memory.qaAligned ? t("QA aligned") : t("Legacy M_lt")}
         </span>
         {Object.entries(memory.availability || {}).map(([key, value]) => (
           <span className={`memory-status-badge ${value === 'ready' ? 'is-ready' : 'is-muted'}`} key={key}>
-            {humanizeKey(key)}: {humanizeKey(value)}
+            {t(humanizeKey(key))}: {t(humanizeKey(value))}
           </span>
         ))}
       </div>
 
       {!memory.qaAligned && (
-        <div className="memory-notice is-warning">
-          Legacy M_lt is displayed and may not match the memory currently used by QA.
-        </div>
+        <div className="memory-notice is-warning">{t("Legacy M_lt is displayed and may not match the memory currently used by QA.")}</div>
       )}
       {memory.fieldTruncation && (
-        <div className="memory-notice">
-          Some repeated metadata arrays were truncated by the server. All Memory records are included.
-        </div>
+        <div className="memory-notice">{t("Some repeated metadata arrays were truncated by the server. All Memory records are included.")}</div>
       )}
 
       <MemorySection
         groupId="episodic"
-        title="Episodic Memory"
+        title={t("Episodic Memory")}
         count={memory.counts.episodic}
         availability={memory.availability?.episodic}
         expanded={expandedGroups.has('episodic')}
         onToggle={onToggleGroup}
+        sessionSummary={getVisibleSessionSummary(memory)}
       >
         {EPISODIC_GROUPS.map(([key, label]) => {
           const groupId = `episodic-${key}`
@@ -379,7 +599,7 @@ function MemoryContent({ memory, expandedGroups, visibleCounts, scrollRootRef, o
             <MemorySection
               compact
               groupId={groupId}
-              title={label}
+              title={t(label)}
               count={memory.counts.episodicByGranularity?.[key] ?? records.length}
               availability={memory.availability?.episodic}
               expanded={expandedGroups.has(groupId)}
@@ -390,9 +610,12 @@ function MemoryContent({ memory, expandedGroups, visibleCounts, scrollRootRef, o
                 groupId={groupId}
                 items={records}
                 visibleCount={visibleCounts[groupId] || PAGE_SIZE}
-                emptyLabel={`No ${label} episodic Memory in this Session.`}
+                emptyLabel={t("No {value1} episodic Memory in this Session.", { value1: t(label) })}
                 scrollRootRef={scrollRootRef}
                 onShowMore={onShowMore}
+                sessionId={sessionId}
+                onExport={onExport}
+                exportingMemoryId={exportingMemoryId}
               />
             </MemorySection>
           )
@@ -401,7 +624,7 @@ function MemoryContent({ memory, expandedGroups, visibleCounts, scrollRootRef, o
 
       <MemorySection
         groupId="semantic"
-        title="Semantic Memory"
+        title={t("Semantic Memory")}
         count={memory.counts.semantic}
         availability={memory.availability?.semantic}
         expanded={expandedGroups.has('semantic')}
@@ -411,15 +634,18 @@ function MemoryContent({ memory, expandedGroups, visibleCounts, scrollRootRef, o
           groupId="semantic"
           items={memory.semantic}
           visibleCount={visibleCounts.semantic || PAGE_SIZE}
-          emptyLabel="No Semantic Memory in this Session."
+          emptyLabel={t("No Semantic Memory in this Session.")}
           scrollRootRef={scrollRootRef}
           onShowMore={onShowMore}
+          sessionId={sessionId}
+          onExport={onExport}
+          exportingMemoryId={exportingMemoryId}
         />
       </MemorySection>
 
       <MemorySection
         groupId="visual"
-        title="Visual Memory"
+        title={t("Visual Memory")}
         count={memory.counts.visual}
         availability={memory.availability?.visual}
         expanded={expandedGroups.has('visual')}
@@ -429,16 +655,20 @@ function MemoryContent({ memory, expandedGroups, visibleCounts, scrollRootRef, o
           groupId="visual"
           items={memory.visual}
           visibleCount={visibleCounts.visual || PAGE_SIZE}
-          emptyLabel="No Visual Memory in this Session."
+          emptyLabel={t("No Visual Memory in this Session.")}
           scrollRootRef={scrollRootRef}
           onShowMore={onShowMore}
+          sessionId={sessionId}
+          onExport={onExport}
+          exportingMemoryId={exportingMemoryId}
         />
       </MemorySection>
     </>
   )
 }
 
-function MemorySection({ groupId, title, count, availability, expanded, onToggle, compact = false, children }) {
+function MemorySection({ groupId, title, count, availability, expanded, onToggle, compact = false, sessionSummary, children }) {
+  const { t } = useLanguage()
   return (
     <section className={`memory-section ${compact ? 'is-compact' : ''}`}>
       <button
@@ -448,15 +678,24 @@ function MemorySection({ groupId, title, count, availability, expanded, onToggle
         onClick={() => onToggle(groupId)}
       >
         <span>
-          <strong>{title}</strong>
-          <small>{availability === 'not_available' ? 'Not available' : `${count ?? 0} records`}</small>
+          <strong>{t(title)}</strong>
+          <small>{availability === 'not_available' ? t("Not available") : t("{value1} records", { value1: count ?? 0 })}</small>
         </span>
         {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
       </button>
+      {sessionSummary && (
+        <aside className="memory-session-summary" aria-label={t('Session summary')}>
+          <div className="memory-session-summary-label">
+            <Sparkles size={16} aria-hidden="true" />
+            <strong>{t('Session summary')}</strong>
+          </div>
+          <p>{sessionSummary}</p>
+        </aside>
+      )}
       {expanded && (
         <div className="memory-section-content fade-in">
           {availability === 'not_available'
-            ? <div className="memory-empty is-compact">This component is not available for this Session.</div>
+            ? <div className="memory-empty is-compact">{t("This component is not available for this Session.")}</div>
             : children}
         </div>
       )}
@@ -464,7 +703,25 @@ function MemorySection({ groupId, title, count, availability, expanded, onToggle
   )
 }
 
-function MemoryList({ groupId, items, visibleCount, emptyLabel, scrollRootRef, onShowMore }) {
+function getVisibleSessionSummary(memory) {
+  const content = typeof memory?.sessionSummary === 'string' ? memory.sessionSummary.trim() : ''
+  if (!content || memory?.sessionSummaryStatus !== 'ready') return ''
+  if (memory.sessionSummaryVersion !== memory.memoryVersion) return ''
+  return content
+}
+
+function MemoryList({
+  groupId,
+  items,
+  visibleCount,
+  emptyLabel,
+  scrollRootRef,
+  onShowMore,
+  sessionId,
+  onExport,
+  exportingMemoryId
+}) {
+  const { t } = useLanguage()
   const sentinelRef = useRef(null)
   const shownItems = items.slice(0, visibleCount)
   const hasMore = shownItems.length < items.length
@@ -478,17 +735,24 @@ function MemoryList({ groupId, items, visibleCount, emptyLabel, scrollRootRef, o
     return () => observer.disconnect()
   }, [groupId, hasMore, items.length, onShowMore, scrollRootRef])
 
-  if (!items.length) return <div className="memory-empty is-compact">{emptyLabel}</div>
+  if (!items.length) return <div className="memory-empty is-compact">{t(emptyLabel)}</div>
   return (
     <>
       <div className="memory-list">
-        {shownItems.map((item) => <MemoryRecordCard memory={item} key={item.id} />)}
+        {shownItems.map((item) => (
+          <MemoryRecordCard
+            memory={item}
+            sessionId={sessionId}
+            onExport={onExport}
+            exporting={exportingMemoryId === (item.id || '__missing_memory_id__')}
+            key={item.id || `${groupId}-${shownItems.indexOf(item)}`}
+          />
+        ))}
       </div>
-      <div className="memory-local-count">Showing {shownItems.length} of {items.length}</div>
+      <div className="memory-local-count">{t("Showing")} {shownItems.length} {t("of")} {items.length}</div>
       {hasMore && (
         <div ref={sentinelRef} className="memory-local-sentinel">
-          <button className="icon-button secondary" type="button" onClick={() => onShowMore(groupId, items.length)}>
-            Show next {Math.min(PAGE_SIZE, items.length - shownItems.length)}
+          <button className="icon-button secondary" type="button" onClick={() => onShowMore(groupId, items.length)}>{t("Show next")} {Math.min(PAGE_SIZE, items.length - shownItems.length)}
           </button>
         </div>
       )}
@@ -496,131 +760,50 @@ function MemoryList({ groupId, items, visibleCount, emptyLabel, scrollRootRef, o
   )
 }
 
-export const MemoryRecordCard = memo(function MemoryRecordCard({ memory }) {
-  const timeLabel = formatEventTime(memory.eventTime)
-  return (
-    <article className="memory-card">
-      <div className="memory-card-header">
-        <div className="memory-card-badges">
-          <span className="memory-badge">{humanizeKey(memory.memoryType || 'Memory')}</span>
-          {memory.granularity && <span className="memory-badge is-muted">{memory.granularity}</span>}
-          {memory.status && <span className="memory-badge is-muted">{humanizeKey(memory.status)}</span>}
-        </div>
-        {memory.confidence !== null && memory.confidence !== undefined && (
-          <span className="memory-confidence">Confidence {formatConfidence(memory.confidence)}</span>
-        )}
-      </div>
-      {timeLabel && <div className="memory-time">{timeLabel}</div>}
-      <p className="memory-content">{memory.content || '—'}</p>
-      {memory.data && <ReadonlyValue value={memory.data} root />}
-    </article>
-  )
-})
-
-export function ReadonlyValue({ value, root = false }) {
-  if (value === null || value === undefined || value === '') return <span className="memory-param-value">—</span>
-
-  if (Array.isArray(value)) {
-    if (!value.length) return <span className="memory-param-value">—</span>
-    const content = <MemoryArray items={value} />
-    if (value.length <= 4) return content
-    return (
-      <details className="memory-value-details">
-        <summary>{value.length} items</summary>
-        {content}
-      </details>
-    )
-  }
-
-  if (typeof value === 'object') {
-    if (Array.isArray(value.items) && Object.prototype.hasOwnProperty.call(value, 'truncated')) {
-      return (
-        <div className="memory-truncated-value">
-          <div className="memory-truncation-note">
-            Showing {value.returnedCount ?? value.items.length} of {value.originalCount ?? value.items.length} items.
-          </div>
-          <ReadonlyValue value={value.items} />
-        </div>
-      )
-    }
-    const entries = Object.entries(value)
-    if (!entries.length) return <span className="memory-param-value">—</span>
-    return (
-      <div className={`memory-param-list ${root ? 'is-root' : 'is-nested'}`}>
-        {entries.map(([key, item]) => (
-          <div className="memory-param-row" key={key}>
-            <span className="memory-param-key">{humanizeKey(key)}</span>
-            <div className="memory-param-value"><ReadonlyValue value={item} /></div>
-          </div>
-        ))}
-      </div>
-    )
-  }
-
-  return <span className="memory-param-value">{String(value)}</span>
-}
-
-function MemoryArray({ items }) {
-  return (
-    <ul className="memory-array">
-      {items.map((item, index) => (
-        <li key={`${index}-${primitiveKey(item)}`}><ReadonlyValue value={item} /></li>
-      ))}
-    </ul>
-  )
-}
-
-function primitiveKey(value) {
-  return typeof value === 'object' ? '' : String(value).slice(0, 32)
-}
-
-function humanizeKey(value) {
-  return String(value || '')
-    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    .replace(/[_-]+/g, ' ')
-    .replace(/\b\w/g, (character) => character.toUpperCase())
-}
-
-function formatEventTime(eventTime) {
-  if (!eventTime || typeof eventTime !== 'object') return ''
-  const date = formatLooseValue(eventTime.date)
-  const start = firstValue(eventTime.startSeconds, eventTime.startTime, eventTime.timestampSeconds, eventTime.timestamp)
-  const end = firstValue(eventTime.endSeconds, eventTime.endTime)
-  const firstSeen = formatLooseValue(eventTime.firstSeen)
-  const lastSeen = formatLooseValue(eventTime.lastSeen)
-  if (firstSeen || lastSeen) return [firstSeen, lastSeen].filter(Boolean).join(' – ')
-  const range = start !== undefined ? `${formatSeconds(start)}${end !== undefined ? ` – ${formatSeconds(end)}` : ''}` : ''
-  return [date, range].filter(Boolean).join(' · ')
-}
-
-function firstValue(...values) {
-  return values.find((value) => value !== undefined && value !== null && value !== '')
-}
-
-function formatSeconds(value) {
-  const numeric = Number(value)
-  return Number.isFinite(numeric) ? `${numeric.toFixed(numeric % 1 ? 1 : 0)}s` : String(value)
-}
-
-function formatLooseValue(value) {
-  if (value === undefined || value === null || value === '') return ''
-  if (typeof value === 'object') return Object.values(value).filter(Boolean).join(' ')
-  return String(value)
-}
-
-function formatConfidence(value) {
-  const numeric = Number(value)
-  return Number.isFinite(numeric) ? numeric.toFixed(2) : String(value)
-}
-
-function formatUpdatedAt(value) {
-  if (!value) return 'Updated time unavailable'
+function formatUpdatedAt(value, t) {
+  if (!value) return t('Updated time unavailable')
   const parsed = new Date(value)
-  return Number.isNaN(parsed.getTime()) ? String(value) : `Updated ${parsed.toLocaleString()}`
+  return Number.isNaN(parsed.getTime()) ? String(value) : t('Updated {date}', { date: parsed.toLocaleString() })
 }
 
 function formatVersion(value) {
   return value === null || value === undefined ? 'unknown' : `v${value}`
+}
+
+function normalizeDownloadFilename(filename, memory) {
+  const candidate = String(filename || '')
+    .normalize('NFKC')
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .replace(/[\\/:*?"<>|]/g, '-')
+    .replace(/[^\p{L}\p{N}._-]+/gu, '-')
+    .replace(/-+/g, '-')
+    .replace(/^[-.]+|[-.]+$/g, '')
+    .slice(0, 120)
+  if (/\.json$/i.test(candidate) && !candidate.includes('..')) {
+    return candidate
+  }
+  return buildMemoryExportFilename(memory)
+}
+
+function comparePublicationUpdates(left, right) {
+  const versionDifference = (left.memory?.memoryVersion || 0) - (right.memory?.memoryVersion || 0)
+  if (versionDifference) return versionDifference
+  return (left.revision || 0) - (right.revision || 0)
+}
+
+function formatExportError(error) {
+  const code = error?.code || error?.raw?.error?.code
+  if (code === 'invalid_memory_id' || error?.status === 400) return 'The memory ID or export format is invalid.'
+  if (code === 'memory_not_found' || error?.status === 404) return 'This memory is no longer available.'
+  if (code === 'memory_id_ambiguous') return 'This memory ID is ambiguous. Please open the memory from its Session and retry.'
+  if (code === 'memory_not_exportable') return 'This memory is not ready for export.'
+  if (code === 'memory_snapshot_changing') return 'This memory is being updated. Please try again.'
+  if (code === 'memory_export_too_large' || error?.status === 413) return 'This memory is too large to export.'
+  if (code === 'memory_export_rate_limited' || error?.status === 429) return 'Too many export requests. Please try again later.'
+  if (code === 'memory_export_failed' || error?.status === 500) return 'JSON export failed. Please try again.'
+  if (error?.status === 401) return 'Your session has expired. Please sign in again.'
+  if (error?.status === 403) return 'You do not have permission to export this memory.'
+  return 'Unable to download the JSON file. Check your connection and retry.'
 }
 
 function formatMemoryError(error) {

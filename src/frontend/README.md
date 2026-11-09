@@ -13,7 +13,7 @@
   <a href="README_DEPLOY.md">Deployment Notes</a>
 </p>
 
-A Vite + React single-page app for the [LightMem-Ego](../../README.md) memory system. Capture from your browser camera and microphone — on a laptop or a phone — drive live sessions, ask questions about the current or a past moment, and inspect the timestamped evidence behind every answer.
+A Vite + React web workspace for the [LightMem-Ego](../../README.md) memory system. Capture from your browser camera and microphone, replay saved videos, ask questions about past events, and inspect timestamped memories and visual evidence.
 
 ## ✨ Features
 
@@ -23,6 +23,11 @@ A Vite + React single-page app for the [LightMem-Ego](../../README.md) memory sy
 - **Evidence strip** — open the frames, transcripts, and timestamps that support each answer.
 - **Memory browser and editor** — review sessions and catalogs, edit 30-second memory entries, and roll back changes.
 - **Memory graph** — explore episodic and semantic links between memories.
+- **Independent memory workspace** — open `/memories/` directly, or use `?memory_session=<session-id>` to locate one session and return to its video.
+- **Saved-video Q&A** — `/history-demo/` preserves playback position, conversation history, task receipts and edit drafts.
+- **Video uploads** — upload a video up to 95 MiB, wait for full offline memory/index construction, then replay and ask. Refreshing resumes status checks for the original upload.
+- **Shared appearance** — Chinese/English, light/dark themes and font-size preferences across pages.
+- **Editing gate** — viewers can browse and ask; editing controls require administrator mode in the current browser tab.
 - **Multiple input modes** — browser capture, Rokid glasses sessions, and demo uploads share one UI.
 
 ## 🚀 Quick Start
@@ -30,15 +35,17 @@ A Vite + React single-page app for the [LightMem-Ego](../../README.md) memory sy
 > [!IMPORTANT]
 > This app needs a reachable LightMem-Ego [backend](../backend/README.md). On its own it can capture video, but it cannot build memory or answer questions. Want to skip setup? Use the [live demo](https://lightmem-ego.zjukg.cn/) instead.
 
-**Requirements:** Node.js 18+ and npm.
+**Requirements:** Node.js 20+ and npm. The backend needs FFmpeg for video ingestion.
 
 ```bash
 cd src/frontend/online_web
-npm install
+npm ci
 npm run dev
 ```
 
 Open the URL Vite prints (default <http://localhost:5173>).
+
+The development server proxies `/api` to `http://127.0.0.1:8000` by default. To select another local backend, run `LIGHTMEM_BACKEND_URL=http://127.0.0.1:8001 npm run dev`. This value configures the development proxy only; production uses Nginx or the Docker proxy.
 
 To point the app at a local backend, create `online_web/.env.local`:
 
@@ -56,7 +63,7 @@ The backend must allow your dev origin — `EM2MEM_CORS_ORIGINS` in the backend 
 | `VITE_DEMO_API_BASE_URL` | value of `VITE_API_BASE_URL` | Optional separate base URL for the demo upload/test endpoints. |
 
 > [!NOTE]
-> Both variables are read at **build time** by `import.meta.env`, so you must rebuild after changing them — restarting the dev server is not enough. `.env.local` is Git-ignored.
+> Production bundles capture both variables at **build time**, so rebuild before deploying changed values. Restart Vite after editing a development `.env.local`. The local file is Git-ignored.
 
 ## 📜 Scripts
 
@@ -66,6 +73,8 @@ The backend must allow your dev origin — `EM2MEM_CORS_ORIGINS` in the backend 
 | `npm run build` | Produce a production bundle in `online_web/dist/`. |
 | `npm run preview` | Serve the production build locally. |
 | `npm test` | Run the Vitest suite. |
+| `npm run test:history` | Run saved-video controller, editing, localization and upload unit tests. |
+| `npm run test:browser` | Build all pages and run offline Chromium UI/navigation checks; requires FFmpeg and `npx playwright install chromium`. |
 
 `dist/` is intentionally not committed — it is reproducible from source and the lockfile.
 
@@ -80,6 +89,9 @@ src/frontend/
     src/webrtc/        # WHIP/SRS browser streaming helpers
     src/styles/        # Application styles
     src/utils/         # Shared helpers
+    memories/          # Independent memory-management HTML entry
+    history-demo/      # Saved-video HTML entry
+  history_demo/        # Replay/upload modules and portable offline tests
   deploy/              # Example Nginx configuration
   README_DEPLOY.md     # Production deployment notes
 ```
@@ -95,6 +107,14 @@ src/frontend/
 | **Answers** | `GET /query_task/{task_id}`, `GET /session/{session_id}/qa_history` |
 | **Memory** | `GET /session/{session_id}/memories`, `PUT /session/{session_id}/memories/30sec`, `POST /session/{session_id}/memories/30sec/rollback`, `GET /session/{session_id}/memory-graph`, `GET /memories/sessions` |
 | **Evidence** | `GET /session/{session_id}/file?path=...`, `GET /stream/{session_id}/preview` |
+| **Saved video** | `GET /session/{session_id}/demo-media`, `GET /session/{session_id}/demo-video` (byte ranges) |
+| **Video upload** | `POST /video-uploads`, `GET /video-uploads/{upload_id}`, `POST /video-uploads/{upload_id}/resume` |
+
+The replay page requests `GET /query_task/{task_id}?compact=1` so repeated retrieval traces do not delay answer delivery. Complete answers, evidence captions and capture times remain available; full diagnostics are retained by the backend's default task response.
+
+The updated backend branch supplies saved-video/upload APIs. Optional text-memory import, session renaming and individual-memory JSON export are shown only if the connected backend advertises their required routes in `/openapi.json`. Their absence does not block viewing, capture or Q&A.
+
+Administrator mode uses a local presentation code (`lightmem-admin` by default, configurable through `window.__LIGHTMEM_ADMIN_CODE__`). This controls the editing UI; it is not server authentication. Backend `canEdit`, record permissions, version and idempotency checks remain in force.
 
 The full contract is documented in [`../backend/docs/online_stream_api_contract.md`](../backend/docs/online_stream_api_contract.md).
 

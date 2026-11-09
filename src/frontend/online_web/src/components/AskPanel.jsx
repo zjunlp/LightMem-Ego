@@ -1,10 +1,9 @@
 import { ChevronLeft, Send, Wrench } from 'lucide-react'
-import { useState } from 'react'
+import { useId } from 'react'
+import { useLanguage } from '../i18n.jsx'
 import AdvancedTools from './AdvancedTools.jsx'
 import AnswerCard from './AnswerCard.jsx'
-import CurrentSessionMemoryEditor from './CurrentSessionMemoryEditor.jsx'
 import EvidenceStrip from './EvidenceStrip.jsx'
-import MemoryPanel from './MemoryPanel.jsx'
 
 const QUICK_QUESTIONS = [
   'What is in the current scene?',
@@ -14,26 +13,41 @@ const QUICK_QUESTIONS = [
 ]
 
 export default function AskPanel({ stream, ask, onOpenLive, onReset }) {
+  const { t } = useLanguage()
   const disabled = !stream.sessionId || ask.loading || !stream.canAsk
-  const [memoryPublication, setMemoryPublication] = useState(null)
+  const questionId = useId()
 
   return (
     <section className="ask-panel">
       <header className="ask-header">
         <button className="icon-button secondary back-button" type="button" onClick={onOpenLive}>
           <ChevronLeft size={17} />
-          <span>Live</span>
+          <span>{t('Live')}</span>
         </button>
         <div>
-          <h1>Ask LightMem-Ego</h1>
-          <p>Ask about the live video</p>
+          <h2>{t('Ask LightMem-Ego')}</h2>
+          <p>{t('Ask about the live video')}</p>
         </div>
-        <a className="tools-anchor" href="#advanced-tools" aria-label="Advanced tools">
+        <a
+          className="tools-anchor"
+          href="#advanced-tools"
+          aria-label={t('Advanced tools')}
+          onClick={(event) => {
+            event.preventDefault()
+            const tools = event.currentTarget.closest('.ask-panel')?.querySelector('#advanced-tools')
+            tools?.scrollIntoView({
+              block: 'start',
+              behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth'
+            })
+            tools?.querySelector('.advanced-toggle')?.focus({ preventScroll: true })
+          }}
+        >
           <Wrench size={17} />
         </a>
       </header>
 
       <section className="surface composer-card">
+        <label className="composer-label" htmlFor={questionId}>{t('Ask about the live video')}</label>
         <form
           className="ask-composer"
           onSubmit={(event) => {
@@ -42,14 +56,16 @@ export default function AskPanel({ stream, ask, onOpenLive, onReset }) {
           }}
         >
           <input
+            id={questionId}
             value={ask.question}
             onChange={(event) => ask.setQuestion(event.target.value)}
-            placeholder="Ask about the live video..."
+            aria-label={t('Ask about the live video...')}
+            placeholder={t('Type a question about the live video...')}
             disabled={!stream.sessionId}
           />
           <button className="send-button" type="submit" disabled={disabled || !ask.question.trim()}>
             <Send size={16} />
-            <span>Send</span>
+            <span>{t('Send')}</span>
           </button>
         </form>
 
@@ -65,19 +81,19 @@ export default function AskPanel({ stream, ask, onOpenLive, onReset }) {
                 ask.ask(question, { inputMethod: 'preset' })
               }}
             >
-              {question}
+              {t(question)}
             </button>
           ))}
         </div>
 
         {stream.isWebRtcMode && stream.sessionId && !stream.memoryReady && (
-          <p className="first-frame-hint">Live stream is starting. You can ask now; memory may need a moment to become ready.</p>
+          <p className="first-frame-hint">{t('Live stream is starting. You can ask now; memory may need a moment to become ready.')}</p>
         )}
         {!stream.isWebRtcMode && stream.sessionId && !stream.canAsk && (
-          <p className="first-frame-hint">Building first-frame memory. You can ask once the first frame is uploaded.</p>
+          <p className="first-frame-hint">{t('Building first-frame memory. You can ask once the first frame is uploaded.')}</p>
         )}
         {!stream.sessionId && (
-          <p className="first-frame-hint">Please start Live View first.</p>
+          <p className="first-frame-hint">{t('Please start Live View first.')}</p>
         )}
       </section>
 
@@ -91,17 +107,11 @@ export default function AskPanel({ stream, ask, onOpenLive, onReset }) {
         error={ask.error}
       />
 
-      <CurrentSessionMemoryEditor
-        sessionId={stream.sessionId}
-        onPublication={setMemoryPublication}
-      />
-
       <EvidenceStrip evidenceFrames={ask.evidenceFrames} />
 
       <div id="advanced-tools">
         <AdvancedTools stream={stream} ask={ask} onReset={onReset} />
       </div>
-      <MemoryPanel authoritativeUpdate={memoryPublication} />
     </section>
   )
 }

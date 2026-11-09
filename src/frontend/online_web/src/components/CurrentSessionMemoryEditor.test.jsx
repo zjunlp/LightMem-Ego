@@ -9,17 +9,21 @@ const api = vi.hoisted(() => ({
   fetchLongTermMemories: vi.fn(),
   fetchLongTermMemoryGraph: vi.fn(),
   rollbackThirtySecondMemories: vi.fn(),
-  updateThirtySecondMemories: vi.fn()
+  updateThirtySecondMemories: vi.fn(),
+  getSessionTitle: vi.fn(),
+  updateSessionTitle: vi.fn(),
+  validateSessionTitle: vi.fn(() => '')
 }))
 
 vi.mock('../api/lightmem_egoApi.js', () => api)
 
 beforeEach(() => {
   Object.values(api).forEach((mock) => mock.mockReset())
+  vi.spyOn(window, 'confirm').mockReturnValue(true)
   api.fetchLongTermMemories.mockResolvedValue(buildMemory())
 })
 
-afterEach(() => cleanup())
+afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
 describe('CurrentSessionMemoryEditor', () => {
   it('loads Memory, edits only permitted records, and cancels without a write', async () => {
@@ -76,7 +80,7 @@ describe('CurrentSessionMemoryEditor', () => {
       baseVersion: 1,
       records: [{ id: 'record-1', content: 'changed' }]
     })
-    expect(await screen.findByText('Memory updated.')).toBeTruthy()
+    expect(await screen.findByText('Memory changes saved successfully. The latest version is displayed.')).toBeTruthy()
     await waitFor(() => expect(onPublication).toHaveBeenLastCalledWith(expect.objectContaining({
       sessionId: 'session-1',
       memory: updatedMemory,
@@ -133,7 +137,7 @@ describe('CurrentSessionMemoryEditor', () => {
       sessionId: 'session-1',
       currentVersion: 2
     })))
-    expect(await screen.findByText('Memory rollback completed.')).toBeTruthy()
+    expect(await screen.findByText('Memory rollback succeeded. The latest version is displayed.')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Undo Changes' })).toBeNull()
     await waitFor(() => expect(onPublication).toHaveBeenLastCalledWith(expect.objectContaining({ graph })))
   })
@@ -175,7 +179,7 @@ describe('CurrentSessionMemoryEditor', () => {
 
     await user.click(screen.getByRole('button', { name: 'Edit Current Session Long-Term Memory' }))
 
-    expect(await screen.findByText('Full memory propagation is not available on the current backend.')).toBeTruthy()
+    expect(await screen.findByText('The editing API is not enabled by the backend')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Save Changes' }).disabled).toBe(true)
     expect(screen.queryByRole('textbox')).toBeNull()
     expect(api.updateThirtySecondMemories).not.toHaveBeenCalled()
@@ -203,7 +207,7 @@ describe('CurrentSessionMemoryEditor', () => {
 
     expect(await screen.findByText(/Component: semantic/)).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'Retry rebuild' }))
-    await screen.findByText('Memory updated.')
+    await screen.findByText('Memory changes saved successfully. The latest version is displayed.')
 
     expect(api.updateThirtySecondMemories).toHaveBeenCalledTimes(2)
     const first = api.updateThirtySecondMemories.mock.calls[0][0]
@@ -230,6 +234,8 @@ function buildMemory({ sessionId = 'session-1', version = 1, content = 'original
     schemaVersion: 1,
     sessionId,
     memorySource: 'M_lt',
+    canEdit: propagationSupported && !empty,
+    editDisabledReason: propagationSupported && !empty ? null : 'no_editable_records',
     editSupported: propagationSupported,
     fullPropagationSupported: propagationSupported,
     memoryVersion: version,
@@ -258,6 +264,7 @@ function buildMemory({ sessionId = 'session-1', version = 1, content = 'original
 
 function buildGraph(version) {
   return {
+    sessionId: 'session-1',
     memoryVersion: version,
     componentVersions: { episodic: version, graph: version, semantic: version },
     graphVersions: { episodicGraph: version, semanticGraph: version },

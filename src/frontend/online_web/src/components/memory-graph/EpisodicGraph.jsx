@@ -1,9 +1,14 @@
+import { useLanguage } from '../../i18n.jsx'
 import CytoscapeComponent from 'react-cytoscapejs'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import GraphLegend from './GraphLegend.jsx'
 import GraphZoomControls from './GraphZoomControls.jsx'
+import useGraphPageScroll from './useGraphPageScroll.js'
 import { connectedGraphContext, focusGraphElements } from './graphViewportUtils.js'
 import { NODE_COLOR_STYLES } from './nodeColorPalette.js'
+import { useTheme } from '../ThemeProvider.jsx'
+import { buildGraphAppearance } from './graphAppearance.js'
+import useGraphTextScale from './useGraphTextScale.js'
 
 const EPISODIC_STYLES = [
   {
@@ -105,7 +110,12 @@ const EPISODIC_STYLES = [
 ]
 
 export default function EpisodicGraph({ elements, selection, linkedEventIds, linkedEntityId, focusEventIds, onSelect, onClear }) {
+  const { t } = useLanguage()
+  const { theme } = useTheme()
+  const textScale = useGraphTextScale()
+  const stylesheet = useMemo(() => buildGraphAppearance(EPISODIC_STYLES, theme, textScale), [theme, textScale])
   const [cy, setCy] = useState(null)
+  useGraphPageScroll(cy)
   const containerRef = useRef(null)
   const elementSignature = useMemo(() => elements.map((element) => element.data.id).join('|'), [elements])
   const focusSignature = JSON.stringify([...(focusEventIds || [])].sort())
@@ -185,11 +195,12 @@ export default function EpisodicGraph({ elements, selection, linkedEventIds, lin
   }, [cy])
 
   return (
-    <div ref={containerRef} className="memory-graph-canvas" role="region" aria-label={`Episodic graph with ${elements.filter((element) => element.group === 'nodes').length} visible nodes`}>
-      {!elements.length && <div className="memory-graph-canvas-empty">No episodic events match the current filters.</div>}
+    <div ref={containerRef} className="memory-graph-canvas" role="region" aria-label={t("Episodic graph with {value1} visible nodes", { value1: elements.filter((element) => element.group === 'nodes').length })}>
+      {!elements.length && <div className="memory-graph-canvas-empty">{t("No episodic events match the current filters.")}</div>}
       <CytoscapeComponent
+        className="memory-graph-surface"
         elements={elements}
-        stylesheet={EPISODIC_STYLES}
+        stylesheet={stylesheet}
         layout={{ name: 'preset', fit: true, padding: 42 }}
         cy={registerCy}
         style={{ width: '100%', height: '100%' }}
@@ -198,7 +209,7 @@ export default function EpisodicGraph({ elements, selection, linkedEventIds, lin
         maxZoom={2.5}
       />
       <GraphLegend mode="episodic" />
-      <GraphZoomControls cy={cy} disabled={!elements.length} label="Episodic graph" />
+      <GraphZoomControls cy={cy} disabled={!elements.length} label={t("Episodic graph")} />
     </div>
   )
 }
