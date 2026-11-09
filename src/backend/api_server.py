@@ -5,16 +5,18 @@ import time
 import threading
 import hashlib
 import mimetypes
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from urllib.parse import quote
 from uuid import uuid4
 
 from fastapi import Body, FastAPI, File, Form, Header, UploadFile, Request as FastAPIRequest
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from online_preprocess.io_utils import read_json, utc_now_iso, write_json_atomic, write_status
 from online_preprocess.text_normalization import normalize_user_visible_text_fields, simplify_chinese_text
@@ -32,6 +34,7 @@ from online_pipeline.stream_timeline import append_timeline_event
 from online_retrieval_scheme import normalize_long_term_retrieval_scheme
 from online_qa_history import append_qa_history, load_qa_history, qa_history_path
 from online_query.stream_transport import query_stream_events_path, read_query_stream_events
+from online_memory_view.demo_media import load_demo_media
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -49,6 +52,25 @@ ROKID_ACTIVE_SESSION_PATH = Path("runtime") / "active_rokid_session.json"
 
 
 app = FastAPI(title="Em2Mem Upload API")
+
+# Sync requests share cached engines. Admit at most one submitted/running
+# job, while waiting HTTP requests yield to uploads, status, and SSE polling.
+_SYNC_ASK_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="sync-ask")
+_SYNC_ASK_SLOT = threading.Lock()
+
+
+async def _run_serial_sync_ask(work: Callable[[], JSONResponse]) -> JSONResponse:
+    while not _SYNC_ASK_SLOT.acquire(blocking=False):
+        await asyncio.sleep(0.01)
+    try:
+        job = _SYNC_ASK_EXECUTOR.submit(work)
+    except BaseException:
+        _SYNC_ASK_SLOT.release()
+        raise
+    # A disconnected/cancelled HTTP waiter must not free the slot while its
+    # already-running generation or TTS still accesses the shared engine.
+    job.add_done_callback(lambda _job: _SYNC_ASK_SLOT.release())
+    return await asyncio.wrap_future(job)
 
 
 VOICE_QUESTION_TIMING_PREFIX = "[DEBUG-vq-timing]"
@@ -1094,7 +1116,13 @@ def _find_query_task(task_id: str) -> tuple[str, Path, dict] | None:
     for state_key in ("query_queued", "query_in_progress", "query_done", "query_failed"):
         path = dirs[state_key] / f"{task_id}.json"
         if path.exists():
-            return state_key, path, read_json(path, default={})
+            try:
+                payload = read_json(path, default=None)
+            except FileNotFoundError:
+                # A peer can move the task into the next state after exists.
+                continue
+            if payload is not None:
+                return state_key, path, payload
     aborted_root = PROJECT_ROOT / "online_tasks_aborted"
     if aborted_root.exists():
         for path in sorted(aborted_root.glob(f"*/query*/{task_id}.json"), key=lambda p: p.stat().st_mtime, reverse=True):
@@ -1225,6 +1253,46 @@ def _valid_memory_session_id(session_id: str) -> bool:
     return bool(session_id) and len(session_id) <= 200 and all(ch.isalnum() or ch in {"-", "_"} for ch in session_id)
 
 
+def _video_upload_service():
+    from online_video_upload import VideoUploadService
+    return VideoUploadService(ONLINE_SESSIONS_DIR, PROJECT_ROOT)
+
+
+@app.post("/video-uploads")
+async def upload_history_video(video: UploadFile = File(...), upload_id: str = Form(...)) -> JSONResponse:
+    from online_video_upload import VideoUploadError
+    try:
+        result = await run_in_threadpool(_video_upload_service().receive, video.file, video.filename, upload_id)
+        return JSONResponse(status_code=200 if result["query_ready"] else 202, content=result)
+    except VideoUploadError as exc:
+        return JSONResponse(status_code=exc.status_code, content={"status":"error", "message":str(exc)})
+    finally:
+        await video.close()
+
+
+@app.get("/video-uploads/{upload_id}")
+async def history_video_upload_status(upload_id: str) -> JSONResponse:
+    from online_video_upload import VideoUploadError
+    try:
+        return JSONResponse(content=await run_in_threadpool(_video_upload_service().status, upload_id))
+    except VideoUploadError as exc:
+        return JSONResponse(status_code=exc.status_code, content={"status":"error", "message":str(exc)})
+
+
+@app.post("/video-uploads/{upload_id}/resume")
+async def resume_history_video_upload(upload_id: str) -> JSONResponse:
+    from online_video_upload import VideoUploadError
+    try:
+        return JSONResponse(content=await run_in_threadpool(_video_upload_service().resume, upload_id))
+    except VideoUploadError as exc:
+        return JSONResponse(status_code=exc.status_code, content={"status":"error", "message":str(exc)})
+
+
+@app.on_event("startup")
+async def recover_history_video_uploads():
+    await run_in_threadpool(_video_upload_service().recover)
+
+
 @app.get("/memories/sessions")
 @app.get("/memories/catalog")
 async def get_memory_session_catalog(request: FastAPIRequest, cursor: str | None = None) -> JSONResponse:
@@ -1266,7 +1334,8 @@ async def update_session_memories_30sec(session_id: str, request: FastAPIRequest
     if not idempotency_key:
         return _memory_error_response(MemoryEditError(400, "invalid_idempotency_key", "Idempotency-Key 格式无效"), request_id)
     try:
-        result = MemoryEditService(ONLINE_SESSIONS_DIR, session_id, project_root=PROJECT_ROOT).update(body, idempotency_key)
+        service = MemoryEditService(ONLINE_SESSIONS_DIR, session_id, project_root=PROJECT_ROOT)
+        result = await run_in_threadpool(service.update, body, idempotency_key)
         response = JSONResponse(status_code=result.status_code, content=result.payload)
     except Exception as exc:
         response = _memory_error_response(exc, request_id)
@@ -1283,7 +1352,8 @@ async def rollback_session_memories_30sec(session_id: str, request: FastAPIReque
     if not idempotency_key:
         return _memory_error_response(MemoryEditError(400, "invalid_idempotency_key", "Idempotency-Key 格式无效"), request_id)
     try:
-        result = MemoryEditService(ONLINE_SESSIONS_DIR, session_id, project_root=PROJECT_ROOT).rollback(body, idempotency_key)
+        service = MemoryEditService(ONLINE_SESSIONS_DIR, session_id, project_root=PROJECT_ROOT)
+        result = await run_in_threadpool(service.rollback, body, idempotency_key)
         response = JSONResponse(status_code=result.status_code, content=result.payload)
     except Exception as exc:
         response = _memory_error_response(exc, request_id)
@@ -1292,7 +1362,7 @@ async def rollback_session_memories_30sec(session_id: str, request: FastAPIReque
 
 
 @app.get("/session/{session_id}/memory-graph")
-async def get_session_memory_graph(session_id: str, request: FastAPIRequest, scale: str = "30sec") -> JSONResponse:
+async def get_session_memory_graph(session_id: str, request: FastAPIRequest, scale: str = "30sec") -> Response:
     request_id = request.headers.get("X-Request-ID") or uuid4().hex
     from online_memory_view.graph_service import LongTermMemoryGraphService
     from online_memory_view.graph_service import MemoryGraphError
@@ -1300,7 +1370,7 @@ async def get_session_memory_graph(session_id: str, request: FastAPIRequest, sca
         return _memory_error_response(MemoryGraphError(400, "invalid_session_id", "Session ID 格式非法"), request_id)
     try:
         result = LongTermMemoryGraphService(ONLINE_SESSIONS_DIR, session_id).load(scale, request.headers.get("If-None-Match"))
-        response = JSONResponse(status_code=304 if result.not_modified else 200, content=result.payload if result.payload is not None else None)
+        response = Response(status_code=304) if result.not_modified else JSONResponse(status_code=200, content=result.payload)
         response.headers["ETag"] = result.etag
     except Exception as exc:
         response = _memory_error_response(exc, request_id)
@@ -1346,7 +1416,7 @@ async def refresh_pipeline_state_api(session_id: str) -> JSONResponse:
 
 
 @app.get("/query_task/{task_id}")
-async def query_task_status(task_id: str, http_request: FastAPIRequest = None) -> JSONResponse:
+async def query_task_status(task_id: str, http_request: FastAPIRequest = None, compact: bool = False) -> JSONResponse:
     found = _find_query_task(task_id)
     if found is None:
         return JSONResponse(
@@ -1359,6 +1429,13 @@ async def query_task_status(task_id: str, http_request: FastAPIRequest = None) -
         )
     state_key, path, payload = found
     payload = dict(payload or {})
+    if state_key == "query_in_progress":
+        try:
+            progress = read_json(PROJECT_ROOT / "online_tasks" / "query_progress" / f"{task_id}.json", default=None)
+        except (FileNotFoundError, json.JSONDecodeError):
+            progress = None
+        if isinstance(progress, dict):
+            payload["progress"] = progress
     if state_key == "query_aborted":
         payload.setdefault("status", "cancelled" if payload.get("error_type") == "cancelled" else "aborted")
         payload.setdefault("message", "query task was cancelled or aborted")
@@ -1391,12 +1468,42 @@ async def query_task_status(task_id: str, http_request: FastAPIRequest = None) -
             requested_session_id,
             api_base_url=_api_base_url(http_request),
         )
+    if compact:
+        payload = _compact_query_task_payload(payload)
     return JSONResponse(status_code=200, content=normalize_user_visible_text_fields(payload))
 
 
+def _compact_query_task_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Send UI fields without repeated retrieval traces; stored results stay intact."""
+    common = {"status", "task_id", "session_id", "question", "created_at", "updated_at",
+              "started_at", "finished_at", "progress", "queue_state", "message", "error",
+              "error_type", "result_status", "response_mode", "answer", "answer_text",
+              "timestamps", "latency", "generation_status", "used_memory_sources",
+              "local_evidence_summary", *ANSWER_AUDIO_RESPONSE_KEYS}
+    result = {key: value for key, value in payload.items() if key in common}
+
+    def frames(value):
+        return [{key: item for key, item in frame.items() if key != "frame_origins"}
+                if isinstance(frame, dict) else frame for frame in value]
+
+    if isinstance(payload.get("evidence_frames"), list):
+        result["evidence_frames"] = frames(payload["evidence_frames"])
+    original = payload.get("result")
+    if isinstance(original, dict):
+        answer = {key: value for key, value in original.items() if key in common}
+        if isinstance(original.get("evidence_frames"), list):
+            answer["evidence_frames"] = frames(original["evidence_frames"])
+        raw = original.get("raw") or {}
+        answer["raw"] = {name: {key: bool(debug.get(key)) for key in
+            ["local_fallback_used", "fallback_used", "error_debug"] if key in debug}
+            for name in ["llm_debug", "answer_debug"] if isinstance(debug := raw.get(name), dict)}
+        result["result"] = answer
+    return result
+
+
 @app.get("/task/query/{task_id}")
-async def query_task_status_alias(task_id: str, http_request: FastAPIRequest = None) -> JSONResponse:
-    return await query_task_status(task_id, http_request)
+async def query_task_status_alias(task_id: str, http_request: FastAPIRequest = None, compact: bool = False) -> JSONResponse:
+    return await query_task_status(task_id, http_request, compact)
 
 
 @app.get("/session/{session_id}/status")
@@ -1408,6 +1515,35 @@ async def session_status(session_id: str) -> JSONResponse:
             content={"status": "error", "message": f"status.json not found for session {session_id}"},
         )
     return JSONResponse(status_code=200, content=read_json(status_path, default={}))
+
+
+@app.get("/session/{session_id}/demo-media")
+def session_demo_media(session_id: str) -> JSONResponse:
+    try:
+        payload, _ = load_demo_media(ONLINE_SESSIONS_DIR, session_id)
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"status": "error", "message": str(exc)})
+    except FileNotFoundError as exc:
+        return JSONResponse(status_code=404, content={"status": "error", "message": str(exc)})
+    return JSONResponse(content=payload)
+
+
+@app.get("/session/{session_id}/demo-video", response_model=None)
+def session_demo_video(session_id: str, v: Optional[str] = None):
+    try:
+        payload, video = load_demo_media(ONLINE_SESSIONS_DIR, session_id)
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"status": "error", "message": str(exc)})
+    except FileNotFoundError as exc:
+        return JSONResponse(status_code=404, content={"status": "error", "message": str(exc)})
+    if video is None:
+        return JSONResponse(status_code=404, content={"status": "error", "message": payload["reason"]})
+    if v is not None and v != payload["video_version"]:
+        return JSONResponse(status_code=409, content={"status": "error", "message": "视频已更新，请重新载入后继续播放"},
+                            headers={"Cache-Control": "no-store"})
+    return FileResponse(video, media_type="video/mp4", headers={
+        "Cache-Control": "private, max-age=31536000, immutable" if v else "no-cache",
+    })
 
 
 @app.get("/session/{session_id}/file", response_model=None)
@@ -2237,6 +2373,14 @@ async def _handle_ask_session(
     allow_inactive_session: bool = False,
     task_source: str = "api",
 ) -> JSONResponse | StreamingResponse:
+    upload_state_path = ONLINE_SESSIONS_DIR / session_id / "video_upload.json" if _valid_session_id(session_id) else None
+    if upload_state_path is not None and upload_state_path.exists():
+        upload_state = read_json(upload_state_path, default={})
+        if upload_state.get("status") != "ready" or upload_state.get("query_ready") is not True:
+            return JSONResponse(status_code=409, content={
+                "status":"not_ready", "session_id":session_id,
+                "message":"Uploaded video memories and retrieval indexes are still being prepared.",
+            })
     inactive = None if allow_inactive_session else _inactive_session_response(session_id)
     if inactive is not None:
         response_mode = str(getattr(request, "response_mode", "legacy") or "legacy").strip().lower()
@@ -2446,6 +2590,24 @@ async def _handle_ask_session(
         response_mode="legacy",
     )
 
+    api_base_url = _api_base_url(http_request)
+    return await _run_serial_sync_ask(lambda: _execute_sync_ask(
+        session_id,
+        request,
+        long_term_retrieval_scheme,
+        sync_task,
+        api_base_url=api_base_url,
+    ))
+
+
+def _execute_sync_ask(
+    session_id: str,
+    request: AskRequest,
+    long_term_retrieval_scheme: str,
+    sync_task: dict[str, Any],
+    *,
+    api_base_url: str,
+) -> JSONResponse:
     try:
         from online_query import query_session
 
@@ -2478,7 +2640,8 @@ async def _handle_ask_session(
                 result["stream_context"] = stream_context
         except Exception:
             pass
-        result["status"] = "ok"
+        final_status = "done" if result.get("status") == "ok" else "failed"
+        error_message = None if final_status == "done" else str(result.get("message") or result.get("status"))
         result["response_mode"] = "legacy"
         result = _attach_answer_audio_for_response(
             result,
@@ -2486,15 +2649,16 @@ async def _handle_ask_session(
             request,
             task_id=str(sync_task["task_id"]),
         )
-        _finish_stream_query_task(sync_task, "done", result=result)
-        result = _augment_evidence_frames_for_response(result, session_id, api_base_url=_api_base_url(http_request))
+        _finish_stream_query_task(sync_task, final_status, result=result, error=error_message)
+        result = _augment_evidence_frames_for_response(result, session_id, api_base_url=api_base_url)
         _append_qa_history_safe(
             session_id,
             question=request.question,
             answer=str(result.get("answer") or result.get("answer_text") or ""),
             client_source=request.client_source,
             input_method=request.input_method,
-            status="done",
+            status=final_status,
+            error=error_message or "",
             task_id=sync_task["task_id"],
             response_mode="legacy",
             metadata={"long_term_retrieval_scheme": long_term_retrieval_scheme},

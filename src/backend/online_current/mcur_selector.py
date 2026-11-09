@@ -65,6 +65,7 @@ class MCurFrameSelector:
         q = (question or "").lower()
         is_visual = _contains_any(q, VISUAL_QUERY_KEYWORDS)
         is_speech = _contains_any(q, SPEECH_QUERY_KEYWORDS)
+        wants_history = _contains_any(q, ["刚才", "刚刚", "之前", "变化", "最近", "先前", "earlier", "before", "recent", "changed", "just now"])
         state = current_context.get("state") or {}
         core_seconds = as_float(state.get("core_seconds"), 10.0)
         current_time = as_float(current_context.get("current_time"), as_float(frames[-1].get("timestamp")))
@@ -76,8 +77,13 @@ class MCurFrameSelector:
         recent = list(reversed(core_frames or frames))[: max_frames]
 
         ordered_candidates = [latest]
+        outer_frames = [frame for frame in frames if as_float(frame.get("timestamp")) < core_start]
+        outer_best = max(outer_frames, key=lambda frame: as_float(frame.get("diff_score")), default=None)
         if is_visual:
-            ordered_candidates.extend(high_diff)
+            ordered_candidates.extend(high_diff[:1])
+            if outer_best is not None and max_images >= 3 and wants_history:
+                ordered_candidates.append(outer_best)
+            ordered_candidates.extend(high_diff[1:])
             ordered_candidates.extend(recent)
         elif is_speech:
             ordered_candidates.extend(recent[:2])
@@ -103,11 +109,12 @@ class MCurFrameSelector:
             for frame in selected
             if frame.get("path")
         ]
+        selected_order = {str(frame.get("path")): index for index, frame in enumerate(ordered_candidates)}
         image_order = sorted(
             evidence_frames,
             key=lambda frame: (
-                0 if frame.get("role") == "latest" else 1,
-                -as_float(frame.get("diff_score")),
+                0 if abs(as_float(frame.get("timestamp")) - as_float(latest.get("timestamp"))) < 1e-6 else 1,
+                selected_order.get(str(frame.get("path")), 9999),
                 -as_float(frame.get("timestamp")),
             ),
         )
@@ -134,7 +141,7 @@ class MCurFrameSelector:
             sec = int(ts)
             if sec in seen_seconds:
                 continue
-            if any(abs(ts - as_float(item.get("timestamp"))) < 1.5 for item in selected):
+            if any(abs(ts - as_float(item.get("timestamp"))) < 1.5 and as_float(frame.get("diff_score")) < 0.10 for item in selected):
                 continue
             selected.append(frame)
             seen_seconds.add(sec)

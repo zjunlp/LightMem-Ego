@@ -5,7 +5,7 @@ import os
 import re
 import subprocess
 import sys
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +14,9 @@ from online_memory.evidence_to_em2mem import (
     evidence_doc_to_caption_item,
     load_online_evidence,
 )
+from online_memory_edit.active_snapshot import materialize_active_snapshot
+from online_memory.visual_summary import aggregate_visual_summaries, build_child_visual_evidence, visual_summary_from_evidence
+from online_memory_edit.lock import session_memory_mutation_lock
 from online_memory.em2mem_layout import Em2MemOnlineLayout, ensure_em2mem_layout, seconds_to_hhmmssff
 from online_preprocess.io_utils import ensure_dir, read_json, relative_to_session, utc_now_iso, write_json_atomic
 
@@ -48,6 +51,8 @@ class IncrementalAppendResult:
     append_state_path: str
     component_versions_path: str
     message: str | None = None
+    repaired_episode_ids: list[str] = field(default_factory=list)
+    failed_episode_ids: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -228,11 +233,12 @@ class IncrementalMemoryAppender:
         wanted = self._episode_filter(episode_ids)
         episodes = []
         skipped = []
+        latest = self.append_log.latest_by_episode()
         for episode in self.load_mst_episodes():
             episode_id = str(episode.get("episode_id") or "")
             if wanted is not None and episode_id not in wanted:
                 continue
-            decision = self.append_log.decide(episode, force=force)
+            decision = self.append_log.decide(episode, force=force, latest_by_episode=latest)
             if decision.should_append:
                 episodes.append({"episode_id": episode_id, "reason": decision.reason, "start_time": episode.get("start_time"), "end_time": episode.get("end_time")})
             else:
@@ -252,6 +258,7 @@ class IncrementalMemoryAppender:
         item = evidence_doc_to_caption_item(self.session_id, evidence_doc, idx)
         item["episode_id"] = episode.get("episode_id")
         item["source_episode_id"] = episode.get("episode_id")
+        item["episode_version"] = int(episode.get("version", 1) or 1)
         item["source_micro_event_ids"] = episode.get("source_micro_event_ids") or evidence_doc.get("source_micro_event_ids") or []
         item["episodic_source"] = "mst_micro_events"
         item["incremental_source"] = "stage8b_incremental_append"
@@ -260,13 +267,29 @@ class IncrementalMemoryAppender:
     def _load_caption_30s(self) -> list[dict[str, Any]]:
         return _load_json_list(self.layout.caption_30sec_path)
 
+    def _pending_component_items(self, caption_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        # Fast append is idempotent independently of slower graph/semantic work.
+        # Inspect the whole active history, even for a request filtered to one
+        # new episode, so a newer version cannot hide an older component hole.
+        latest = self.append_log.latest_by_episode()
+        pending = []
+        for item in caption_items:
+            entry = latest.get(str(item.get("episode_id") or item.get("source_episode_id") or ""), {})
+            if entry and (entry.get("status") == "graph_semantic_pending" or (
+                entry.get("status") in {"appended_fast", "appending"}
+                and (not entry.get("graph_version") or not entry.get("semantic_memory_version"))
+            )):
+                pending.append(item)
+        return pending
+
     def _upsert_caption_items(self, existing: list[dict[str, Any]], new_items: list[dict[str, Any]], force: bool) -> list[dict[str, Any]]:
         by_doc = {str(item.get("doc_id") or item.get("episode_id") or ""): dict(item) for item in existing}
         for item in new_items:
             doc_id = str(item.get("doc_id") or item.get("episode_id") or "")
             if not doc_id:
                 continue
-            if doc_id in by_doc and not force:
+            if (doc_id in by_doc and not force
+                    and int(item.get("episode_version", 1) or 1) <= int(by_doc[doc_id].get("episode_version", 1) or 1)):
                 continue
             by_doc[doc_id] = dict(item)
         return sorted(by_doc.values(), key=lambda x: (str(x.get("date", "DAY1")), float(x.get("start") or 0.0), float(x.get("end") or 0.0)))
@@ -325,8 +348,11 @@ class IncrementalMemoryAppender:
                     "start": child.get("start"),
                     "end": child.get("end"),
                     "text": child.get("text") or child.get("fine_caption") or child.get("caption"),
+                    "visual_summary": visual_summary_from_evidence(child),
+                    "visual_summary_status": child.get("visual_summary_status"),
+                    "scene_summary": (child.get("scene_summary") or {}) if child.get("visual_summary_status") not in {"failed", "unavailable"} else {},
                     "transcript": child.get("transcript"),
-                    "visual_objects": child.get("visual_objects") or [],
+                    "visual_objects": (child.get("visual_objects") or []) if child.get("visual_summary_status") not in {"failed", "unavailable"} else [],
                     "main_actions": child.get("main_actions") or [],
                     "state_changes": child.get("state_changes") or [],
                     "entities": child.get("entities") or [],
@@ -340,6 +366,9 @@ class IncrementalMemoryAppender:
                     "content": (
                         "You rewrite one dirty multiscale episodic memory window for a long-video memory system. "
                         "Use only the provided child 30-second memories. Preserve temporal order and do not invent identities. "
+                        "Generate visual_summary using ONLY child_visual_evidence, which contains the eligible visual observations. "
+                        "All other fields are narrative context only: do not use them to add visual facts, speech, plans or inferred intentions. "
+                        "If no child visual evidence is available, return an empty visual_summary. "
                         "Return valid JSON only."
                     ),
                 },
@@ -349,10 +378,12 @@ class IncrementalMemoryAppender:
                         {
                             "level": level,
                             "window": {"start": start, "end": end},
-                            "current_rule_item": item,
+                            "current_rule_item": {key: item.get(key) for key in ("doc_id", "start", "end", "text", "visual_summary")},
                             "child_30s_memories": children,
+                            "child_visual_evidence": build_child_visual_evidence(children),
                             "return_fields": [
                                 "text",
+                                "visual_summary",
                                 "topic_threads",
                                 "key_observations",
                                 "involved_entities",
@@ -372,6 +403,14 @@ class IncrementalMemoryAppender:
                     item["text"] = rewritten_text
                     item["caption"] = rewritten_text
                     item["fine_caption"] = rewritten_text
+                child_visual = aggregate_visual_summaries(children)
+                visual = data.get("visual_summary")
+                if child_visual and isinstance(visual, str) and visual.strip():
+                    item["visual_summary"] = re.sub(r"\s+", " ", visual).strip()
+                    item["visual_summary_status"] = "generated"
+                else:
+                    item["visual_summary"] = child_visual
+                    item["visual_summary_status"] = "derived" if child_visual else "unavailable"
                 for key in ("topic_threads", "key_observations", "involved_entities", "salient_objects", "events"):
                     values = _clean_str_list(data.get(key), limit=16)
                     if values:
@@ -429,16 +468,28 @@ class IncrementalMemoryAppender:
                 "stdout_tail": proc.stdout[-4000:],
                 "stderr_tail": proc.stderr[-4000:],
             }
-        try:
-            return json.loads(proc.stdout)
-        except Exception:
-            return {
-                "status": "done",
-                "healthy": None,
-                "returncode": proc.returncode,
-                "stdout_tail": proc.stdout[-4000:],
-                "stderr_tail": proc.stderr[-4000:],
-            }
+        # Model/client initialization can print before the CLI's final JSON.
+        # Decode complete result objects rather than treating log noise as a
+        # successful refresh with unknown health.
+        result = None
+        decoder = json.JSONDecoder()
+        for match in re.finditer(r"(?m)^[ \t]*\{", proc.stdout):
+            try:
+                value, _ = decoder.raw_decode(proc.stdout[match.end() - 1:])
+            except ValueError:
+                continue
+            if isinstance(value, dict) and "status" in value and "healthy" in value:
+                result = value
+        if result is not None:
+            return result
+        return {
+            "status": "failed",
+            "healthy": False,
+            "returncode": proc.returncode,
+            "error": "HippoRAG refresh subprocess returned no valid result JSON",
+            "stdout_tail": proc.stdout[-4000:],
+            "stderr_tail": proc.stderr[-4000:],
+        }
 
     def _update_memory_config(
         self,
@@ -449,14 +500,15 @@ class IncrementalMemoryAppender:
         semantic_ready: bool,
         visual_task_path: Path | None,
         snapshot_path: Path,
+        visual_lagging: bool | None = None,
     ) -> dict[str, Any]:
         config = self.load_memory_config()
         semantic_version = version if semantic_ready else _safe_int(config.get("latest_semantic_ready_version") or config.get("semantic_version"), 0)
         graph_version = version if graph_ready else _safe_int(config.get("latest_graph_ready_version") or config.get("graph_version"), 0)
         visual_version = _safe_int(config.get("latest_visual_ready_version") or config.get("visual_version"), 0)
-        visual_lagging = bool(visual_task_path)
-        semantic_lagging = semantic_version < version
-        graph_lagging = graph_version < version
+        visual_lagging = bool(visual_task_path) if visual_lagging is None else visual_lagging
+        semantic_lagging = not semantic_ready
+        graph_lagging = not graph_ready
         config.update(
             {
                 "session_id": self.session_id,
@@ -554,10 +606,41 @@ class IncrementalMemoryAppender:
         dry_run: bool = False,
         skip_graph_semantic: bool = False,
     ) -> IncrementalAppendResult:
-        self._ensure_base_layout()
+        if dry_run:
+            # Planning reads existing files only, including for absent sessions.
+            return self._append_ready_episodes_locked(
+                episode_ids=episode_ids, force=force, dry_run=True,
+                skip_graph_semantic=skip_graph_semantic,
+            )
+        # Editing, rollback, and append must agree on one active base version.
+        # Hold the lock through publication so no edit can be lost between
+        # materializing the active immutable snapshot and publishing the append.
+        with session_memory_mutation_lock(self.session_dir):
+            return self._append_ready_episodes_locked(
+                episode_ids=episode_ids,
+                force=force,
+                dry_run=dry_run,
+                skip_graph_semantic=skip_graph_semantic,
+            )
+
+    def _append_ready_episodes_locked(
+        self,
+        *,
+        episode_ids: list[str] | None,
+        force: bool,
+        dry_run: bool,
+        skip_graph_semantic: bool,
+    ) -> IncrementalAppendResult:
+        if not dry_run:
+            self._ensure_base_layout()
+            materialize_active_snapshot(self.session_dir)
         plan = self.plan_ready_episodes(episode_ids=episode_ids, force=force)
         candidates = {item["episode_id"] for item in plan["append_candidates"]}
         skipped_ids = [item["episode_id"] for item in plan["skipped"]]
+        existing_caption_30s = self._load_caption_30s()
+        pending_items = self._pending_component_items(existing_caption_30s)
+        pending_log = self.append_log.latest_by_episode()
+        pending_entries = [pending_log.get(str(item.get("episode_id") or item.get("source_episode_id") or ""), {}) for item in pending_items]
         if dry_run:
             return IncrementalAppendResult(
                 status="dry_run",
@@ -575,7 +658,7 @@ class IncrementalMemoryAppender:
                 component_versions_path=relative_to_session(self.component_versions_path, self.session_dir),
                 message="dry-run: no files modified",
             )
-        if not candidates:
+        if not candidates and (skip_graph_semantic or not pending_items):
             state = self.append_log.write_state(self.append_state_path, self.session_id)
             hipporag_health = inspect_hipporag_cache_health(self.session_dir, self.project_root)
             if not hipporag_health.get("healthy") and _env_bool("EM2MEM_INCREMENTAL_REFRESH_HIPPORAG_CACHE_ON_NOOP", False):
@@ -583,17 +666,20 @@ class IncrementalMemoryAppender:
                     hipporag_health = self._refresh_hipporag_cache_isolated(force=False).get("after", hipporag_health)
                 except Exception as exc:
                     hipporag_health["repair_error"] = f"{type(exc).__name__}: {exc}"
+            config = self.load_memory_config()
+            fast_version = _safe_int(config.get("latest_fast_ready_version") or config.get("latest_ready_memory_version"), 0)
+            lag = config.get("lag") or {}
             return IncrementalAppendResult(
                 status="ok",
                 session_id=self.session_id,
                 em2mem_update_mode="incremental_append",
-                fast_memory_version=_safe_int(self.load_memory_config().get("latest_fast_ready_version") or self.load_memory_config().get("latest_ready_memory_version"), 0),
+                fast_memory_version=fast_version,
                 appended_episode_ids=[],
                 skipped_episode_ids=skipped_ids,
                 dirty_window_count=0,
-                graph_lagging=False,
-                semantic_lagging=False,
-                visual_lagging=False,
+                graph_lagging=bool(any(not entry.get("graph_version") for entry in pending_entries) or lag.get("graph_lagging") or _safe_int(config.get("latest_graph_ready_version")) < fast_version),
+                semantic_lagging=bool(any(not entry.get("semantic_memory_version") for entry in pending_entries) or lag.get("semantic_lagging") or _safe_int(config.get("latest_semantic_ready_version")) < fast_version),
+                visual_lagging=bool(lag.get("visual_lagging")),
                 snapshot_path=None,
                 append_state_path=relative_to_session(self.append_state_path, self.session_dir),
                 component_versions_path=relative_to_session(self.component_versions_path, self.session_dir),
@@ -610,12 +696,13 @@ class IncrementalMemoryAppender:
             _safe_int(config.get("memory_version"), 0),
             _safe_int(self.load_versions().get("fast", {}).get("latest_ready_version"), 0),
         )
-        target_version = current_version + 1
+        target_version = current_version + bool(candidates)
         _log_stage(self.session_id, "fast_append", target_version=target_version, candidate_count=len(candidates))
         episodes = [ep for ep in self.load_mst_episodes() if str(ep.get("episode_id") or "") in candidates]
-        evidence_by_episode = self._evidence_by_episode()
-        existing_caption_30s = self._load_caption_30s()
+        evidence_by_episode = self._evidence_by_episode() if episodes else {}
         new_caption_items: list[dict[str, Any]] = []
+        appended_episodes: list[dict[str, Any]] = []
+        failed_ids: list[str] = []
         dirty_windows: list[dict[str, Any]] = []
         keyframe_paths: list[str] = []
 
@@ -624,23 +711,49 @@ class IncrementalMemoryAppender:
             evidence_doc = evidence_by_episode.get(episode_id)
             if not evidence_doc:
                 self.append_log.append_status(episode=episode, status="failed", error=f"missing MST evidence doc for {episode_id}")
+                failed_ids.append(episode_id)
+                continue
+            if (evidence_doc.get("version") is not None
+                    and int(evidence_doc["version"] or 1) != int(episode.get("version", 1) or 1)):
+                self.append_log.append_status(episode=episode, status="failed", error=f"MST evidence version mismatch for {episode_id}")
+                failed_ids.append(episode_id)
                 continue
             self.append_log.append_status(episode=episode, status="appending", fast_memory_version=target_version, extra={"force": force})
             item = self._caption_item_for_episode(episode, evidence_doc, len(existing_caption_30s) + len(new_caption_items))
             new_caption_items.append(item)
+            appended_episodes.append(episode)
             dirty_windows.extend(self.dirty_manager.mark_dirty(episode))
             keyframe_paths.extend(str(x) for x in item.get("keyframe_paths", []) or [])
 
+        if not new_caption_items and not pending_items:
+            self.append_log.write_state(self.append_state_path, self.session_id)
+            return IncrementalAppendResult(
+                status="failed", session_id=self.session_id, em2mem_update_mode="incremental_append",
+                fast_memory_version=current_version, appended_episode_ids=[], skipped_episode_ids=skipped_ids,
+                dirty_window_count=0, graph_lagging=bool(config.get("lag", {}).get("graph_lagging")),
+                semantic_lagging=bool(config.get("lag", {}).get("semantic_lagging")),
+                visual_lagging=bool(config.get("lag", {}).get("visual_lagging")), snapshot_path=None,
+                append_state_path=relative_to_session(self.append_state_path, self.session_dir),
+                component_versions_path=relative_to_session(self.component_versions_path, self.session_dir),
+                failed_episode_ids=failed_ids, message="No episode had an available evidence document",
+            )
+        target_version = current_version + bool(new_caption_items)
         caption_30s = self._upsert_caption_items(existing_caption_30s, new_caption_items, force=force)
-        self._write_caption_roots(caption_30s)
-        clean_ids = self._update_dirty_multiscale(caption_30s, dirty_windows)
-        self.dirty_manager.mark_clean(clean_ids)
+        clean_ids: set[str] = set()
+        if new_caption_items:
+            self._write_caption_roots(caption_30s)
+            clean_ids = self._update_dirty_multiscale(caption_30s, dirty_windows)
+            self.dirty_manager.mark_clean(clean_ids)
+
+        # New items override stale pending copies when an episode is rebuilt.
+        component_by_doc = {str(item["doc_id"]): item for item in [*pending_items, *new_caption_items]}
+        component_items = list(component_by_doc.values())
 
         visual_task_path = None
-        if _env_bool("EM2MEM_AUTO_VISUAL_EMBEDDING", True):
+        if new_caption_items and _env_bool("EM2MEM_AUTO_VISUAL_EMBEDDING", True):
             _log_stage(self.session_id, "visual_enqueue", target_version=target_version, keyframe_count=len(keyframe_paths))
             visual_task_path = self._write_visual_task(
-                episode_ids=[str(ep.get("episode_id")) for ep in episodes],
+                episode_ids=[str(ep.get("episode_id")) for ep in appended_episodes],
                 keyframe_paths=keyframe_paths,
                 target_version=target_version,
             )
@@ -652,7 +765,9 @@ class IncrementalMemoryAppender:
             )
         else:
             _log_stage(self.session_id, "visual_skip", reason="EM2MEM_AUTO_VISUAL_EMBEDDING=0", target_version=target_version, keyframe_count=len(keyframe_paths))
-        visual_lagging = visual_task_path is not None
+        visual_lagging = visual_task_path is not None or (
+            not new_caption_items and bool((config.get("lag") or {}).get("visual_lagging"))
+        )
 
         # Publish the fast episodic snapshot before slow graph/semantic/cache work.
         fast_components = {
@@ -661,7 +776,7 @@ class IncrementalMemoryAppender:
             "graph": _safe_int(config.get("latest_graph_ready_version"), 0),
             "semantic": _safe_int(config.get("latest_semantic_ready_version"), 0),
         }
-        snapshot_path = SnapshotManager(self.session_dir).build_fast_snapshot(
+        snapshot_path = SnapshotManager(self.session_dir)._build_fast_snapshot_unlocked(
             target_version,
             components=fast_components,
             long_term_partial_ready=True,
@@ -676,19 +791,20 @@ class IncrementalMemoryAppender:
             semantic_ready=False,
             visual_task_path=visual_task_path,
             snapshot_path=snapshot_path,
+            visual_lagging=visual_lagging,
         )
         _log_stage(self.session_id, "component_versions_update", target_version=target_version, fast_ready=True)
         config = self.load_memory_config()
 
         graph_state = {"graph_lagging": True, "latest_graph_ready_version": _safe_int(config.get("latest_graph_ready_version"), 0)}
         semantic_state = {"semantic_lagging": True, "latest_semantic_ready_version": _safe_int(config.get("latest_semantic_ready_version"), 0)}
-        if new_caption_items and not skip_graph_semantic:
+        if component_items and not skip_graph_semantic:
             try:
                 _log_stage(self.session_id, "triple_extraction", target_version=target_version, item_count=len(new_caption_items))
                 graph_state = generate_graph_delta(
                     session_dir=self.session_dir,
                     version=target_version,
-                    new_caption_items=new_caption_items,
+                    new_caption_items=component_items,
                     all_caption_items=caption_30s,
                     model_name=self.model_name,
                 )
@@ -713,7 +829,7 @@ class IncrementalMemoryAppender:
             "graph": target_version if graph_ready else _safe_int(config.get("latest_graph_ready_version"), 0),
             "semantic": target_version if semantic_ready else _safe_int(config.get("latest_semantic_ready_version"), 0),
         }
-        snapshot_path = SnapshotManager(self.session_dir).build_fast_snapshot(
+        snapshot_path = SnapshotManager(self.session_dir)._build_fast_snapshot_unlocked(
             target_version,
             components=components,
             long_term_partial_ready=True,
@@ -728,6 +844,7 @@ class IncrementalMemoryAppender:
             semantic_ready=semantic_ready,
             visual_task_path=visual_task_path,
             snapshot_path=snapshot_path,
+            visual_lagging=visual_lagging,
         )
         try:
             _log_stage(self.session_id, "graph_build", mode="hipporag_cache_subprocess", target_version=target_version)
@@ -785,7 +902,24 @@ class IncrementalMemoryAppender:
         )
         self.write_versions(versions)
 
-        appended_ids = [str(ep.get("episode_id")) for ep in episodes]
+        appended_ids = [str(ep.get("episode_id")) for ep in appended_episodes]
+        processed_episodes = {str(ep.get("episode_id")): ep for ep in appended_episodes}
+        repaired_ids = []
+        if not skip_graph_semantic:
+            episodes_by_id = {str(ep.get("episode_id")): ep for ep in self.load_mst_episodes()}
+            for item in pending_items:
+                episode_id = str(item.get("episode_id") or item.get("source_episode_id") or "")
+                if episode_id and episode_id not in processed_episodes:
+                    processed_episodes[episode_id] = {
+                        **(episodes_by_id.get(episode_id) or {
+                            "episode_id": episode_id, "start_time": item.get("start"), "end_time": item.get("end"),
+                        }),
+                        # This repair consumed the caption snapshot, not a
+                        # newer episode that may have arrived during the build.
+                        "version": int(item.get("episode_version", 1) or 1),
+                    }
+                    if graph_ready and semantic_ready:
+                        repaired_ids.append(episode_id)
         final_append_status = (
             "fully_ready"
             if graph_ready and semantic_ready and not visual_lagging
@@ -793,7 +927,7 @@ class IncrementalMemoryAppender:
             if graph_ready and semantic_ready
             else "graph_semantic_pending"
         )
-        for episode in episodes:
+        for episode in processed_episodes.values():
             self.append_log.append_status(
                 episode=episode,
                 status=final_append_status,
@@ -811,7 +945,7 @@ class IncrementalMemoryAppender:
         self.append_log.write_state(self.append_state_path, self.session_id)
 
         return IncrementalAppendResult(
-            status="ok",
+            status="partial" if failed_ids else "ok",
             session_id=self.session_id,
             em2mem_update_mode="incremental_append",
             fast_memory_version=target_version,
@@ -824,4 +958,6 @@ class IncrementalMemoryAppender:
             snapshot_path=relative_to_session(snapshot_path, self.session_dir),
             append_state_path=relative_to_session(self.append_state_path, self.session_dir),
             component_versions_path=relative_to_session(self.component_versions_path, self.session_dir),
+            repaired_episode_ids=repaired_ids,
+            failed_episode_ids=failed_ids,
         )

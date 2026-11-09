@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f5f5f7">
+  <title data-i18n="已有视频演示 · LightMem-Ego">已有视频演示 · LightMem-Ego</title>
+  <script type="module" src="/src/history-main.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/#/collect"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 4 16 4 16 0V5M4 12c0 4 16 4 16 0"/></svg></span><span>LightMem-Ego<small>Realtime memory workspace</small></span></a>
+    <nav aria-label="主导航" data-i18n-label="主导航"><a href="/#/collect" data-i18n="采集与提问">采集与提问</a><a href="/memories/" data-i18n="记忆">记忆</a><a href="/history-demo/" aria-current="page" data-i18n="视频回看">视频回看</a></nav>
+    <div class="appearance-controls"><button id="theme-toggle" class="icon-button" type="button" aria-label="切换明暗主题" data-i18n-label="切换明暗主题" title="切换明暗主题" data-i18n-title="切换明暗主题"><svg id="theme-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M20.5 14A8.7 8.7 0 0 1 10 3.5 8.7 8.7 0 1 0 20.5 14Z"/></svg><svg id="theme-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true" hidden><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg></button><button id="language-toggle" class="language-button" type="button" aria-label="切换语言" data-i18n-label="切换语言">English</button><button id="font-toggle" class="icon-button" type="button" aria-label="调整字号" data-i18n-label="调整字号" title="调整字号" data-i18n-title="调整字号">T<span class="font-small">A</span></button><button id="admin-mode-toggle" class="admin-mode-button" type="button" aria-haspopup="dialog" aria-expanded="false"><span id="admin-mode-label" data-i18n="管理员模式">管理员模式</span><small id="admin-mode-state" data-i18n="普通浏览">普通浏览</small></button></div>
+  </header>
+  <main>
+    <div class="page-heading"><div><h1 data-i18n="已有视频演示">已有视频演示</h1><p data-i18n="回看发生过的事，向记忆继续提问。">回看发生过的事，向记忆继续提问。</p></div><div class="page-actions"><button id="show-upload" type="button" data-i18n="上传视频">上传视频</button><a class="back-link" href="/memories/" data-i18n="查看全部记忆 ↗">查看全部记忆 ↗</a></div></div>
+    <section id="upload-panel" class="panel upload-panel" aria-labelledby="upload-title" hidden>
+      <div class="panel-heading"><div><p class="eyebrow" data-i18n="本地视频">本地视频</p><h2 id="upload-title" data-i18n="上传视频">上传视频</h2></div><button id="hide-upload" class="quiet" type="button" data-i18n="收起">收起</button></div>
+      <p class="muted" data-i18n="上传新视频，构建完成后回看提问。">上传新视频，构建完成后回看提问。</p>
+      <form id="video-upload-form">
+        <label for="video-upload-file" data-i18n="选择视频">选择视频</label>
+        <input id="video-upload-file" type="file" accept="video/mp4,video/quicktime,video/webm,video/x-matroska,video/x-msvideo,.mp4,.mov,.m4v,.webm,.mkv,.avi" required>
+        <p class="muted" data-i18n="支持 MP4、MOV、WebM、MKV、AVI，最大 95 MiB。">支持 MP4、MOV、WebM、MKV、AVI，最大 95 MiB。</p>
+        <div class="upload-controls"><button id="video-upload-submit" type="submit" data-i18n="上传并构建记忆">上传并构建记忆</button><button id="video-upload-check" type="button" class="secondary" hidden data-i18n="检查状态">检查状态</button><button id="video-upload-resume" type="button" class="secondary" hidden data-i18n="继续处理">继续处理</button><button id="video-upload-new" type="button" class="quiet" hidden data-i18n="选择其他视频">选择其他视频</button></div>
+      </form>
+      <div id="video-upload-result" class="upload-result" hidden>
+        <p id="video-upload-filename" class="upload-filename"></p>
+        <progress id="video-upload-progress" max="100" value="0" aria-label="上传和记忆构建进度" data-i18n-label="上传和记忆构建进度"></progress>
+        <p id="video-upload-status" role="status" aria-live="polite"></p>
+        <div class="upload-controls"><button id="video-upload-open" type="button" hidden data-i18n="打开视频并提问">打开视频并提问</button><a id="video-upload-memories" class="memory-catalog-link" hidden data-i18n="查看此会话记忆">查看此会话记忆</a></div>
+      </div>
+    </section>
+    <div class="workspace">
+      <aside class="panel sessions-panel" aria-label="选择会话" data-i18n-label="选择会话">
+        <div class="panel-heading"><h2 data-i18n="视频会话">视频会话</h2><button id="refresh" class="quiet" type="button" data-i18n="刷新">刷新</button></div>
+        <label class="visually-hidden" for="session-search" data-i18n="搜索已载入的会话">搜索已载入的会话</label><input id="session-search" class="session-search" type="search" placeholder="搜索已载入的会话…" data-i18n-placeholder="搜索已载入的会话…">
+        <p id="catalog-status" class="muted" role="status" data-i18n="正在读取会话…">正在读取会话…</p>
+        <div id="sessions" class="session-list"></div>
+        <button id="load-more" class="secondary wide" type="button" hidden data-i18n="加载更多会话">加载更多会话</button>
+      </aside>
+      <section class="viewer" aria-label="视频与问答" data-i18n-label="视频与问答">
+        <div class="panel video-panel">
+          <div class="panel-heading"><div><p class="eyebrow" data-i18n="视频回看">视频回看</p><h2 id="session-title" data-i18n="选择一个已有会话">选择一个已有会话</h2></div><span class="pill"><span class="status-dot"></span><span data-i18n="已有视频">已有视频</span></span></div>
+          <p id="session-id" class="session-id muted"></p>
+          <div id="video-shell" class="video-shell"><video id="video" controls playsinline preload="auto" hidden aria-label="会话视频" data-i18n-label="会话视频"></video><p id="media-message" data-i18n="从左侧选择会话，即可查看视频与记忆。">从左侧选择会话，即可查看视频与记忆。</p></div>
+          <p id="video-status" class="muted" role="status"></p>
+          <button id="resume-video" class="secondary" type="button" hidden data-i18n="从暂停处继续播放">从暂停处继续播放</button>
+          <p id="media-detail" class="muted"></p>
+          <div class="timeline-notes"><span id="playback" data-i18n="播放位置：—">播放位置：—</span><span id="coverage" data-i18n="已生成记忆覆盖：—">已生成记忆覆盖：—</span></div>
+          <p class="scope-note" data-i18n="提问会检索本会话已生成的记忆，不受播放进度限制。想了解某个时段，可在问题里说明。">提问会检索本会话已生成的记忆，不受播放进度限制。想了解某个时段，可在问题里说明。</p>
+        </div>
+        <section class="panel qa-panel" aria-label="真实问答" data-i18n-label="真实问答">
+          <div class="panel-heading"><div><h2 data-i18n="向记忆提问">向记忆提问</h2><p class="muted" data-i18n="回答、历史与画面证据，都在这里。">回答、历史与画面证据，都在这里。</p></div><span id="conversation-count" class="pill" data-i18n="0 条对话">0 条对话</span></div>
+          <div class="history-toolbar"><span id="history-status" class="muted" role="status" data-i18n="选择会话后读取问答记录">选择会话后读取问答记录</span><button id="refresh-history" class="quiet" type="button" disabled data-i18n="刷新记录">刷新记录</button></div>
+          <div id="conversation" class="conversation" aria-live="polite" aria-relevant="additions text"><p class="empty" data-i18n="选择会话后开始第一个问题。">选择会话后开始第一个问题。</p></div>
+          <button id="earlier-history" class="quiet wide" type="button" hidden data-i18n="载入更早的对话">载入更早的对话</button>
+          <form id="ask-form"><label for="question" data-i18n="向所选会话提问">向所选会话提问</label><textarea id="question" rows="3" maxlength="6000" placeholder="例如：刚才那个背包，后来放到哪里了？" data-i18n-placeholder="例如：刚才那个背包，后来放到哪里了？" disabled></textarea><div class="composer-footer"><span id="ask-hint" class="muted" role="status" data-i18n="请先选择会话">请先选择会话</span><div class="composer-actions"><button id="check-task" class="secondary" type="button" hidden data-i18n="核对任务状态">核对任务状态</button><button id="send" type="submit" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4 20-7ZM22 2 11 13"/></svg><span data-i18n="发送问题">发送问题</span></button></div></div></form>
+        </section>
+      <aside class="panel memory-panel" aria-label="已有记忆" data-i18n-label="已有记忆">
+        <details id="memory-details" open>
+          <summary><span data-i18n="已有记忆">已有记忆</span><span id="memory-count" class="pill">—</span></summary>
+          <div class="memory-actions"><a id="view-memory-session" class="memory-catalog-link" href="/memories/" hidden data-i18n="在记忆目录查看此会话 ↗">在记忆目录查看此会话 ↗</a><button id="edit-memory" class="memory-edit-link" type="button" aria-expanded="false" aria-controls="memory-editor" hidden data-i18n="编辑长期记忆">编辑长期记忆</button></div>
+          <p id="memory-status" class="muted" role="status" data-i18n="选择会话后读取已有记忆。">选择会话后读取已有记忆。</p>
+          <section id="memory-editor" class="memory-editor" aria-label="编辑长期记忆" data-i18n-label="编辑长期记忆" hidden>
+            <p class="memory-editor-help" data-i18n="修改 30 秒事件描述，保存后会更新相关摘要、语义记忆与检索索引。更新期间仍可播放和提问，回答使用最近已发布的记忆。">修改 30 秒事件描述，保存后会更新相关摘要、语义记忆与检索索引。更新期间仍可播放和提问，回答使用最近已发布的记忆。</p>
+            <p id="memory-editor-version" class="muted"></p>
+            <form id="memory-edit-form">
+              <div id="memory-edit-fields"></div>
+              <div class="memory-editor-actions">
+                <p id="memory-edit-status" class="muted" role="status" aria-live="polite"></p>
+                <p id="memory-edit-count" class="muted"></p>
+                <div class="memory-editor-buttons">
+                  <button id="memory-edit-save" type="submit" data-i18n="保存修改">保存修改</button>
+                  <button id="memory-edit-retry" type="button" class="secondary" hidden data-i18n="检查保存结果">检查保存结果</button>
+                  <button id="memory-edit-latest" type="button" class="secondary" hidden data-i18n="读取最新版本">读取最新版本</button>
+                  <button id="memory-edit-review" type="button" class="secondary" hidden data-i18n="已核对，保留草稿继续编辑">已核对，保留草稿继续编辑</button>
+                  <button id="memory-edit-undo" type="button" class="secondary" hidden data-i18n="撤销上次修改">撤销上次修改</button>
+                  <button id="memory-edit-discard" type="button" class="quiet" hidden data-i18n="放弃草稿">放弃草稿</button>
+                  <button id="memory-edit-close" type="button" class="quiet" data-i18n="收起编辑">收起编辑</button>
+                </div>
+              </div>
+            </form>
+          </section>
+          <div id="memory-records"></div>
+        </details>
+      </aside>
+      </section>
+    </div>
+  </main>
+  <dialog id="admin-dialog" class="admin-dialog" aria-labelledby="admin-dialog-title">
+    <form id="admin-form">
+      <p class="eyebrow" data-i18n="本地演示控制">本地演示控制</p>
+      <h2 id="admin-dialog-title" data-i18n="进入管理员模式">进入管理员模式</h2>
+      <p class="admin-dialog-help" data-i18n="进入后才能打开记忆编辑器。管理员状态只保存在当前浏览器标签页；后端仍会检查可编辑权限、版本号和幂等键。">进入后才能打开记忆编辑器。管理员状态只保存在当前浏览器标签页；后端仍会检查可编辑权限、版本号和幂等键。</p>
+      <label for="admin-code" data-i18n="管理员解锁码">管理员解锁码</label>
+      <input id="admin-code" type="password" autocomplete="off" spellcheck="false" required>
+      <p id="admin-status" class="admin-status" role="status" aria-live="polite"></p>
+      <div class="admin-dialog-actions"><button id="admin-submit" type="submit" data-i18n="进入管理员模式">进入管理员模式</button><button id="admin-cancel" class="secondary" type="button" data-i18n="取消">取消</button></div>
+    </form>
+  </dialog>
+</body>
+</html>

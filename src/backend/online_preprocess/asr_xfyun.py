@@ -512,12 +512,14 @@ class XfyunASRClient:
             time.sleep(max(0.1, self.config.poll_interval_seconds))
 
     def transcribe(self, audio_path: Path) -> list[dict[str, Any]]:
+        self.last_empty_transcript_reason = None
         audio_url = self.upload_file(audio_path)
         task_id = self.create_task(audio_url, audio_path)
         self.last_task_id = task_id
         try:
             result = self.wait_for_result(task_id)
         except XfyunNoSpeechError:
+            self.last_empty_transcript_reason = "xfyun_no_speech_20304"
             return []
         return _normalize_lattice(result)
 
@@ -551,6 +553,7 @@ def transcribe_audio_with_xfyun(
     empty_transcript_reason: str | None = None
     try:
         normalized = active_client.transcribe(audio_path)
+        empty_transcript_reason = getattr(active_client, "last_empty_transcript_reason", None)
     except XfyunNoSpeechError:
         normalized = []
         empty_transcript_reason = "xfyun_no_speech_20304"

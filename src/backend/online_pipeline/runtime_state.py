@@ -15,6 +15,8 @@ from online_preprocess.task_queue import ensure_queue_dirs, get_queue_dirs
 WORKER_NAMES = (
     "stream",
     "preprocess",
+    "asr",
+    "asr_stream",
     "evidence",
     "refine",
     "consolidation",
@@ -64,15 +66,15 @@ def _default_worker_enabled(worker: str, mode: str) -> bool:
 def pipeline_summary(mode: str | None = None) -> dict[str, Any]:
     mode = mode or get_pipeline_mode()
     if mode == "legacy":
-        main_workers = ["preprocess", "evidence", "visual", "memory", "query"]
+        main_workers = ["preprocess", "asr", "asr_stream", "evidence", "visual", "memory", "query"]
         optional_legacy_workers: list[str] = []
         main_path = "preprocess -> legacy evidence -> memory -> visual -> query"
     elif mode == "hybrid":
-        main_workers = ["stream", "live_ingest", "preprocess", "refine", "consolidation", "visual", "memory", "query"]
+        main_workers = ["stream", "live_ingest", "preprocess", "asr", "asr_stream", "refine", "consolidation", "visual", "memory", "query"]
         optional_legacy_workers = ["evidence"]
         main_path = "stream/live_ingest/preprocess -> M_cur/M_st -> MST refine -> MST consolidation -> memory -> visual -> query"
     else:
-        main_workers = ["stream", "live_ingest", "preprocess", "refine", "consolidation", "visual", "memory", "query"]
+        main_workers = ["stream", "live_ingest", "preprocess", "asr", "asr_stream", "refine", "consolidation", "visual", "memory", "query"]
         optional_legacy_workers = ["evidence"]
         main_path = "stream/live_ingest/preprocess -> M_cur/M_st -> MST refine -> MST consolidation -> memory -> visual -> query"
     return {
@@ -167,7 +169,13 @@ def _worker_runtime_paths(root: Path, worker: str) -> list[Path]:
     if primary.exists():
         paths.append(primary)
     paths.extend(sorted(root.glob(f"{worker}_*.json")))
-    return paths
+    # Registered families such as asr_stream own their own instances; they
+    # must not also be counted as instances of the shorter asr prefix.
+    nested_families = [name for name in WORKER_NAMES if name.startswith(f"{worker}_")]
+    return [path for path in paths if not any(
+        path.stem == family or path.stem.startswith(f"{family}_")
+        for family in nested_families
+    )]
 
 
 def _runtime_sort_key(payload: dict[str, Any]) -> tuple[int, float]:
@@ -214,6 +222,7 @@ def _aggregate_worker_payload(root: Path, worker: str, payloads: list[dict[str, 
             "last_task_id": item.get("last_task_id"),
             "last_error": item.get("last_error"),
             "queue_pending": item.get("queue_pending"),
+            "task_filter": item.get("task_filter"),
         }
         for item in instances
     ]
@@ -719,10 +728,9 @@ def build_session_pipeline_state(session_dir: Path) -> dict[str, Any]:
     active_query = memory_config.get("active_query_memory_version") or latest_ready
     build_state = memory_config.get("memory_build_state") or ("ready" if latest_ready else "idle")
     if memory_config.get("status") == "memory_ready" and latest_ready and not building and build_state in {"building", "failed"}:
+        # Normalize the view only. A status reader must not overwrite a
+        # newer configuration published after this snapshot was read.
         build_state = "ready_with_warnings" if memory_config.get("last_build_error") else "ready"
-        memory_config["memory_build_state"] = build_state
-        memory_config["building_memory_version"] = None
-        write_json_atomic(session_dir / "em2mem" / "memory_config.json", memory_config)
 
     visual_ready = _as_bool(memory_config.get("visual_embedding_ready"), False)
     semantic_ready = _as_bool(memory_config.get("semantic_memory_ready"), False)

@@ -8,6 +8,8 @@ from typing import Any
 
 from online_memory.content import effective_episodic_content
 from online_preprocess.io_utils import read_json
+from online_time import frame_capture_seconds
+from .session_labels import session_labels
 
 
 @dataclass(frozen=True)
@@ -79,7 +81,7 @@ class LongTermMemoryRepository:
         }
 
     def catalog_metadata(self) -> dict[str, Any]:
-        """Return stable, configuration-only metadata for the global catalog."""
+        """Return stable memory versions and display metadata for the catalog."""
         active = self.resolve_active_root()
         signature = self.version_signature(active.config)
         self.ensure_stable_components(signature)
@@ -89,6 +91,7 @@ class LongTermMemoryRepository:
         self.validate_config_paths(active.config)
         return {
             "session_id": self.session_id,
+            **session_labels(self.session_dir),
             "memory_version": memory_version,
             "component_versions": {
                 "episodic": memory_version,
@@ -364,7 +367,7 @@ def _build_visual_items(session_dir: Path, evidence_path: Path) -> list[dict[str
                     "evidence_doc_id": evidence_doc_id,
                     "start_time": doc.get("start_time"),
                     "end_time": doc.get("end_time"),
-                    "timestamp": frame_meta.get("timestamp", doc.get("start_time")),
+                    "timestamp": frame_capture_seconds(keyframe_path, frame_meta),
                     "keyframe_caption": str(frame_meta.get("caption") or ""),
                     "segment_caption": effective_episodic_content(doc),
                     "scene": doc.get("scene"),

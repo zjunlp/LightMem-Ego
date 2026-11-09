@@ -1,3 +1,4 @@
+import { useLanguage } from '../../i18n.jsx'
 import { Maximize2, ZoomIn, ZoomOut } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
@@ -6,6 +7,7 @@ const MAX_ZOOM = 2.5
 const ZOOM_FACTOR = 1.2
 
 export default function GraphZoomControls({ cy, disabled = false, label }) {
+  const { t } = useLanguage()
   const [zoom, setZoom] = useState(1)
   const animationFrameRef = useRef(null)
 
@@ -43,11 +45,11 @@ export default function GraphZoomControls({ cy, disabled = false, label }) {
 
   const controlsDisabled = disabled || !cy
   return (
-    <div className="memory-graph-zoom-controls" role="group" aria-label={`${label} zoom controls`}>
+    <div className="memory-graph-zoom-controls" role="group" aria-label={t("{value1} zoom controls", { value1: label })}>
       <button
         type="button"
-        aria-label={`Zoom out ${label}`}
-        title="Zoom out"
+        aria-label={t("Zoom out {value1}", { value1: label })}
+        title={t("Zoom out")}
         disabled={controlsDisabled || zoom <= MIN_ZOOM}
         onClick={() => setCenteredZoom(zoom / ZOOM_FACTOR)}
       >
@@ -60,15 +62,15 @@ export default function GraphZoomControls({ cy, disabled = false, label }) {
         step="0.01"
         value={zoom}
         disabled={controlsDisabled}
-        aria-label={`${label} zoom level`}
-        aria-valuetext={`${Math.round(zoom * 100)} percent`}
+        aria-label={t("{value1} zoom level", { value1: label })}
+        aria-valuetext={t("{value1} percent", { value1: Math.round(zoom * 100) })}
         onChange={(event) => setCenteredZoom(Number(event.target.value))}
       />
       <output aria-live="off">{Math.round(zoom * 100)}%</output>
       <button
         type="button"
-        aria-label={`Zoom in ${label}`}
-        title="Zoom in"
+        aria-label={t("Zoom in {value1}", { value1: label })}
+        title={t("Zoom in")}
         disabled={controlsDisabled || zoom >= MAX_ZOOM}
         onClick={() => setCenteredZoom(zoom * ZOOM_FACTOR)}
       >
@@ -77,13 +79,13 @@ export default function GraphZoomControls({ cy, disabled = false, label }) {
       <button
         className="memory-graph-zoom-fit"
         type="button"
-        aria-label={`Fit ${label} to canvas`}
-        title="Fit graph to canvas"
+        aria-label={t("Fit {value1} to canvas", { value1: label })}
+        title={t("Fit graph to canvas")}
         disabled={controlsDisabled}
         onClick={fitGraph}
       >
         <Maximize2 size={14} />
-        <span>Fit</span>
+        <span>{t("Fit")}</span>
       </button>
     </div>
   )

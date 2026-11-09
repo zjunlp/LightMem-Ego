@@ -1,14 +1,29 @@
-import { ChevronDown, ChevronUp, Database, RefreshCw } from 'lucide-react'
+import { ChevronDown, ChevronUp, Database, RefreshCw, Upload, LoaderCircle } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { fetchLongTermMemorySessions } from '../api/lightmem_egoApi.js'
 import MemoryDialog from './MemoryDialog.jsx'
+import { useMemoryImport } from '../hooks/useMemoryImport.js'
+import { useLanguage } from '../i18n.jsx'
+import { useBackendFeatures } from './BackendFeatures.jsx'
 
 const FIRST_PAGE_KEY = '__first_page__'
 const CATALOG_PAGE_SIZE = 10
 const COMPONENT_KEYS = ['episodic', 'semantic', 'visual']
+const EMPTY_AUTHORITATIVE_UPDATES = new Map()
 
-export default function MemoryPanel({ authoritativeUpdate = null }) {
-  const [open, setOpen] = useState(false)
+export default function MemoryPanel({
+  authoritativeUpdate = null,
+  authoritativeUpdates = EMPTY_AUTHORITATIVE_UPDATES,
+  onPublication,
+  standalone = false,
+  active = true,
+  sessionTitles = {},
+  onSessionTitleUpdated
+}) {
+  const { t } = useLanguage()
+  const features = useBackendFeatures()
+  const canImport = features?.memoryImport ?? true
+  const [open, setOpen] = useState(standalone)
   const [items, setItems] = useState([])
   const [totalReadySessions, setTotalReadySessions] = useState(0)
   const [hasMore, setHasMore] = useState(false)
@@ -24,6 +39,12 @@ export default function MemoryPanel({ authoritativeUpdate = null }) {
   const [targetPage, setTargetPage] = useState(null)
   const [selectedSession, setSelectedSession] = useState(null)
   const [selectedOpener, setSelectedOpener] = useState(null)
+  const [importOpen, setImportOpen] = useState(false)
+  const [importFile, setImportFile] = useState(null)
+  const [importNotice, setImportNotice] = useState('')
+  const [importInitialTab, setImportInitialTab] = useState('graph')
+  const importInputRef = useRef(null)
+  const memoryImport = useMemoryImport({ enabled: canImport })
 
   const toggleButtonRef = useRef(null)
   const panelRef = useRef(null)
@@ -57,9 +78,21 @@ export default function MemoryPanel({ authoritativeUpdate = null }) {
       const position = positions.get(incoming.sessionId)
       const existing = position === undefined ? null : merged[position]
       const cacheEntry = detailCacheRef.current.get(incoming.sessionId)
-      let nextItem = existing ? { ...existing, ...incoming } : incoming
+      const publication = authoritativeUpdates.get(incoming.sessionId)
+      let nextItem = mergeSessionTitle(existing, incoming)
+      nextItem = applyTitleSnapshot(nextItem, sessionTitles[incoming.sessionId])
 
-      if (cacheEntry?.confirmedRequestSequence >= requestSequence) {
+      if (publication?.memory?.memoryVersion >= incoming.memoryVersion) {
+        nextItem = applyAuthoritativeMemory(nextItem, publication.memory)
+        detailCacheRef.current.set(incoming.sessionId, {
+          versionKey: buildVersionKey(publication.memory),
+          activeRootKind: publication.memory.activeRootKind,
+          memory: publication.memory,
+          confirmedRequestSequence: requestSequence
+        })
+      } else if (cacheEntry?.confirmedRequestSequence >= requestSequence) {
+        nextItem = applyAuthoritativeMemory(nextItem, cacheEntry.memory)
+      } else if (cacheEntry && cacheEntry.memory.memoryVersion > incoming.memoryVersion) {
         nextItem = applyAuthoritativeMemory(nextItem, cacheEntry.memory)
       } else if (cacheEntry) {
         if (isCacheCompatible(incoming, cacheEntry)) {
@@ -78,8 +111,13 @@ export default function MemoryPanel({ authoritativeUpdate = null }) {
     }
 
     replaceItems(merged)
+    setSelectedSession((current) => {
+      if (!current) return current
+      const replacement = merged.find((item) => item.sessionId === current.sessionId)
+      return replacement ? { ...current, ...replacement } : current
+    })
     return merged
-  }, [replaceItems])
+  }, [authoritativeUpdates, replaceItems, sessionTitles])
 
   const fetchCatalogBatch = useCallback(async ({ cursor = null, mode = 'page' } = {}) => {
     const requestKey = cursor || FIRST_PAGE_KEY
@@ -107,6 +145,7 @@ export default function MemoryPanel({ authoritativeUpdate = null }) {
     try {
       const result = await fetchLongTermMemorySessions({ cursor, signal: controller.signal })
       if (!mountedRef.current || generation !== catalogGenerationRef.current) return { status: 'stale' }
+      result.items.forEach((item) => onSessionTitleUpdated?.(toTitleSnapshot(item)))
 
       const cursorLoop = !!result.nextCursor && seenCursorsRef.current.has(result.nextCursor)
       if (cursor) seenCursorsRef.current.add(cursor)
@@ -145,14 +184,27 @@ export default function MemoryPanel({ authoritativeUpdate = null }) {
       if (error?.code !== 'invalid_memory_catalog_response') setCatalogBlocked(false)
       return { status: 'error', error }
     } finally {
-      if (catalogControllerRef.current === controller) catalogControllerRef.current = null
-      if (inFlightCursorRef.current === requestKey) inFlightCursorRef.current = null
+      if (catalogControllerRef.current === controller) {
+        catalogControllerRef.current = null
+        if (inFlightCursorRef.current === requestKey) inFlightCursorRef.current = null
+      }
       if (mountedRef.current && generation === catalogGenerationRef.current) {
         setInitialLoading(false)
         setRefreshing(false)
       }
     }
-  }, [mergeCatalogItems])
+  }, [mergeCatalogItems, onSessionTitleUpdated])
+
+  useEffect(() => {
+    if (!sessionTitles) return
+    const currentItems = itemsRef.current
+    const nextItems = currentItems.map((item) => applyTitleSnapshot(item, sessionTitles[item.sessionId]))
+    if (nextItems.some((item, index) => item !== currentItems[index])) replaceItems(nextItems)
+    setSelectedSession((current) => {
+      if (!current) return current
+      return applyTitleSnapshot(current, sessionTitles[current.sessionId])
+    })
+  }, [replaceItems, sessionTitles])
 
   const resetAfterInvalidCursor = useCallback(() => {
     cursorRecoveryUsedRef.current = true
@@ -247,7 +299,11 @@ export default function MemoryPanel({ authoritativeUpdate = null }) {
     return () => {
       mountedRef.current = false
       navigationGenerationRef.current += 1
+      catalogGenerationRef.current += 1
       catalogControllerRef.current?.abort()
+      catalogControllerRef.current = null
+      inFlightCursorRef.current = null
+      pageOperationRef.current = false
     }
   }, [])
 
@@ -259,7 +315,13 @@ export default function MemoryPanel({ authoritativeUpdate = null }) {
     }
   }
 
-  const refreshCatalog = () => {
+  useEffect(() => {
+    if (!standalone) return
+    setOpen(true)
+    if (!catalogLoadedRef.current && !pageOperationRef.current) goToPage(1, { mode: 'initial' })
+  }, [goToPage, standalone])
+
+  const refreshCatalog = ({ preserveSelection = false } = {}) => {
     catalogControllerRef.current?.abort()
     catalogControllerRef.current = null
     inFlightCursorRef.current = null
@@ -273,8 +335,10 @@ export default function MemoryPanel({ authoritativeUpdate = null }) {
     hasMoreRef.current = false
     detailCacheRef.current.clear()
     replaceItems([])
-    setSelectedSession(null)
-    setSelectedOpener(null)
+    if (!preserveSelection) {
+      setSelectedSession(null)
+      setSelectedOpener(null)
+    }
     setTotalReadySessions(0)
     setHasMore(false)
     currentPageRef.current = 1
@@ -312,7 +376,40 @@ export default function MemoryPanel({ authoritativeUpdate = null }) {
     setSelectedOpener(opener)
   }
 
+  const openImportedSession = useCallback((tab = 'records') => {
+    const imported = memoryImport.task
+    if (!imported?.sessionId || !memoryImport.ready) return
+    const session = applyTitleSnapshot(itemsRef.current.find((item) => item.sessionId === imported.sessionId) || {
+      sessionId: imported.sessionId,
+      title: imported.sessionId,
+      titleRevision: 0,
+      sessionKind: 'imported_memory',
+      interactionMode: 'long_term_only',
+      queryAllowed: true,
+      queryReady: true,
+      memoryVersion: 1,
+      componentVersions: { episodic: null, semantic: null, visual: null },
+      activeRootKind: 'em2mem',
+      qaAligned: true,
+      updatedAt: imported.updatedAt || null
+    }, sessionTitles[imported.sessionId])
+    setImportInitialTab(tab)
+    setSelectedSession(session)
+    setSelectedOpener(null)
+  }, [memoryImport.ready, memoryImport.task, sessionTitles])
+
+  useEffect(() => {
+    if (!memoryImport.ready || !memoryImport.task?.sessionId) return
+    onSessionTitleUpdated?.(toTitleSnapshot(memoryImport.task))
+    setImportNotice('Import complete. The new memory Session is ready to view and query.')
+    const hadSelection = Boolean(selectedSession)
+    refreshCatalog({ preserveSelection: hadSelection })
+    if (!hadSelection) queueMicrotask(() => openImportedSession('records'))
+  }, [memoryImport.ready, memoryImport.task?.sessionId, onSessionTitleUpdated])
+
   const handleMemoryLoaded = (memory) => {
+    onSessionTitleUpdated?.(toTitleSnapshot(memory))
+    if ((detailCacheRef.current.get(memory.sessionId)?.memory?.memoryVersion || 0) > memory.memoryVersion) return
     const cacheEntry = {
       versionKey: buildVersionKey(memory),
       activeRootKind: memory.activeRootKind,
@@ -321,32 +418,65 @@ export default function MemoryPanel({ authoritativeUpdate = null }) {
     }
     detailCacheRef.current.set(memory.sessionId, cacheEntry)
 
-    const nextItems = itemsRef.current.map((item) => (
-      item.sessionId === memory.sessionId ? applyAuthoritativeMemory(item, memory) : item
-    ))
+    const nextItems = itemsRef.current.map((item) => item.sessionId === memory.sessionId
+      ? applyAuthoritativeMemory(mergeSessionTitle(item, memory), memory)
+      : item)
     replaceItems(nextItems)
     setSelectedSession((current) => (
-      current?.sessionId === memory.sessionId ? applyAuthoritativeMemory(current, memory) : current
+      current?.sessionId === memory.sessionId
+        ? applyAuthoritativeMemory(mergeSessionTitle(current, memory), memory)
+        : current
     ))
   }
 
-  useEffect(() => {
-    const memory = authoritativeUpdate?.memory
-    if (!memory?.sessionId) return
+  const handleSessionTitleUpdated = (snapshot) => {
+    onSessionTitleUpdated?.(snapshot)
+    const nextItems = itemsRef.current.map((item) => item.sessionId === snapshot.sessionId
+      ? applyTitleSnapshot(item, snapshot)
+      : item)
+    replaceItems(nextItems)
+    setSelectedSession((current) => current?.sessionId === snapshot.sessionId
+      ? applyTitleSnapshot(current, snapshot)
+      : current)
+  }
 
-    detailCacheRef.current.set(memory.sessionId, {
-      versionKey: buildVersionKey(memory),
-      activeRootKind: memory.activeRootKind,
-      memory,
-      confirmedRequestSequence: catalogRequestSequenceRef.current
+  useEffect(() => {
+    const updates = new Map(authoritativeUpdates)
+    if (authoritativeUpdate?.sessionId) {
+      const current = updates.get(authoritativeUpdate.sessionId)
+      if (!current || (authoritativeUpdate.memory?.memoryVersion || 0) >= (current.memory?.memoryVersion || 0)) {
+        updates.set(authoritativeUpdate.sessionId, authoritativeUpdate)
+      }
+    }
+    if (!updates.size) return
+
+    let nextItems = itemsRef.current
+    for (const update of updates.values()) {
+      const memory = update?.memory
+      if (!memory?.sessionId) continue
+      if ((detailCacheRef.current.get(memory.sessionId)?.memory?.memoryVersion || 0) > memory.memoryVersion) continue
+
+      detailCacheRef.current.set(memory.sessionId, {
+        versionKey: buildVersionKey(memory),
+        activeRootKind: memory.activeRootKind,
+        memory,
+        confirmedRequestSequence: catalogRequestSequenceRef.current
+      })
+      nextItems = nextItems.map((item) => (
+        item.sessionId === memory.sessionId ? applyAuthoritativeMemory(item, memory) : item
+      ))
+    }
+    replaceItems(nextItems)
+    setSelectedSession((current) => {
+      let next = current
+      for (const update of updates.values()) {
+        const memory = update?.memory
+        if (next?.sessionId === memory?.sessionId
+          && memory.memoryVersion >= (next.memoryVersion || 0)) next = applyAuthoritativeMemory(next, memory)
+      }
+      return next
     })
-    replaceItems(itemsRef.current.map((item) => (
-      item.sessionId === memory.sessionId ? applyAuthoritativeMemory(item, memory) : item
-    )))
-    setSelectedSession((current) => (
-      current?.sessionId === memory.sessionId ? applyAuthoritativeMemory(current, memory) : current
-    ))
-  }, [authoritativeUpdate?.revision, replaceItems])
+  }, [authoritativeUpdate?.revision, authoritativeUpdates, replaceItems])
 
   const handleSessionUnavailable = (sessionId) => {
     detailCacheRef.current.delete(sessionId)
@@ -382,8 +512,8 @@ export default function MemoryPanel({ authoritativeUpdate = null }) {
     : null
 
   return (
-    <section className="advanced-tools memory-tools">
-      <button
+    <section className={`advanced-tools memory-tools ${standalone ? 'is-standalone' : ''}`}>
+      {!standalone && <button
         ref={toggleButtonRef}
         className="advanced-toggle"
         type="button"
@@ -393,18 +523,133 @@ export default function MemoryPanel({ authoritativeUpdate = null }) {
       >
         <span>
           <Database size={16} />
-          Memories
+          {t('Memories')}
         </span>
         {open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-      </button>
+      </button>}
 
-      {open && (
-        <div ref={panelRef} id="long-term-memory-panel" className="surface advanced-panel memory-panel memory-catalog fade-in">
+      {canImport && <button
+        className="icon-button secondary memory-import-toggle"
+        type="button"
+        aria-expanded={importOpen}
+        aria-controls="memory-import-panel"
+        onClick={() => setImportOpen((current) => !current)}
+      >
+        <Upload size={15} />
+        <span>{t('Import Memory')}</span>
+        {importOpen ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+      </button>}
+
+      {importNotice && selectedSession && selectedSession.sessionId !== memoryImport.task?.sessionId && (
+        <div className="memory-notice memory-import-complete-notice" role="status">
+          <span>{t('Import complete')}</span>
+          <strong>{sessionTitles[memoryImport.task?.sessionId]?.title || memoryImport.task?.sessionId}</strong>
+          <button className="icon-button secondary" type="button" onClick={() => openImportedSession('records')}>{t('View memory')}</button>
+        </div>
+      )}
+
+      {canImport && importOpen && (
+        <div id="memory-import-panel" className="surface advanced-panel memory-import-panel fade-in">
           <div className="memory-catalog-heading">
             <div>
-              <span>Ready long-term memory Sessions</span>
-              <strong>Global M_lt Catalog</strong>
-              <small>Loaded {items.length} / {catalogComplete ? '' : 'about '}{summaryTotal}</small>
+              <span>{t('Import a long-term memory file')}</span>
+              <strong>{t('Create a new memory Session')}</strong>
+            </div>
+            {memoryImport.checking && <LoaderCircle size={16} className="memory-spin" aria-label={t("Checking import status")} />}
+          </div>
+
+          <p className="memory-import-help">{t('Upload one JSON or TXT file. JSON accepts the unified import format, legacy exports, and compatible backend structures. TXT is split into paragraphs by blank lines; no event times are invented.')}</p>
+          <p className="memory-import-help">{t('The new Session uses its ID as the default name. Rename it later from memory management.')}</p>
+
+          <div className="memory-import-file-row">
+            <input
+              ref={importInputRef}
+              className="memory-import-file-input"
+              type="file"
+              accept=".json,.txt,application/json,text/plain"
+              onChange={(event) => {
+                setImportFile(event.target.files?.[0] || null)
+                setImportNotice('')
+              }}
+              disabled={memoryImport.locked || memoryImport.uploading}
+            />
+            <button
+              className="icon-button secondary"
+              type="button"
+              disabled={memoryImport.locked || memoryImport.uploading}
+              onClick={() => importInputRef.current?.click()}
+            >
+              <Upload size={15} />
+              <span>{t('Choose file')}</span>
+            </button>
+            {importFile && (
+              <span className="memory-import-file-meta">
+                {importFile.name} · {formatBytes(importFile.size)}
+              </span>
+            )}
+          </div>
+
+          {memoryImport.task && (
+            <div className="memory-import-progress" aria-live="polite">
+              <div className="memory-import-progress-heading">
+                <strong>{t(formatImportStage(memoryImport.task))}</strong>
+                <span>{memoryImport.task.fileName || t("Imported file")}</span>
+              </div>
+              <div className={`memory-import-progress-track ${isValidProgress(memoryImport.task.progress) ? '' : 'is-indeterminate'}`}>
+                <span style={isValidProgress(memoryImport.task.progress) ? { width: `${memoryImport.task.progress}%` } : undefined} />
+              </div>
+              <div className="memory-import-meta">
+                <span>{isValidProgress(memoryImport.task.progress) ? `${memoryImport.task.progress}%` : t('Progress unavailable')}</span>
+                <span>{memoryImport.task.recordCount ?? t('Record count unavailable')} {t('records parsed')}</span>
+                <span>{t("Session")} {memoryImport.task.sessionId}</span>
+              </div>
+            </div>
+          )}
+
+          {memoryImport.error && <div className="inline-error memory-error" role="alert">{t(memoryImport.error)}</div>}
+          {importNotice && <div className="memory-notice" role="status">
+            <span>{t(importNotice)}</span>
+            {memoryImport.task?.sessionId && <strong>{sessionTitles[memoryImport.task.sessionId]?.title || memoryImport.task.sessionId}</strong>}
+          </div>}
+          {memoryImport.paused && !memoryImport.unavailable && (
+            <div className="memory-import-actions">
+              <button className="icon-button secondary" type="button" onClick={memoryImport.resume}>{t('Continue checking')}</button>
+              <button className="icon-button secondary" type="button" onClick={memoryImport.refresh} disabled={memoryImport.checking}>{t("Refresh")}</button>
+            </div>
+          )}
+          {memoryImport.unavailable && (
+            <div className="memory-import-actions">
+              <button className="icon-button secondary" type="button" onClick={() => memoryImport.refresh()} disabled={memoryImport.checking}>{t('Refresh task')}</button>
+            </div>
+          )}
+
+          <div className="memory-import-actions">
+            <button
+              className="icon-button primary"
+              type="button"
+              disabled={!importFile || memoryImport.locked || memoryImport.uploading || Boolean(memoryImport.cooldownUntil && memoryImport.cooldownUntil > Date.now())}
+              onClick={() => memoryImport.start(importFile)}
+            >
+              {memoryImport.uploading ? <LoaderCircle size={15} className="memory-spin" /> : <Upload size={15} />}
+              <span>{memoryImport.uploading ? t('Uploading…') : t('Import Memory')}</span>
+            </button>
+            {memoryImport.ready && (
+              <>
+                <button className="icon-button secondary" type="button" onClick={() => openImportedSession('records')}>{t('Open Records')}</button>
+                <button className="icon-button secondary" type="button" onClick={() => openImportedSession('ask')}>{t('Ask Memory')}</button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {open && (
+        <div ref={panelRef} id="long-term-memory-panel" className={`surface advanced-panel memory-panel memory-catalog fade-in ${standalone ? 'standalone-catalog' : ''}`}>
+          <div className="memory-catalog-heading">
+            <div>
+              <span>{t('Ready long-term memory Sessions')}</span>
+              <strong>{t('Global M_lt Catalog')}</strong>
+              <small>{t('Loaded')} {items.length} / {catalogComplete ? '' : `${t('about')} `}{summaryTotal}</small>
             </div>
             <button
               className="icon-button secondary memory-refresh"
@@ -413,28 +658,35 @@ export default function MemoryPanel({ authoritativeUpdate = null }) {
               onClick={refreshCatalog}
             >
               <RefreshCw size={15} className={refreshing ? 'memory-spin' : ''} />
-              <span>{refreshing ? 'Refreshing' : 'Refresh'}</span>
+              <span>{refreshing ? t('Refreshing') : t('Refresh')}</span>
             </button>
           </div>
 
-          {catalogNotice && <div className="memory-notice" role="status">{catalogNotice}</div>}
+          {catalogNotice && <div className="memory-notice" role="status">{t(catalogNotice)}</div>}
+          {importNotice && selectedSession?.sessionId !== memoryImport.task?.sessionId && (
+            <div className="memory-notice" role="status">
+              <span>{t(importNotice)}</span>
+              {memoryImport.task?.sessionId && <strong>{sessionTitles[memoryImport.task.sessionId]?.title || memoryImport.task.sessionId}</strong>}
+              <button className="icon-button secondary" type="button" onClick={() => openImportedSession('records')}>{t("View imported memory")}</button>
+            </div>
+          )}
 
           {initialLoading && items.length === 0 && (
             <div className="memory-loading" aria-live="polite">
               <span className="memory-spinner" />
-              Loading ready long-term memory Sessions…
+              {t('Loading ready long-term memory Sessions…')}
             </div>
           )}
 
           {!initialLoading && catalogError && items.length === 0 && (
             <div className="inline-error memory-error" role="alert">
-              <span>{catalogError}</span>
-              <button className="icon-button secondary" type="button" onClick={refreshCatalog}>Retry</button>
+              <span>{t(catalogError)}</span>
+              <button className="icon-button secondary" type="button" onClick={refreshCatalog}>{t('Retry')}</button>
             </div>
           )}
 
           {!initialLoading && !catalogError && catalogLoadedRef.current && items.length === 0 && (
-            <div className="memory-empty">No stable long-term memory Sessions are currently available.</div>
+            <div className="memory-empty">{t('No stable long-term memory Sessions are currently available.')}</div>
           )}
 
           {visibleSessions.length > 0 && (
@@ -446,17 +698,17 @@ export default function MemoryPanel({ authoritativeUpdate = null }) {
           )}
 
           {items.length > 0 && (
-            <nav className="memory-catalog-pagination" aria-label="Long-term memory Session pages">
+            <nav className="memory-catalog-pagination" aria-label={t("Long-term memory Session pages")}>
               <div className="memory-catalog-page-summary">
-                Showing {visibleStart}–{visibleEnd} of {catalogComplete ? '' : 'about '}{summaryTotal} Sessions
+                {t('Showing')} {visibleStart}–{visibleEnd} {t('of')} {catalogComplete ? '' : `${t('about')} `}{summaryTotal} {t('Sessions')}
               </div>
 
-              {catalogError && <div className="memory-catalog-page-error" role="alert">{catalogError}</div>}
-              {pageError && <div className="memory-catalog-page-error" role="alert">{pageError}</div>}
+              {catalogError && <div className="memory-catalog-page-error" role="alert">{t(catalogError)}</div>}
+              {pageError && <div className="memory-catalog-page-error" role="alert">{t(pageError)}</div>}
               {pageLoading && (
                 <div className="memory-catalog-page-loading" aria-live="polite">
                   <span className="memory-spinner is-small" />
-                  Loading page {targetPage}…
+                  {t('Loading page')} {targetPage}…
                 </div>
               )}
 
@@ -467,10 +719,10 @@ export default function MemoryPanel({ authoritativeUpdate = null }) {
                   disabled={currentPage === 1 || pageLoading || refreshing}
                   onClick={() => goToPage(currentPage - 1)}
                 >
-                  Previous
+                  {t('Previous')}
                 </button>
                 <span className="memory-catalog-page-status" aria-current="page">
-                  Page {currentPage} of {catalogComplete ? '' : 'about '}{estimatedPages}
+                  {t('Page')} {currentPage} {t('of')} {catalogComplete ? '' : `${t('about')} `}{estimatedPages}
                 </span>
                 <button
                   className="icon-button secondary"
@@ -478,7 +730,7 @@ export default function MemoryPanel({ authoritativeUpdate = null }) {
                   disabled={!canGoNext || pageLoading || refreshing}
                   onClick={() => goToPage(currentPage + 1)}
                 >
-                  Next
+                  {t('Next')}
                 </button>
               </div>
 
@@ -490,7 +742,7 @@ export default function MemoryPanel({ authoritativeUpdate = null }) {
                   max={estimatedPages}
                   step="1"
                   inputMode="numeric"
-                  aria-label="Catalog page number"
+                  aria-label={t("Catalog page number")}
                   value={pageInput}
                   disabled={pageLoading || refreshing}
                   onChange={(event) => {
@@ -503,21 +755,19 @@ export default function MemoryPanel({ authoritativeUpdate = null }) {
                   type="submit"
                   disabled={estimatedPages === 1 || pageLoading || refreshing}
                 >
-                  Jump
+                  {t('Jump')}
                 </button>
               </form>
 
               {catalogBlocked ? (
-                <button className="icon-button secondary" type="button" onClick={refreshCatalog}>Refresh Catalog</button>
+                <button className="icon-button secondary" type="button" onClick={refreshCatalog}>{t('Refresh Catalog')}</button>
               ) : catalogError ? (
                 <button
                   className="icon-button secondary"
                   type="button"
                   disabled={pageLoading}
                   onClick={() => goToPage(lastTargetPageRef.current)}
-                >
-                  Retry
-                </button>
+                >{t("Retry")}</button>
               ) : null}
             </nav>
           )}
@@ -528,12 +778,16 @@ export default function MemoryPanel({ authoritativeUpdate = null }) {
         <MemoryDialog
           key={selectedSession.sessionId}
           session={selectedSession}
+          active={active}
           cachedMemory={cachedMemory}
-          authoritativeUpdate={authoritativeUpdate?.sessionId === selectedSession?.sessionId ? authoritativeUpdate : null}
+          authoritativeUpdate={getSessionPublication(authoritativeUpdates, selectedSession.sessionId, authoritativeUpdate)}
           openerElement={selectedOpener}
           fallbackFocusElement={toggleButtonRef.current}
           onMemoryLoaded={handleMemoryLoaded}
+          onPublication={onPublication}
+          onSessionTitleUpdated={handleSessionTitleUpdated}
           onSessionUnavailable={handleSessionUnavailable}
+          initialTab={selectedSession.sessionId === memoryImport.task?.sessionId ? importInitialTab : 'graph'}
           onClose={() => setSelectedSession(null)}
         />
       )}
@@ -542,6 +796,8 @@ export default function MemoryPanel({ authoritativeUpdate = null }) {
 }
 
 function SessionCard({ session, onOpen }) {
+  const { t } = useLanguage()
+  const imported = session.sessionKind === 'imported_memory'
   return (
     <button
       className="memory-session-card"
@@ -549,18 +805,20 @@ function SessionCard({ session, onOpen }) {
       onClick={(event) => onOpen(session, event.currentTarget)}
     >
       <span className="memory-session-card-heading">
-        <strong>{session.sessionId}</strong>
-        <small>{formatUpdatedAt(session.updatedAt)}</small>
+        <strong>{session.title || session.sessionId}</strong>
+        <small>{formatUpdatedAt(session.updatedAt, t)}</small>
       </span>
+      <span className="memory-session-id">{session.sessionId}</span>
       <span className="memory-session-versions">
-        <VersionItem label="M_lt" value={session.memoryVersion} />
-        <VersionItem label="Episodic" value={session.componentVersions?.episodic} />
-        <VersionItem label="Semantic" value={session.componentVersions?.semantic} />
-        <VersionItem label="Visual" value={session.componentVersions?.visual} />
+        <VersionItem label={t("M_lt")} value={session.memoryVersion} />
+        <VersionItem label={t("Episodic")} value={session.componentVersions?.episodic} />
+        <VersionItem label={t("Semantic")} value={session.componentVersions?.semantic} />
+        <VersionItem label={t("Visual")} value={session.componentVersions?.visual} />
       </span>
       <span className="memory-status-row">
+        {imported && <span className="memory-status-badge is-imported">{t("Imported memory")}</span>}
         <span className={`memory-status-badge ${session.qaAligned ? 'is-ready' : 'is-warning'}`}>
-          {session.qaAligned ? 'QA aligned' : 'Legacy M_lt'}
+          {session.qaAligned ? t("QA aligned") : t("Legacy M_lt")}
         </span>
         <span className="memory-status-badge is-muted">{session.activeRootKind}</span>
       </span>
@@ -568,11 +826,38 @@ function SessionCard({ session, onOpen }) {
   )
 }
 
+function isValidProgress(value) {
+  return Number.isFinite(Number(value)) && Number(value) >= 0 && Number(value) <= 100
+}
+
+function formatImportStage(task) {
+  const stages = {
+    queued: 'Waiting for processing',
+    processing: 'Processing import',
+    parsing: 'Parsing file',
+    normalizing: 'Normalizing memory records',
+    building_memory: 'Building long-term memory',
+    building_retrieval: 'Building retrieval index',
+    warming_query: 'Preparing query service',
+    ready: 'Ready to ask',
+    failed: 'Import failed'
+  }
+  return stages[task?.state === 'processing' ? task.stage : task?.state] || 'Checking import status'
+}
+
+function formatBytes(value) {
+  const bytes = Number(value) || 0
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
 function VersionItem({ label, value }) {
+  const { t } = useLanguage()
   return (
     <span>
-      <small>{label}</small>
-      <strong>{value === null || value === undefined ? 'Unknown' : `v${value}`}</strong>
+      <small>{t(label)}</small>
+      <strong>{value === null || value === undefined ? t("Unknown") : t("v{value1}", { value1: value })}</strong>
     </span>
   )
 }
@@ -605,6 +890,19 @@ function getCompatibleCache(session, cacheEntry) {
   return isCacheCompatible(session, cacheEntry) ? cacheEntry : null
 }
 
+function getSessionPublication(updates, sessionId, fallback) {
+  const fromSessionMap = updates?.get(sessionId) || null
+  const matchingFallback = fallback?.sessionId === sessionId ? fallback : null
+  if (!fromSessionMap) return matchingFallback
+  if (!matchingFallback) return fromSessionMap
+  if ((matchingFallback.memory?.memoryVersion || 0) !== (fromSessionMap.memory?.memoryVersion || 0)) {
+    return (matchingFallback.memory?.memoryVersion || 0) > (fromSessionMap.memory?.memoryVersion || 0)
+      ? matchingFallback : fromSessionMap
+  }
+  return (matchingFallback.revision || 0) > (fromSessionMap.revision || 0)
+    ? matchingFallback : fromSessionMap
+}
+
 function preserveUnknownComponentVersions(session, memory) {
   return {
     ...session,
@@ -622,14 +920,49 @@ function applyAuthoritativeMemory(session, memory) {
     componentVersions: memory.componentVersions,
     updatedAt: memory.updatedAt,
     activeRootKind: memory.activeRootKind,
-    qaAligned: memory.qaAligned
+    qaAligned: memory.qaAligned,
+    counts: memory.counts,
+    canEdit: memory.canEdit,
+    editDisabledReason: memory.editDisabledReason,
+    canRollback: memory.canRollback,
+    ...(memory.queryReady !== undefined ? { queryReady: memory.queryReady } : {})
   }
 }
 
-function formatUpdatedAt(value) {
-  if (!value) return 'Updated time unavailable'
+function toTitleSnapshot(value) {
+  const sessionId = value?.sessionId || ''
+  if (!sessionId) return null
+  return {
+    sessionId,
+    title: typeof value.title === 'string' && value.title.trim() ? value.title : sessionId,
+    titleRevision: Number.isInteger(value.titleRevision) && value.titleRevision >= 0 ? value.titleRevision : 0,
+    titleUpdatedAt: typeof value.titleUpdatedAt === 'string' ? value.titleUpdatedAt : null
+  }
+}
+
+function mergeSessionTitle(existing, incoming) {
+  const merged = { ...(existing || {}), ...(incoming || {}) }
+  const incomingTitle = toTitleSnapshot(incoming)
+  if (!incomingTitle) return merged
+  const existingTitle = toTitleSnapshot(existing)
+  const preferredTitle = existingTitle && existingTitle.titleRevision >= incomingTitle.titleRevision
+    ? existingTitle
+    : incomingTitle
+  return { ...merged, ...preferredTitle }
+}
+
+function applyTitleSnapshot(session, snapshot) {
+  if (!session || !snapshot) return session
+  const current = toTitleSnapshot(session)
+  const next = toTitleSnapshot(snapshot)
+  if (!current || !next || current.titleRevision >= next.titleRevision) return session
+  return { ...session, ...next }
+}
+
+function formatUpdatedAt(value, t) {
+  if (!value) return t('Updated time unavailable')
   const parsed = new Date(value)
-  return Number.isNaN(parsed.getTime()) ? 'Updated time unavailable' : `Updated ${parsed.toLocaleString()}`
+  return Number.isNaN(parsed.getTime()) ? t('Updated time unavailable') : t('Updated {date}', { date: parsed.toLocaleString() })
 }
 
 function formatCatalogError(error) {

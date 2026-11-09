@@ -165,3 +165,45 @@ def test_mst_store_tolerates_historical_invalid_utf8() -> None:
         assert events[0]["event_id"] == "event1"
         store.save_archive_events(events)
         store.archive_events_path.read_text(encoding="utf-8")
+
+
+def test_refine_session_persists_timed_observations_to_active_and_archive() -> None:
+    with TemporaryDirectory() as temp_dir:
+        sessions_root = Path(temp_dir)
+        session_id = "observation_persistence"
+        store = MSTStore(sessions_root / session_id)
+        _append_test_event(store, session_id, "observation_event")
+        observation = {
+            "timestamp": 1.0,
+            "path": "stream/frames/frame_000001.jpg",
+            "description": "The front-right man holds a phone to his ear.",
+        }
+
+        class FakeRefiner:
+            def __init__(self, backend: str) -> None:
+                self.backend = backend
+
+            def refine_event(self, event, session_dir, **kwargs):
+                return {
+                    **event,
+                    "status": "refined",
+                    "event_caption_refined": "A man uses a phone.",
+                    "visual_observations": [observation],
+                    "refine": {"observed_frames": [
+                        {"timestamp": 1.0, "path": observation["path"]}
+                    ]},
+                }
+
+        with patch.object(refine_module, "MicroEventRefiner", FakeRefiner):
+            result = refine_module.refine_session(
+                session_id=session_id,
+                sessions_root=sessions_root,
+                backend="mock",
+                limit_events=1,
+            )
+
+        assert result["refined_event_count"] == 1
+        for saved in (store.load_events()[0], store.load_archive_events()[0]):
+            assert saved["visual_observations"] == [observation]
+            assert "holds a phone to his ear" in saved["retrieval_text"]
+            assert saved["refine"]["observed_frames"][0]["timestamp"] == 1.0

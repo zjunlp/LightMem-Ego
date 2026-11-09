@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import fcntl
+import threading
 from datetime import datetime, timezone
+from functools import wraps
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +19,28 @@ from online_current.schemas import (
     rel_to_session,
 )
 from online_preprocess.io_utils import read_json, utc_now_iso, write_json_atomic
+
+
+_LOCKS: dict[str, threading.RLock] = {}
+_LOCKS_GUARD = threading.Lock()
+
+
+def _locked(method):
+    @wraps(method)
+    def call(self, *args, **kwargs):
+        # The lock is outside current/ so clear() cannot unlink a live lock.
+        path = self.session_dir / '.mcur.lock'
+        with _LOCKS_GUARD:
+            lock = _LOCKS.setdefault(str(path.resolve()), threading.RLock())
+        with lock:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open('a+') as handle:
+                fcntl.flock(handle, fcntl.LOCK_EX)
+                try:
+                    return method(self, *args, **kwargs)
+                finally:
+                    fcntl.flock(handle, fcntl.LOCK_UN)
+    return call
 
 
 class MCurStore:
@@ -108,6 +133,7 @@ class MCurStore:
             return True
         return False
 
+    @_locked
     def clear(self) -> dict[str, Any]:
         if self.current_dir.exists():
             shutil.rmtree(self.current_dir)
@@ -120,6 +146,7 @@ class MCurStore:
         write_json_atomic(self.open_event_path, {})
         return state
 
+    @_locked
     def update_from_chunk(
         self,
         chunk_info: dict[str, Any],
@@ -130,7 +157,8 @@ class MCurStore:
         self.current_dir.mkdir(parents=True, exist_ok=True)
         self.frames_dir.mkdir(parents=True, exist_ok=True)
 
-        current_time = as_float(chunk_info.get("end_time"), 0.0)
+        previous_state = self.load()
+        current_time = max(as_float(previous_state.get("current_time")), as_float(chunk_info.get("end_time"), 0.0))
         if frames:
             current_time = max(current_time, max(as_float(frame.get("timestamp")) for frame in frames))
         window_start = max(0.0, current_time - self.window_seconds)
@@ -144,7 +172,7 @@ class MCurStore:
             path = str(item.get("path") or "")
             merged_by_second_path[(int(round(ts * 1000)), path)] = item
 
-        for frame in frames:
+        for frame in sorted(frames, key=lambda item: as_float(item.get("timestamp"))):
             ts = round(as_float(frame.get("timestamp")), 3)
             if ts < window_start - 1e-6 or ts > current_time + 1e-6:
                 continue
@@ -159,7 +187,21 @@ class MCurStore:
                 except Exception:
                     shutil.copy2(source_abs, cur_abs)
             cur_rel = rel_to_session(self.session_dir, cur_abs)
-            diff_score = as_float(frame.get("diff_score"), 0.0)
+            if frame.get("diff_score") is None:
+                # Frame-stream input has no upstream score. Use the same
+                # histogram/pHash detector as M_st, including when M_st is off.
+                from online_short_term.frame_diff_detector import CandidateFrame, FrameDiffEventDetector
+
+                prior = [item for item in merged_by_second_path.values() if as_float(item.get("timestamp")) < ts]
+                candidates = []
+                if prior:
+                    prev = max(prior, key=lambda item: as_float(item.get("timestamp")))
+                    candidates.append(CandidateFrame(timestamp=as_float(prev.get("timestamp")), path=prev["path"]))
+                candidates.append(CandidateFrame(timestamp=ts, path=source_rel))
+                FrameDiffEventDetector(self.session_dir)._compute_frame_diffs(candidates)
+                diff_score = candidates[-1].diff_score
+            else:
+                diff_score = as_float(frame.get("diff_score"), 0.0)
             role = "change" if diff_score >= 0.4 else "recent"
             item = {
                 "frame_id": frame_id(ts),
@@ -180,13 +222,18 @@ class MCurStore:
         if merged:
             latest_ts = max(as_float(item.get("timestamp")) for item in merged)
             for item in merged:
-                if abs(as_float(item.get("timestamp")) - latest_ts) < 1e-6:
-                    item["role"] = "latest"
+                item["role"] = (
+                    "latest" if abs(as_float(item.get("timestamp")) - latest_ts) < 1e-6
+                    else "change" if as_float(item.get("diff_score")) >= .4 else "recent"
+                )
 
         kept_paths = {str(item.get("path") or "") for item in merged}
         self._write_jsonl(self.frames_path, merged)
         self._cleanup_current_frames(kept_paths)
 
+        # Reload and merge while holding the process/thread lock. A frame job
+        # may have captured its transcript argument before ASR committed.
+        transcript_segments = self._merge_transcript_segments(self.load_transcript_segments(), transcript_segments)
         transcript_segments = [
             dict(seg)
             for seg in transcript_segments
@@ -237,11 +284,13 @@ class MCurStore:
         }
         write_json_atomic(self.open_event_path, open_event)
 
-        previous_state = self.load()
         version = int(previous_state.get("mcur_version", 0) or 0) + 1
         state = {
+            **previous_state,
             "session_id": self.session_id,
-            "mcur_ready": bool(merged),
+            "mcur_ready": bool(merged or transcript_segments),
+            "current_text_ready": bool(transcript_segments),
+            "audio_current_ready": bool(transcript_segments and previous_state.get("audio_current_ready")),
             "mcur_version": version,
             "window_seconds": self.window_seconds,
             "core_seconds": self.core_seconds,
@@ -284,14 +333,13 @@ class MCurStore:
                     "timestamp": timestamp,
                     "path": frame_path,
                     "source_path": frame_path,
-                    "diff_score": 0.0,
                     "frame_index": int(frame_index),
                     "client_ts_ms": client_ts_ms,
                     "source": source,
                     "created_at": utc_now_iso(),
                 }
             ],
-            transcript_segments=self.load_transcript_segments(),
+            transcript_segments=[],
         )
         current_frame_path = None
         for item in reversed(self.load_frames()):
@@ -300,6 +348,7 @@ class MCurStore:
                 break
         return {**state, "current_frame_path": current_frame_path}
 
+    @_locked
     def update_transcript_segments(
         self,
         segments: list[dict[str, Any]],
@@ -313,8 +362,8 @@ class MCurStore:
         if not self.frames_path.exists():
             self.frames_path.write_text("", encoding="utf-8")
         state = self.load()
-        if not state:
-            return self._write_audio_only_transcript_state(segments, source=source, state={})
+        if not state or not self.load_frames():
+            return self._write_audio_only_transcript_state(segments, source=source, state=state or {})
         try:
             window_start = as_float(state.get("window_start_time"), 0.0)
             window_end = as_float(state.get("window_end_time"), state.get("current_time") or 0.0)
@@ -363,6 +412,7 @@ class MCurStore:
             "transcript": transcript,
         }
 
+    @_locked
     def get_current_context(self) -> dict[str, Any]:
         state = self.get_state()
         frames = self.load_frames()
@@ -438,11 +488,11 @@ class MCurStore:
     ) -> dict[str, Any]:
         existing = self.load_transcript_segments()
         merged = self._merge_transcript_segments(existing, segments)
-        self._write_jsonl(self.transcript_path, merged)
-        starts = [as_float(seg.get("start"), 0.0) for seg in merged]
         ends = [as_float(seg.get("end"), as_float(seg.get("start"), 0.0)) for seg in merged]
-        window_start = min(starts) if starts else 0.0
-        window_end = max(ends) if ends else window_start
+        window_end = max([as_float(state.get("current_time"), 0.0), *ends])
+        window_start = max(0.0, window_end - self.window_seconds)
+        merged = [seg for seg in merged if as_float(seg.get("end"), as_float(seg.get("start"), 0.0)) >= window_start]
+        self._write_jsonl(self.transcript_path, merged)
         transcript = " ".join(str(seg.get("text") or "").strip() for seg in merged if seg.get("text")).strip()
         now = utc_now_iso()
         version = int(state.get("mcur_version", 0) or 0) + 1

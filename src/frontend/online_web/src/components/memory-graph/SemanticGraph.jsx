@@ -1,11 +1,16 @@
+import { useLanguage } from '../../i18n.jsx'
 import cytoscape from 'cytoscape'
 import coseBilkent from 'cytoscape-cose-bilkent'
 import CytoscapeComponent from 'react-cytoscapejs'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import GraphLegend from './GraphLegend.jsx'
 import GraphZoomControls from './GraphZoomControls.jsx'
+import useGraphPageScroll from './useGraphPageScroll.js'
 import { connectedGraphContext, focusGraphElements } from './graphViewportUtils.js'
 import { NODE_COLOR_STYLES } from './nodeColorPalette.js'
+import { useTheme } from '../ThemeProvider.jsx'
+import { buildGraphAppearance } from './graphAppearance.js'
+import useGraphTextScale from './useGraphTextScale.js'
 
 cytoscape.use(coseBilkent)
 
@@ -81,7 +86,12 @@ const SEMANTIC_STYLES = [
 ]
 
 export default function SemanticGraph({ elements, selection, linkedFactIds, linkedEntityId, focusFactIds, onSelect, onClear }) {
+  const { t } = useLanguage()
+  const { theme } = useTheme()
+  const textScale = useGraphTextScale()
+  const stylesheet = useMemo(() => buildGraphAppearance(SEMANTIC_STYLES, theme, textScale), [theme, textScale])
   const [cy, setCy] = useState(null)
+  useGraphPageScroll(cy)
   const containerRef = useRef(null)
   const hasLaidOutRef = useRef(false)
   const previousNodeIdsRef = useRef(new Set())
@@ -186,11 +196,12 @@ export default function SemanticGraph({ elements, selection, linkedFactIds, link
   }, [cy])
 
   return (
-    <div ref={containerRef} className="memory-graph-canvas" role="region" aria-label={`Semantic graph with ${elements.filter((element) => element.group === 'edges').length} visible facts`}>
-      {!elements.length && <div className="memory-graph-canvas-empty">No semantic facts match the current filters.</div>}
+    <div ref={containerRef} className="memory-graph-canvas" role="region" aria-label={t("Semantic graph with {value1} visible facts", { value1: elements.filter((element) => element.group === 'edges').length })}>
+      {!elements.length && <div className="memory-graph-canvas-empty">{t("No semantic facts match the current filters.")}</div>}
       <CytoscapeComponent
+        className="memory-graph-surface"
         elements={elements}
-        stylesheet={SEMANTIC_STYLES}
+        stylesheet={stylesheet}
         layout={{ name: 'preset' }}
         cy={registerCy}
         style={{ width: '100%', height: '100%' }}
@@ -199,7 +210,7 @@ export default function SemanticGraph({ elements, selection, linkedFactIds, link
         maxZoom={2.5}
       />
       <GraphLegend mode="semantic" />
-      <GraphZoomControls cy={cy} disabled={!elements.length} label="Semantic graph" />
+      <GraphZoomControls cy={cy} disabled={!elements.length} label={t("Semantic graph")} />
     </div>
   )
 }

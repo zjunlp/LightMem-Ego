@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import sys
@@ -12,6 +13,7 @@ from online_preprocess.io_utils import read_json, write_json
 
 from .em2mem_layout import Em2MemOnlineLayout, hhmmssff_to_seconds, seconds_to_hhmmssff
 from online_memory.content import effective_episodic_content
+from online_memory.visual_summary import aggregate_visual_summaries, visual_summary_from_evidence
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 for _path in (PROJECT_ROOT / "src", PROJECT_ROOT / "src" / "HippoRAG" / "src"):
@@ -292,7 +294,10 @@ def evidence_doc_to_caption_item(session_id: str, doc: dict[str, Any], idx: int)
         "text": _caption_text(doc),
         "caption": fine_caption,
         "fine_caption": fine_caption,
-        "visual_summary": fine_caption,
+        "visual_summary": visual_summary_from_evidence(doc),
+        "visual_summary_status": doc.get("visual_summary_status"),
+        "visual_summary_debug": doc.get("visual_summary_debug", {}),
+        "visual_observations": doc.get("visual_observations", []),
         "scene": _clean_text(doc.get("scene")) or None,
         "scene_summary": _scene_summary(doc),
         "keyframe_caption": _keyframe_caption_text(doc),
@@ -367,6 +372,7 @@ def _aggregate_caption_group(group: list[dict[str, Any]], scale: str, idx: int) 
     keyframes = []
     for item in group:
         keyframes.extend(item.get("keyframe_paths", []) or [])
+    visual_summary = aggregate_visual_summaries(group)
     item = {
         "doc_id": doc_id,
         "session_id": first["session_id"],
@@ -380,7 +386,8 @@ def _aggregate_caption_group(group: list[dict[str, Any]], scale: str, idx: int) 
         "text": " ".join(text_parts),
         "caption": " ".join(text_parts),
         "fine_caption": " ".join(text_parts),
-        "visual_summary": " ".join(text_parts),
+        "visual_summary": visual_summary,
+        "visual_summary_status": "derived" if visual_summary else "unavailable",
         "scene_summary": first.get("scene_summary", {}),
         "keyframe_paths": keyframes,
         "action_threads": [x for item in group for x in item.get("action_threads", []) or []],
@@ -488,6 +495,9 @@ def _dedupe_triplets(triplets: list[list[str]]) -> list[list[str]]:
             continue
         clean = [_clean_text(x) for x in tri]
         if not all(clean):
+            continue
+        temporal_label = r"(?:from\s+)?\d+(?:\.\d+)?\s*(?:(?:-|–|～|to)\s*\d+(?:\.\d+)?\s*)?(?:s|sec|seconds?|秒)|\d{1,2}:\d{2}(?::\d{2})?"
+        if any(re.fullmatch(temporal_label, value, flags=re.IGNORECASE) for value in (clean[0], clean[2])):
             continue
         key = tuple(x.lower() for x in clean)
         if key in seen:
@@ -668,11 +678,15 @@ def _build_graph_payload(items: list[dict[str, Any]], triplet_map: dict[str, lis
     entity_ids: dict[str, str] = {}
 
     def entity_node(label: str) -> str:
-        key = _slug(label)
+        key = _clean_text(label).casefold()
         node_id = entity_ids.get(key)
         if node_id:
             return node_id
-        node_id = f"entity_{key}"
+        # ASCII slugs alone collapse all CJK labels to "item", and collide
+        # after punctuation removal/truncation. Hash the full normalized label
+        # while keeping the slug only as a readable prefix.
+        digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+        node_id = f"entity_{_slug(label)}_{digest}"
         entity_ids[key] = node_id
         nodes.append({"id": node_id, "type": "Entity", "label": label})
         return node_id
@@ -711,7 +725,7 @@ def _build_graph_payload(items: list[dict[str, Any]], triplet_map: dict[str, lis
         "graph_type": "event_centric_episodic_graph",
         "scale": scale,
         "nodes": nodes,
-        "edges": edges,
+        "edges": list({(edge["source"], edge["target"], edge["type"], edge.get("event_id")): edge for edge in edges}.values()),
         "doc_id_to_event_id": doc_id_to_event_id,
         "source": "online_evidence_adapter",
     }

@@ -72,6 +72,7 @@ async function parseJsonResponse(response) {
     err.code = backendError?.code || ''
     err.details = backendError?.details || {}
     err.requestId = response.headers.get('X-Request-ID') || ''
+    err.retryAfter = response.headers.get('Retry-After') || ''
     throw err
   }
 
@@ -83,13 +84,126 @@ async function requestJson(path, options = {}) {
     method: options.method || 'GET',
     headers: {
       'Content-Type': 'application/json',
+      ...(options.cache === 'no-store' ? { 'Cache-Control': 'no-cache' } : {}),
       ...(options.headers || {})
     },
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
-    signal: options.signal
+    signal: options.signal,
+    ...(options.cache ? { cache: options.cache } : {})
   })
 
   return parseJsonResponse(response)
+}
+function parseContentDispositionFilename(value) {
+  if (!value) return ''
+
+  const extended = value.match(/(?:^|;)\s*filename\*\s*=\s*(?:UTF-8'')?([^;]+)/i)
+  if (extended?.[1]) {
+    try {
+      return decodeURIComponent(extended[1].trim().replace(/^"|"$/g, ''))
+    } catch {
+      return extended[1].trim().replace(/^"|"$/g, '')
+    }
+  }
+
+  const basic = value.match(/(?:^|;)\s*filename\s*=\s*"([^"]+)"/i)
+    || value.match(/(?:^|;)\s*filename\s*=\s*([^;]+)/i)
+  return basic?.[1]?.trim() || ''
+}
+
+export function sanitizeMemoryExportFilenamePart(value, fallback = 'untitled') {
+  const cleaned = String(value ?? '')
+    .normalize('NFKC')
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .replace(/[\\/:*?"<>|]/g, '-')
+    .replace(/[^\p{L}\p{N}._-]+/gu, '-')
+    .replace(/-+/g, '-')
+    .replace(/\.{2,}/g, '.')
+    .replace(/^[-.]+|[-.]+$/g, '')
+    .slice(0, 48)
+    .replace(/^[-.]+|[-.]+$/g, '')
+
+  return cleaned || fallback
+}
+
+export function buildMemoryExportFilename(memory = {}, date = new Date()) {
+  const id = sanitizeMemoryExportFilenamePart(memory.id, 'unknown')
+  const title = sanitizeMemoryExportFilenamePart(memory.title, 'untitled')
+  const timestamp = [
+    date.getUTCFullYear(),
+    String(date.getUTCMonth() + 1).padStart(2, '0'),
+    String(date.getUTCDate()).padStart(2, '0')
+  ].join('') + '-' + [
+    String(date.getUTCHours()).padStart(2, '0'),
+    String(date.getUTCMinutes()).padStart(2, '0'),
+    String(date.getUTCSeconds()).padStart(2, '0')
+  ].join('')
+
+  const base = `memory-${id}-${title}-${timestamp}`
+  return `${base.slice(0, 115)}.json`
+}
+
+async function parseMemoryExportError(response) {
+  const text = await response.text()
+  let raw = null
+  if (text) {
+    try {
+      raw = JSON.parse(text)
+    } catch {
+      raw = { message: text }
+    }
+  }
+
+  const backendError = raw?.error && typeof raw.error === 'object' ? raw.error : {}
+  const error = new Error(
+    backendError.message
+    || raw?.message
+    || raw?.detail
+    || `${response.status} ${response.statusText}`
+  )
+  error.status = response.status
+  error.code = backendError.code || ''
+  error.details = backendError.details || {}
+  error.requestId = backendError.requestId || response.headers.get('X-Request-ID') || ''
+  error.retryAfter = response.headers.get('Retry-After') || ''
+  error.raw = raw
+  return error
+}
+
+export async function exportLongTermMemoryJson({
+  sessionId,
+  memoryId,
+  memory,
+  signal,
+  baseUrl
+} = {}) {
+  if (!memoryId) {
+    const error = new Error('A memory ID is required to export long-term memory.')
+    error.code = 'invalid_memory_id'
+    throw error
+  }
+
+  const encodedMemoryId = encodeURIComponent(memoryId)
+  const path = sessionId
+    ? `/session/${encodeURIComponent(sessionId)}/memories/${encodedMemoryId}/export?format=json`
+    : `/memories/${encodedMemoryId}/export?format=json`
+  const response = await fetch(joinUrl(baseUrl, path), {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
+    credentials: 'same-origin',
+    signal
+  })
+
+  if (!response.ok) throw await parseMemoryExportError(response)
+
+  const blob = await response.blob()
+  const filename = parseContentDispositionFilename(response.headers.get('Content-Disposition'))
+    || buildMemoryExportFilename(memory)
+  return {
+    blob,
+    filename,
+    requestId: response.headers.get('X-Request-ID') || ''
+  }
 }
 
 async function requestJsonWithMeta(path, options = {}) {
@@ -521,7 +635,8 @@ export async function fetchLongTermMemories({ sessionId, signal, baseUrl } = {})
   try {
     raw = await requestJson(`/session/${encodeURIComponent(sessionId)}/memories`, {
       baseUrl,
-      signal
+      signal,
+      cache: 'no-store'
     })
   } catch (error) {
     throw sanitizeMemoryMutationError(normalizeBackendError(error))
@@ -542,6 +657,13 @@ export function normalizeLongTermMemoryResponse(raw, expectedSessionId) {
   )
   const normalized = {
     ...memory,
+    sessionSummary: typeof memory.sessionSummary === 'string' ? memory.sessionSummary : '',
+    sessionSummaryVersion: Number.isInteger(memory.sessionSummaryVersion) && memory.sessionSummaryVersion >= 0
+      ? memory.sessionSummaryVersion
+      : null,
+    sessionSummaryStatus: ['ready', 'unavailable'].includes(memory.sessionSummaryStatus)
+      ? memory.sessionSummaryStatus
+      : 'unavailable',
     episodic: {
       '30sec': Array.isArray(episodic['30sec']) ? episodic['30sec'] : [],
       '3min': Array.isArray(episodic['3min']) ? episodic['3min'] : [],
@@ -603,23 +725,23 @@ export function normalizeLongTermMemoryResponse(raw, expectedSessionId) {
   const propagation = normalizePropagation(normalized.propagation, normalized.memoryVersion)
   const fullPropagationSupported = propagation !== null
 
+  const capabilityContractValid = typeof normalized.canEdit === 'boolean'
+    && (normalized.canEdit
+      ? normalized.editDisabledReason == null
+      : typeof normalized.editDisabledReason === 'string' && normalized.editDisabledReason.length > 0)
   normalized.propagation = propagation
   normalized.fullPropagationSupported = fullPropagationSupported
-  normalized.editSupported = editContractValid && fullPropagationSupported
-  if (!editContractSignaled) {
+  normalized.editSupported = editContractValid && capabilityContractValid
+  normalized.canEdit = normalized.editSupported && normalized.canEdit === true
+  if (!normalized.editSupported) {
     normalized.editPolicy = { ...LEGACY_READONLY_EDIT_POLICY }
-    normalized.canRollback = false
+    normalized.editDisabledReason = 'backend_edit_not_supported'
+  }
+  if (!normalized.canEdit) {
     normalized.episodic['30sec'] = thirtySecondRecords.map((item) => ({
       ...item,
       editable: false,
-      editDisabledReason: 'backend_edit_not_supported'
-    }))
-  } else if (!fullPropagationSupported) {
-    normalized.canRollback = false
-    normalized.episodic['30sec'] = thirtySecondRecords.map((item) => ({
-      ...item,
-      editable: false,
-      editDisabledReason: 'full_propagation_not_supported'
+      editDisabledReason: item.editDisabledReason || normalized.editDisabledReason
     }))
   }
   const invalidResponse = (
@@ -656,7 +778,16 @@ export function normalizeLongTermMemoryResponse(raw, expectedSessionId) {
     throw error
   }
 
-  return normalized
+  return normalizeOptionalSessionTitle(normalized, expectedSessionId)
+}
+
+function normalizeOptionalSessionTitle(value, sessionId) {
+  const title = typeof value?.title === 'string' && value.title.trim() ? value.title : sessionId
+  const titleRevision = Number.isInteger(value?.titleRevision) && value.titleRevision >= 0
+    ? value.titleRevision
+    : 0
+  const titleUpdatedAt = isValidTimestampOrNull(value?.titleUpdatedAt) ? value.titleUpdatedAt : null
+  return { ...value, title, titleRevision, titleUpdatedAt }
 }
 
 export async function updateThirtySecondMemories({
@@ -719,6 +850,7 @@ function sanitizeMemoryMutationError(error) {
   safe.status = error?.status
   safe.code = typeof error?.code === 'string' ? error.code : ''
   safe.requestId = typeof error?.requestId === 'string' ? error.requestId : ''
+  safe.retryAfter = error?.retryAfter || ''
   const details = error?.details && typeof error.details === 'object' ? error.details : {}
   safe.details = Object.fromEntries(
     ['recordId', 'field', 'limit', 'currentVersion', 'component']
@@ -730,7 +862,31 @@ function sanitizeMemoryMutationError(error) {
 
 export function normalizeMemoryMutationResponse(raw, expectedSessionId, requestId = '') {
   const result = snakeToCamelDeep(raw)
-  const memory = normalizeLongTermMemoryResponse(result.memory, expectedSessionId)
+  const responseVersion = isPositiveInteger(result.memoryVersion) ? result.memoryVersion : null
+  const snapshotVersion = result.memory?.sessionId === expectedSessionId && isPositiveInteger(result.memory?.memoryVersion)
+    ? result.memory.memoryVersion
+    : null
+  const acceptedVersions = [responseVersion, snapshotVersion].filter((version) => version !== null)
+  const acceptedVersion = acceptedVersions.length ? Math.max(...acceptedVersions) : null
+  const serverAccepted = (
+    result.status === 'ok'
+    && result.success === true
+    && result.sessionId === expectedSessionId
+    && responseVersion !== null
+  )
+  let memory
+  try {
+    memory = normalizeLongTermMemoryResponse(result.memory, expectedSessionId)
+  } catch (error) {
+    error.code = 'invalid_memory_mutation_response'
+    error.requestId = requestId
+    if (serverAccepted) {
+      error.serverAccepted = true
+      error.acceptedVersion = acceptedVersion
+      if (typeof result.queryReady === 'boolean') error.queryReady = result.queryReady
+    }
+    throw error
+  }
   const graphUpdate = result.graphUpdate || {}
   const componentVersions = graphUpdate.componentVersions || {}
   const graphVersions = graphUpdate.graphVersions || {}
@@ -750,8 +906,6 @@ export function normalizeMemoryMutationResponse(raw, expectedSessionId, requestI
     && result.sessionId === expectedSessionId
     && isPositiveInteger(result.memoryVersion)
     && result.memoryVersion === memory.memoryVersion
-    && memory.editSupported === true
-    && memory.fullPropagationSupported === true
     && memoryVersionsMatch
     && memory.propagation?.targetMemoryVersion === result.memoryVersion
     && propagation !== null
@@ -760,6 +914,7 @@ export function normalizeMemoryMutationResponse(raw, expectedSessionId, requestI
     && result.message !== ''
     && typeof result.canRollback === 'boolean'
     && result.canRollback === memory.canRollback
+    && (result.queryReady === undefined || typeof result.queryReady === 'boolean')
     && graphUpdate.status === 'ready'
     && graphUpdate.scale === '30sec'
     && graphUpdate.memoryVersion === result.memoryVersion
@@ -770,6 +925,11 @@ export function normalizeMemoryMutationResponse(raw, expectedSessionId, requestI
     const error = new Error('The memory update response was incomplete or inconsistent.')
     error.code = 'invalid_memory_mutation_response'
     error.requestId = requestId
+    if (serverAccepted) {
+      error.serverAccepted = true
+      error.acceptedVersion = acceptedVersion
+      if (typeof result.queryReady === 'boolean') error.queryReady = result.queryReady
+    }
     throw error
   }
   return { ...result, memory, graphUpdate, propagation, requestId }
@@ -951,7 +1111,84 @@ export async function fetchLongTermMemorySessions({ cursor = null, signal, baseU
     throw error
   }
 
-  return catalog
+  return {
+    ...catalog,
+    items: items.map((item) => normalizeOptionalSessionTitle(item, item.sessionId))
+  }
+}
+
+export function validateSessionTitle(value) {
+  const title = String(value ?? '').trim()
+  if (!title) return 'session_title_required'
+  if (/[\u0000-\u001f\u007f-\u009f]/u.test(title)) return 'session_title_control_character'
+  if (Array.from(title).length > 100) return 'session_title_too_long'
+  return ''
+}
+
+export async function getSessionTitle({ sessionId, signal } = {}) {
+  if (!sessionId) throw createSessionTitleError('invalid_session_id')
+  const raw = await requestJson(`/session/${encodeURIComponent(sessionId)}/title`, {
+    signal
+  })
+  return normalizeSessionTitleResponse(raw, sessionId)
+}
+
+export async function updateSessionTitle({ sessionId, title, expectedRevision, signal } = {}) {
+  if (!sessionId) throw createSessionTitleError('invalid_session_id')
+  const validationError = validateSessionTitle(title)
+  if (validationError) throw createSessionTitleError(validationError)
+  if (!Number.isInteger(expectedRevision) || expectedRevision < 0) {
+    throw createSessionTitleError('invalid_title_revision')
+  }
+
+  try {
+    const raw = await requestJson(`/session/${encodeURIComponent(sessionId)}/title`, {
+      method: 'PATCH',
+      signal,
+      body: { title: String(title).trim(), expected_revision: expectedRevision }
+    })
+    return normalizeSessionTitleResponse(raw, sessionId)
+  } catch (error) {
+    if (error?.details?.current) {
+      try {
+        error.details = {
+          ...snakeToCamelDeep(error.details),
+          current: normalizeSessionTitleSnapshot(error.details.current, sessionId)
+        }
+      } catch { /* Preserve the original conflict when details are incomplete. */ }
+    }
+    throw error
+  }
+}
+
+function normalizeSessionTitleResponse(raw, expectedSessionId) {
+  const normalized = normalizeSessionTitleSnapshot(raw, expectedSessionId)
+  if (normalized.status !== 'ok') throw createSessionTitleError('invalid_session_title_response')
+  return normalized
+}
+
+function normalizeSessionTitleSnapshot(raw, expectedSessionId) {
+  const value = snakeToCamelDeep(raw || {})
+  const sessionId = value.sessionId || expectedSessionId
+  if (
+    sessionId !== expectedSessionId
+    || typeof value.title !== 'string'
+    || !value.title.trim()
+    || !Number.isInteger(value.titleRevision)
+    || value.titleRevision < 0
+    || !(value.titleUpdatedAt === null || value.titleUpdatedAt === undefined || typeof value.titleUpdatedAt === 'string')
+  ) throw createSessionTitleError('invalid_session_title_response')
+  return {
+    status: value.status || 'ok',
+    sessionId,
+    title: value.title,
+    titleRevision: value.titleRevision,
+    titleUpdatedAt: value.titleUpdatedAt || null
+  }
+}
+
+function createSessionTitleError(code) {
+  return Object.assign(new Error(code), { code })
 }
 
 export async function uploadFrame(sessionId, frameBlob, options = {}) {
@@ -1035,9 +1272,29 @@ export async function uploadRokidAudioChunk(sessionId, audioBlob, options = {}) 
   return normalizeUploadAudio(raw)
 }
 
+export async function askSessionMemory(sessionId, question, options = {}) {
+  return askQuestion(sessionId, question, {
+    ...options,
+    baseUrl: '/api',
+    sessionEndpoint: true,
+    mode: 'async',
+    responseMode: 'legacy',
+    memoryMode: 'long_term',
+    preferCurrent: false,
+    useCurrent: false,
+    useShortTerm: false,
+    useLongTerm: true,
+    useImageEvidence: 'auto',
+    longTermRetrievalScheme: 'em2memory'
+  })
+}
+
 export async function askQuestion(sessionId, question, options = {}) {
   const inputMethod = options.inputMethod || 'manual'
-  const raw = await requestJson(`/ask/${encodeURIComponent(sessionId)}`, {
+  const path = options.sessionEndpoint
+    ? `/session/${encodeURIComponent(sessionId)}/ask`
+    : `/ask/${encodeURIComponent(sessionId)}`
+  const raw = await requestJson(path, {
     baseUrl: options.baseUrl,
     method: 'POST',
     signal: options.signal,

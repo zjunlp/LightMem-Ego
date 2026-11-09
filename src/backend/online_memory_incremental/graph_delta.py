@@ -52,8 +52,10 @@ def _merge_active_30s_sidecar(
     triplet_map = payload.get("triplet_map") if isinstance(payload.get("triplet_map"), dict) else {}
     triplet_map = {str(k): _dedupe_triplets(v or []) for k, v in triplet_map.items()}
     for doc_id, triples in triplet_map_delta.items():
-        existing = triplet_map.get(str(doc_id), [])
-        triplet_map[str(doc_id)] = _dedupe_triplets(existing + (triples or []))
+        # Each extraction is the complete current relation set for this doc.
+        # Replacement must also handle an empty result, which retracts all of
+        # the old relations without changing other documents.
+        triplet_map[str(doc_id)] = _dedupe_triplets(triples or [])
 
     units = []
     for idx, item in enumerate(caption_30s):

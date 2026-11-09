@@ -4,6 +4,9 @@ import os
 import re
 from typing import Any
 
+from online_query.cache_schema import has_valid_binding, has_entity_binding
+from online_query_constraints import resolve_query_constraints, observed_query_time
+
 
 def _env_int(name: str, default: int) -> int:
     try:
@@ -149,6 +152,7 @@ class QueryRouter:
         request_options: dict[str, Any] | None = None,
         session_context: dict[str, Any] | None = None,
         cache_context: dict[str, Any] | None = None,
+        *, query_constraints: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         request_options = request_options or {}
         session_context = session_context or {}
@@ -156,6 +160,7 @@ class QueryRouter:
         q = (question or "").strip().lower()
         warnings: list[str] = []
 
+        constraints = resolve_query_constraints(question, query_constraints=query_constraints, latest=observed_query_time(session_context))
         has_visual = _contains_any(q, self.VISUAL_KWS)
         has_entity = _contains_any(q, self.ENTITY_KWS)
         has_summary = _contains_any(q, self.SUMMARY_KWS)
@@ -230,6 +235,21 @@ class QueryRouter:
             confidence = 0.8
             reason = "Summary question is best served by text episodic/semantic memories."
 
+        if constraints.get("requires_current") and constraints.get("requires_history"):
+            query_type = "temporal_reasoning"
+            retrieval_mode = "hybrid"
+        elif constraints.get("scope") == "current":
+            query_type = "current_perception"
+            retrieval_mode = "current"
+        elif has_current and not constraints.get("requires_current"):
+            has_current = False
+            if query_type == "current_perception":
+                query_type = "general_qa"
+                retrieval_mode = "hybrid"
+        if constraints.get("summary") and not constraints.get("requires_current"):
+            query_type = "long_term_summary"
+            retrieval_mode = "text_only"
+
         memory_route = {
             "use_current": False,
             "use_short_term": False,
@@ -238,7 +258,7 @@ class QueryRouter:
         }
         short_term_reason = ""
 
-        if cache_context.get("is_followup"):
+        if has_valid_binding(cache_context):
             memory_route["use_interaction_cache"] = True
             memory_route["use_short_term"] = True
             if has_temporal_reason or has_recent or _contains_any(q, ["后来呢", "之后呢", "然后呢", "then", "later", "after that"]):
@@ -253,6 +273,9 @@ class QueryRouter:
             reason = "Follow-up question detected; using interaction cache context with hybrid retrieval."
             short_term_reason = "follow-up query benefits from short-term micro-events"
             warnings.append("M_cache follow-up context is used as soft retrieval guidance")
+        elif has_entity_binding(cache_context):
+            # Topic inheritance does not change the question's memory/time route.
+            memory_route["use_interaction_cache"] = True
 
         if query_type == "current_perception":
             memory_route["use_current"] = True
@@ -271,9 +294,12 @@ class QueryRouter:
         if query_type == "temporal_reasoning" and _contains_any(q, ["后来", "之后", "after that", "later", "then"]):
             memory_route["use_short_term"] = True
             short_term_reason = "later/after query should consult short-term micro-events"
-        if query_type == "entity_tracking" and cache_context.get("is_followup"):
+        if query_type == "entity_tracking" and has_valid_binding(cache_context):
             memory_route["use_short_term"] = True
             short_term_reason = "follow-up entity tracking should consult short-term micro-events"
+
+        if constraints.get("requires_current") and constraints.get("requires_history"):
+            memory_route.update(use_current=True, use_short_term=True, use_long_term=True)
 
         short_term_ready = bool(session_context.get("short_term_ready", False))
         current_ready = bool(session_context.get("current_ready", False))
@@ -323,7 +349,13 @@ class QueryRouter:
         if retrieval_mode in {"hybrid", "visual_only"} and not session_context.get("visual_ready", False):
             warnings.append("visual index is not ready; query engine will fallback to text-only where needed")
 
+        for source in ("use_current", "use_short_term", "use_long_term", "use_interaction_cache"):
+            value = parse_auto_bool(request_options.get(source))
+            if isinstance(value, bool):
+                memory_route[source] = value
+
         return {
+            "query_constraints": constraints,
             "query_type": query_type,
             "memory_route": memory_route,
             "retrieval_mode": retrieval_mode,

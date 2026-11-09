@@ -6,9 +6,10 @@ from collections import Counter
 from typing import Any
 
 from online_short_term.mst_store import MSTStore
+from online_evidence_content import TOKEN_ALIASES as SHARED_ALIASES, query_terms
+from online_query_constraints import constraint_window, constraint_windows, reserve_time_coverage, overlaps, resolve_query_constraints, time_fit
 
 
-RECENT_KWS = ["刚才", "刚刚", "最近", "现在", "当前", "后来", "之后", "recent", "just now", "now", "later", "after"]
 SUMMARY_KWS = [
     "总结",
     "概括",
@@ -115,6 +116,9 @@ TOKEN_ALIASES = {
 }
 
 
+TOKEN_ALIASES.update(SHARED_ALIASES)
+
+
 def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
@@ -144,7 +148,7 @@ def _bm25_terms(text: str, *, expand_aliases: bool = False) -> list[str]:
     terms: list[str] = []
     seen_aliases: set[str] = set()
     for token in _token_sequence(text):
-        if token in BM25_STOPWORDS or token.isdigit() or len(token) <= 1:
+        if token in BM25_STOPWORDS or token.isdigit():
             continue
         if expand_aliases and token in TOKEN_ALIASES:
             for alias in sorted(TOKEN_ALIASES[token]):
@@ -152,7 +156,13 @@ def _bm25_terms(text: str, *, expand_aliases: bool = False) -> list[str]:
                     terms.append(alias)
                     seen_aliases.add(alias)
             continue
-        terms.append(token)
+        if len(token) > 1:
+            terms.append(token)
+    if expand_aliases:
+        for token in sorted(query_terms(text)):
+            if token in TOKEN_ALIASES and token not in seen_aliases:
+                terms.append(token)
+                seen_aliases.add(token)
     return terms
 
 
@@ -166,8 +176,8 @@ def _retrieval_query_text(question: str) -> str:
 
 
 def _overlap_score(query: str, text: str) -> float:
-    q = _tokens(query)
-    t = _tokens(text)
+    q = query_terms(query)
+    t = query_terms(text)
     if not q or not t:
         return 0.0
     return len(q & t) / max(len(q), 1)
@@ -287,12 +297,17 @@ def _continuity_scores(events: list[dict[str, Any]], bm25_scores: list[float], q
 
 
 class MSTRetriever:
-    def __init__(self, store: MSTStore) -> None:
+    def __init__(self, store: MSTStore, embedding_model=None, semantic_index=None) -> None:
         self.store = store
         self.mst_version = -1
         self.events: list[dict[str, Any]] = []
-        self._bm25_cache_key: tuple[str, int, int] | None = None
+        self._bm25_cache_key: tuple[Any, ...] | None = None
         self._bm25_corpus: _BM25Corpus | None = None
+        self.semantic_index = semantic_index
+        if self.semantic_index is None and getattr(store, "session_dir", None) is not None:
+            from .semantic_index import enabled, get_index
+            if enabled():
+                self.semantic_index = get_index(store.session_dir, embedding_model)
 
     def refresh_if_needed(self) -> None:
         state = self.store.get_state()
@@ -300,6 +315,8 @@ class MSTRetriever:
         if version != self.mst_version:
             self.events = self.store.load_events()
             self.mst_version = version
+            if self.semantic_index is not None:
+                self.semantic_index.prepare(self.events)
 
     def search(
         self,
@@ -308,6 +325,10 @@ class MSTRetriever:
         cache_context: dict[str, Any] | None = None,
         include_archive: bool = False,
     ) -> list[dict[str, Any]]:
+        # Keep this local: importing online_query at module load can recurse
+        # through query_engine back into this retriever.
+        from online_query.cache_schema import has_exact_frame_binding
+
         if include_archive:
             state = self.store.get_state()
             version = int(state.get("archive_version", state.get("mst_version", 0)) or 0)
@@ -321,11 +342,26 @@ class MSTRetriever:
             return []
         cache_context = cache_context or {}
         latest_time = max(_safe_float(event.get("end_time")) for event in events)
-        recent_query = any(keyword.lower() in (question or "").lower() for keyword in RECENT_KWS)
+        constraints = resolve_query_constraints(question, query_constraints=cache_context.get("query_constraints"), latest=latest_time)
+        window = constraint_window(constraints)
+        if window:
+            events = [event for event in events if overlaps(event.get("start_time"), event.get("end_time"), window)]
+            bm25_cache_key = (*bm25_cache_key, tuple(tuple(part) for part in constraint_windows(constraints)))
+            if not events:
+                return []
+        if not window and has_exact_frame_binding(cache_context) and cache_context.get("temporal_relation") == "same_time":
+            ranges = cache_context.get("referenced_time_ranges") or []
+            events = [event for event in events if any(_safe_float(event.get("start_time")) <= _safe_float(window.get("end"), _safe_float(window.get("start"))) and _safe_float(event.get("end_time")) >= _safe_float(window.get("start")) for window in ranges)]
+            bm25_cache_key = (*bm25_cache_key, tuple((_safe_float(window.get("start")), _safe_float(window.get("end"))) for window in ranges))
+            if not events:
+                return []
+        # The original scope is authoritative. "After an event" is not a
+        # request for the latest events, even if the search wording says after.
+        recent_query = constraints.get("scope") in {"recent", "current"}
         count_query = any(keyword.lower() in (question or "").lower() for keyword in COUNT_KWS)
         summary_query = _is_summary_query(question)
         if summary_query and not count_query:
-            return self._timeline_summary(events, top_k=max(int(top_k or 0), SUMMARY_TOP_K))
+            return reserve_time_coverage(self._timeline_summary(events, top_k=max(len(events), int(top_k or SUMMARY_TOP_K))), constraint_windows(constraints), max(1, int(top_k or SUMMARY_TOP_K)))
         event_texts = [
             " ".join(
                 [
@@ -343,26 +379,38 @@ class MSTRetriever:
             self._bm25_corpus = _BM25Corpus(event_texts)
             self._bm25_cache_key = bm25_cache_key
         bm25_values = self._bm25_corpus.scores(question)
+        semantic_values = self.semantic_index.scores(question, events) if self.semantic_index is not None else {}
+        if self.semantic_index is not None and self.semantic_index.last_search.get("status") in {"not_ready", "partial", "fallback"}:
+            self.semantic_index.prepare(self.events if not include_archive else events)
         continuity_values = _continuity_scores(events, bm25_values, question)
         scored = []
         for index, event in enumerate(events):
             text = event_texts[index]
             lexical = _overlap_score(_retrieval_query_text(question), text)
             bm25 = bm25_values[index] if index < len(bm25_values) else 0.0
+            semantic = semantic_values.get(str(event.get("event_id")), 0.0)
+            topic = max(bm25, semantic)
             continuity = continuity_values[index] if index < len(continuity_values) else 0.0
             age = max(0.0, latest_time - _safe_float(event.get("end_time")))
             recency = 1.0 / (1.0 + age / 60.0)
+            recency_component = 0.0 if constraints.get("scope") == "history" else recency
             cache_score = self._cache_context_score(event, cache_context)
             diff = min(max(_safe_float(event.get("diff_score")), 0.0), 1.0)
             if recent_query:
-                score = 0.36 * bm25 + 0.14 * lexical + 0.24 * recency + 0.14 * cache_score + 0.08 * continuity + 0.04 * diff
+                score = 0.36 * topic + 0.14 * lexical + 0.24 * recency_component + 0.14 * cache_score + 0.08 * continuity + 0.04 * diff
             else:
-                score = 0.42 * bm25 + 0.18 * lexical + 0.16 * recency + 0.12 * cache_score + 0.08 * continuity + 0.04 * diff
+                score = 0.42 * topic + 0.18 * lexical + 0.16 * recency_component + 0.12 * cache_score + 0.08 * continuity + 0.04 * diff
             item = dict(event)
             item["score"] = round(float(score), 4)
             item["bm25_score"] = round(float(bm25), 4)
+            item["semantic_score"] = round(float(semantic), 4)
+            item["semantic_index"] = dict(self.semantic_index.last_search) if self.semantic_index is not None else {"status": "disabled"}
+            item["score_policy"] = "short_term_lexical_dense_union" if semantic_values else "short_term_bm25_lexical_recency_cache_continuity"
             item["lexical_score"] = round(float(lexical), 4)
             item["recency_score"] = round(float(recency), 4)
+            item["recency_score_component"] = round(float(recency_component), 4)
+            if window:
+                item["requested_time_score"] = time_fit(event.get("start_time"), event.get("end_time"), window)
             item["cache_score"] = round(float(cache_score), 4)
             item["continuity_score"] = round(float(continuity), 4)
             item["diff_score_component"] = round(float(diff), 4)
@@ -376,8 +424,25 @@ class MSTRetriever:
             recent_scored.sort(key=lambda item: _safe_float(item.get("start_time", 0.0)))
             return recent_scored
         if summary_query:
-            return self._timeline_summary(events, top_k=max(int(top_k or 0), SUMMARY_TOP_K))
-        return scored[: max(1, int(top_k))]
+            return reserve_time_coverage(self._timeline_summary(events, top_k=max(len(events), int(top_k or SUMMARY_TOP_K))), constraint_windows(constraints), max(1, int(top_k or SUMMARY_TOP_K)))
+        limit = max(1, int(top_k))
+        if semantic_values:
+            # Preserve independently found lexical and semantic candidates;
+            # neither path overwrites the other's original scores.
+            lexical_ranked = sorted((row for row in scored if row["bm25_score"] > 0), key=lambda row: -row["bm25_score"])
+            dense_ranked = sorted((row for row in scored if row["semantic_score"] > 0), key=lambda row: -row["semantic_score"])
+            pool = lexical_ranked[:max(1, limit//2)] + dense_ranked[:max(1, limit//2)] + scored
+            chosen, seen = [], set()
+            for row in pool:
+                if row["event_id"] not in seen:
+                    chosen.append(row); seen.add(row["event_id"])
+                if len(chosen) >= limit:
+                    break
+            chosen.sort(key=lambda row: -row["score"])
+            # Multi-window coverage can still replace a crowded side.
+            remainder = [row for row in scored if row["event_id"] not in seen]
+            return reserve_time_coverage(chosen + remainder, constraint_windows(constraints), limit)
+        return reserve_time_coverage(scored, constraint_windows(constraints), limit)
 
     def _timeline_summary(self, events: list[dict[str, Any]], top_k: int) -> list[dict[str, Any]]:
         by_window: dict[int, list[dict[str, Any]]] = {}
@@ -396,18 +461,14 @@ class MSTRetriever:
 
         if not representatives:
             return []
+        latest = max(events, key=lambda item: _safe_float(item.get("end_time")))
+        if all(item is not latest for item in representatives):
+            representatives.append(latest)
+            representatives.sort(key=lambda item: _safe_float(item.get("start_time")))
 
         limit = max(1, int(top_k or SUMMARY_TOP_K))
-        indices = list(range(len(representatives)))
-        keep = {idx for idx in indices[: min(4, len(indices))]}
-        if indices:
-            keep.add(indices[-1])
-        remaining = limit - len(keep)
-        if remaining > 0:
-            middle = [idx for idx in indices if idx not in keep]
-            keep.update(_choose_evenly(middle, remaining))
-
-        selected = [representatives[idx] for idx in sorted(keep)[:limit]]
+        indices = _choose_evenly(list(range(len(representatives))), min(limit, len(representatives)))
+        selected = [representatives[idx] for idx in indices]
         out: list[dict[str, Any]] = []
         for rank, event in enumerate(selected):
             item = dict(event)
@@ -415,17 +476,22 @@ class MSTRetriever:
             item["source"] = "M_st"
             item["summary_timeline_rank"] = rank
             item["summary_timeline_fallback"] = True
+            item["score_policy"] = "summary_timeline_coverage_priority"
+            item["raw_score"] = None
             item["caption_source"] = item.get("caption_source") or ("refined" if item.get("event_caption_refined") else "placeholder")
             out.append(item)
         return out
 
     def _cache_context_score(self, event: dict[str, Any], cache_context: dict[str, Any]) -> float:
+        from online_query.cache_schema import has_valid_binding
+
         if not cache_context:
             return 0.0
         score = 0.0
         start = _safe_float(event.get("start_time"))
         end = _safe_float(event.get("end_time"), start)
-        for window in cache_context.get("referenced_time_ranges", []) or []:
+        ranges = cache_context.get("referenced_time_ranges", []) if has_valid_binding(cache_context) else []
+        for window in ranges or []:
             w_start = _safe_float(window.get("start"))
             w_end = _safe_float(window.get("end"), w_start)
             if max(start, w_start) <= min(end, w_end):

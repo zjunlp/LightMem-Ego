@@ -12,10 +12,12 @@ import {
   Wrench
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { useLanguage } from '../i18n.jsx'
 import { ANSWER_MODES, LONG_TERM_RETRIEVAL_SCHEMES } from '../hooks/useAskLightMemEgo.js'
 import { INPUT_MODES } from '../hooks/useRealtimeStream.js'
 
 export default function AdvancedTools({ stream, ask, onReset }) {
+  const { t } = useLanguage()
   const [open, setOpen] = useState(false)
   const [showRaw, setShowRaw] = useState(false)
   const [demoTestFiles, setDemoTestFiles] = useState({ day1: null, day2: null })
@@ -31,24 +33,24 @@ export default function AdvancedTools({ stream, ask, onReset }) {
 
   return (
     <section className="advanced-tools">
-      <button className="advanced-toggle" type="button" onClick={() => setOpen((value) => !value)}>
+      <button className="advanced-toggle" type="button" aria-expanded={open} aria-controls="capture-tools-panel" onClick={() => setOpen((value) => !value)}>
         <span>
           <Wrench size={16} />
-          Advanced / Tools
+          {t('Advanced / Tools')}
         </span>
         {open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
       </button>
 
       {open && (
-        <div className="surface advanced-panel fade-in">
+        <div id="capture-tools-panel" className="surface advanced-panel fade-in">
           <section className="advanced-section">
             <div className="advanced-section-heading">
               <div>
-                <span>Input Modes</span>
-                <strong>{stream.modeLabel}</strong>
+                <span>{t('Input Modes')}</span>
+                <strong>{t(stream.modeLabel)}</strong>
               </div>
             </div>
-            <div className="input-mode-switcher" role="radiogroup" aria-label="Realtime input mode">
+            <div className="input-mode-switcher" role="radiogroup" aria-label={t("Realtime input mode")}>
               <button
                 className={stream.inputMode === INPUT_MODES.FRAME_AUDIO ? 'active' : ''}
                 type="button"
@@ -58,7 +60,7 @@ export default function AdvancedTools({ stream, ask, onReset }) {
                 onClick={() => stream.setInputMode(INPUT_MODES.FRAME_AUDIO)}
               >
                 <Upload size={16} />
-                <span>HTTP Frames</span>
+                <span>{t('HTTP Frames')}</span>
               </button>
               <button
                 className={stream.inputMode === INPUT_MODES.WEBRTC_WHIP ? 'active' : ''}
@@ -69,7 +71,7 @@ export default function AdvancedTools({ stream, ask, onReset }) {
                 onClick={() => stream.setInputMode(INPUT_MODES.WEBRTC_WHIP)}
               >
                 <Radio size={16} />
-                <span>WebRTC</span>
+                <span>{t("WebRTC")}</span>
               </button>
               <button
                 className={stream.inputMode === INPUT_MODES.ROKID ? 'active' : ''}
@@ -80,7 +82,7 @@ export default function AdvancedTools({ stream, ask, onReset }) {
                 onClick={() => stream.setInputMode(INPUT_MODES.ROKID)}
               >
                 <Radio size={16} />
-                <span>Rokid</span>
+                <span>{t("Rokid")}</span>
               </button>
               <button
                 className={stream.inputMode === INPUT_MODES.ROKID_LIVE_RTMP ? 'active' : ''}
@@ -91,7 +93,7 @@ export default function AdvancedTools({ stream, ask, onReset }) {
                 onClick={() => stream.setInputMode(INPUT_MODES.ROKID_LIVE_RTMP)}
               >
                 <Radio size={16} />
-                <span>Rokid RTMP</span>
+                <span>{t("Rokid RTMP")}</span>
               </button>
               <button
                 className={stream.inputMode === INPUT_MODES.DEMO_VIDEO ? 'active' : ''}
@@ -102,7 +104,7 @@ export default function AdvancedTools({ stream, ask, onReset }) {
                 onClick={() => stream.setInputMode(INPUT_MODES.DEMO_VIDEO)}
               >
                 <Film size={16} />
-                <span>Demo</span>
+                <span>{t("Demo")}</span>
               </button>
               <button
                 className={stream.inputMode === INPUT_MODES.DEMO_TEST ? 'active' : ''}
@@ -113,7 +115,7 @@ export default function AdvancedTools({ stream, ask, onReset }) {
                 onClick={() => stream.setInputMode(INPUT_MODES.DEMO_TEST)}
               >
                 <Film size={16} />
-                <span>Demo Test</span>
+                <span>{t("Demo Test")}</span>
               </button>
               <button
                 className={stream.inputMode === INPUT_MODES.IMAGE_UPLOAD ? 'active' : ''}
@@ -124,21 +126,23 @@ export default function AdvancedTools({ stream, ask, onReset }) {
                 onClick={() => stream.setInputMode(INPUT_MODES.IMAGE_UPLOAD)}
               >
                 <Images size={16} />
-                <span>Photo / Audio Stream</span>
+                <span>{t('Photo / Audio Stream')}</span>
               </button>
             </div>
             <p className="mode-description">
               {stream.isDemoTestMode
-                ? 'Upload day1 and day2 videos, then replay either day as a simulated cross-day live memory stream.'
+                ? t("Upload day1 and day2 videos, then replay either day as a simulated cross-day live memory stream.")
                 : stream.isLegacyDemoMode
-                ? 'Upload a local video, then play it on the main page as a simulated live memory stream.'
+                ? t("Upload a local video, then play it on the main page as a simulated live memory stream.")
+                : stream.isRokidLiveMode
+                ? t('Connect to the active Rokid Glass RTMP session. The backend extracts frames and audio; web preview stays black.')
                 : stream.isRokidMode
-                ? 'Rokid Glass uses /rokid/* APIs and keeps the session_id returned by this tab.'
+                ? t("Rokid Glass uses /rokid/* APIs and keeps the session_id returned by this tab.")
                 : stream.isWebRtcMode
-                  ? 'Camera and microphone publish through WHIP; the backend live ingest worker extracts frames and audio.'
+                  ? t("Camera and microphone publish through WHIP; the backend live ingest worker extracts frames and audio.")
                   : stream.isImageUploadMode
-                    ? 'Upload local images and audio. By default, the next item starts as soon as the previous analysis is acknowledged.'
-                    : 'Stable baseline: canvas frames and MediaRecorder chunks upload through HTTP.'}
+                    ? t("Upload local images and audio. By default, the next item starts as soon as the previous analysis is acknowledged.")
+                    : t("Stable baseline: canvas frames and MediaRecorder chunks upload through HTTP.")}
             </p>
           </section>
 
@@ -146,13 +150,13 @@ export default function AdvancedTools({ stream, ask, onReset }) {
             <section className="advanced-section photo-stream-section">
               <div className="advanced-section-heading">
                 <div>
-                  <span>Photo / Audio Stream</span>
-                  <strong>{stream.imageUploadQueue.length ? `${stream.imageUploadQueue.length} media files selected` : 'No media selected'}</strong>
+                  <span>{t("Photo / Audio Stream")}</span>
+                  <strong>{stream.imageUploadQueue.length ? t("{value1} media files selected", { value1: stream.imageUploadQueue.length }) : t("No media selected")}</strong>
                 </div>
               </div>
               <label className="demo-upload-control photo-stream-picker">
                 <Images size={16} />
-                <span>Select images or audio</span>
+                <span>{t("Select images or audio")}</span>
                 <input
                   type="file"
                   accept="image/jpeg,image/png,image/webp,image/bmp,audio/mpeg,audio/wav,audio/ogg,audio/mp4,audio/x-m4a,audio/aac,audio/webm,audio/flac"
@@ -171,12 +175,12 @@ export default function AdvancedTools({ stream, ask, onReset }) {
                       {item.kind === 'image' ? <img src={item.previewUrl} alt="" /> : <div className="photo-stream-audio-thumb"><Music size={20} /></div>}
                       <div className="photo-stream-item-meta">
                         <strong>{index + 1}. {item.name}</strong>
-                        <small>{item.kind === 'image' ? `${item.width} × ${item.height} · ` : 'Audio · '}{formatBytes(item.size)}</small>
+                        <small>{item.kind === 'image' ? `${item.width} × ${item.height} · ` : t("Audio · ")}{formatBytes(item.size)}</small>
                       </div>
                       <button
                         className="icon-button secondary"
                         type="button"
-                        aria-label={`Remove ${item.name}`}
+                        aria-label={t("Remove {value1}", { value1: item.name })}
                         disabled={stream.imageUploadStatus === 'uploading' || stream.imageUploadStatus === 'running'}
                         onClick={() => stream.removeImageUploadFile(index)}
                       >
@@ -187,9 +191,9 @@ export default function AdvancedTools({ stream, ask, onReset }) {
                 </div>
               )}
               <div className="photo-stream-summary">
-                <span>Uploaded {Math.min(stream.imageUploadIndex, stream.imageUploadQueue.length)} / {stream.imageUploadQueue.length}</span>
-                <span>{stream.imageUploadStatus === 'completed' ? 'Completed' : stream.imageUploadStatus}</span>
-                {stream.imageUploadNextAt > 0 && <span>Next upload in {formatCountdown(stream.imageUploadNextAt, clockNow)}</span>}
+                <span>{t("Uploaded")} {Math.min(stream.imageUploadIndex, stream.imageUploadQueue.length)} / {stream.imageUploadQueue.length}</span>
+                <span>{stream.imageUploadStatus === 'completed' ? t("Completed") : t(stream.imageUploadStatus)}</span>
+                {stream.imageUploadNextAt > 0 && <span>{t("Next upload in")} {formatCountdown(stream.imageUploadNextAt, clockNow)}</span>}
               </div>
               <label className="photo-stream-no-wait-toggle">
                 <input
@@ -198,30 +202,30 @@ export default function AdvancedTools({ stream, ask, onReset }) {
                   disabled={['starting', 'running', 'uploading', 'paused'].includes(stream.imageUploadStatus)}
                   onChange={(event) => stream.setImageUploadNoWait(event.target.checked)}
                 />
-                <span>No enforced wait between media items</span>
-                <small>{stream.imageUploadNoWait ? 'Upload next after the previous item is analyzed.' : 'Wait 60 seconds between uploads.'}</small>
+                <span>{t("No enforced wait between media items")}</span>
+                <small>{stream.imageUploadNoWait ? t("Upload next after the previous item is analyzed.") : t("Wait 60 seconds between uploads.")}</small>
               </label>
-              {stream.imageUploadError && <div className="inline-error">{stream.imageUploadError}</div>}
+              {stream.imageUploadError && <div className="inline-error">{t(stream.imageUploadError)}</div>}
               <div className="photo-stream-actions">
                 <button className="icon-button secondary" type="button" onClick={stream.startImageUpload} disabled={!stream.canStartSelectedMode}>
-                  <span>Start Photo / Audio Stream</span>
+                  <span>{t("Start Photo / Audio Stream")}</span>
                 </button>
                 <button className="icon-button secondary" type="button" onClick={stream.pause} disabled={!stream.canPause || !stream.isImageUploadMode}>
-                  <span>Pause</span>
+                  <span>{t("Pause")}</span>
                 </button>
                 <button className="icon-button secondary" type="button" onClick={stream.resume} disabled={!stream.isPaused || !stream.isImageUploadMode}>
-                  <span>Resume</span>
+                  <span>{t("Resume")}</span>
                 </button>
                 <button className="icon-button secondary" type="button" onClick={stream.retryImageUpload} disabled={stream.imageUploadStatus !== 'error'}>
                   <RefreshCw size={16} />
-                  <span>Retry</span>
+                  <span>{t("Retry")}</span>
                 </button>
                 <button className="icon-button secondary" type="button" onClick={stream.clearImageUploadFiles} disabled={!stream.imageUploadQueue.length || stream.imageUploadStatus === 'uploading'}>
                   <RotateCcw size={16} />
-                  <span>Clear Queue</span>
+                  <span>{t("Clear Queue")}</span>
                 </button>
               </div>
-              {!stream.imageUploadQueue.length && <p className="mode-description">Select at least one image or audio file to start.</p>}
+              {!stream.imageUploadQueue.length && <p className="mode-description">{t("Select at least one image or audio file to start.")}</p>}
             </section>
           )}
 
@@ -229,13 +233,13 @@ export default function AdvancedTools({ stream, ask, onReset }) {
             <section className="advanced-section">
               <div className="advanced-section-heading">
                 <div>
-                  <span>Demo Video</span>
-                  <strong>{stream.demoSession.sessionId || 'No upload'}</strong>
+                  <span>{t("Demo Video")}</span>
+                  <strong>{stream.demoSession.sessionId || t("No upload")}</strong>
                 </div>
               </div>
               <label className="demo-upload-control">
                 <Upload size={16} />
-                <span>{stream.demoUploading ? 'Uploading...' : 'Upload video'}</span>
+                <span>{stream.demoUploading ? t("Uploading...") : t("Upload video")}</span>
                 <input
                   type="file"
                   accept="video/*"
@@ -249,13 +253,13 @@ export default function AdvancedTools({ stream, ask, onReset }) {
               </label>
               {stream.demoSession.sessionId && (
                 <div className="demo-session-summary">
-                  <span>{stream.demoSession.prepared ? 'prepared' : 'uploaded'}</span>
-                  <span>{formatDuration(stream.demoSession.duration)}</span>
-                  <span>{stream.demoSession.frameCount ?? 0} frames</span>
+                  <span>{stream.demoSession.prepared ? t("prepared") : t("uploaded")}</span>
+                  <span>{t(formatDuration(stream.demoSession.duration))}</span>
+                  <span>{stream.demoSession.frameCount ?? 0} {t("frames")}</span>
                 </div>
               )}
-              {stream.demoError && <div className="inline-error">{stream.demoError}</div>}
-              <p className="mode-description">After upload, return to Live View and press Start to play the video from the beginning.</p>
+              {stream.demoError && <div className="inline-error">{t(stream.demoError)}</div>}
+              <p className="mode-description">{t("After upload, return to Live View and press Start to play the video from the beginning.")}</p>
             </section>
           )}
 
@@ -263,14 +267,14 @@ export default function AdvancedTools({ stream, ask, onReset }) {
             <section className="advanced-section">
               <div className="advanced-section-heading">
                 <div>
-                  <span>Demo Test</span>
-                  <strong>{stream.demoTestSession.sessionId || 'No upload'}</strong>
+                  <span>{t("Demo Test")}</span>
+                  <strong>{stream.demoTestSession.sessionId || t("No upload")}</strong>
                 </div>
               </div>
               <div className="demo-test-upload-grid">
                 <label className="demo-upload-control">
                   <Upload size={16} />
-                  <span>{demoTestFiles.day1 ? demoTestFiles.day1.name : 'Choose day1 video'}</span>
+                  <span>{demoTestFiles.day1 ? demoTestFiles.day1.name : t("Choose day1 video")}</span>
                   <input
                     type="file"
                     accept="video/*"
@@ -283,7 +287,7 @@ export default function AdvancedTools({ stream, ask, onReset }) {
                 </label>
                 <label className="demo-upload-control">
                   <Upload size={16} />
-                  <span>{demoTestFiles.day2 ? demoTestFiles.day2.name : 'Choose day2 video'}</span>
+                  <span>{demoTestFiles.day2 ? demoTestFiles.day2.name : t("Choose day2 video")}</span>
                   <input
                     type="file"
                     accept="video/*"
@@ -305,12 +309,12 @@ export default function AdvancedTools({ stream, ask, onReset }) {
                 }}
               >
                 <Upload size={16} />
-                <span>{stream.demoTestUploading ? 'Uploading...' : 'Upload demo-test videos'}</span>
+                <span>{stream.demoTestUploading ? t("Uploading...") : t("Upload demo-test videos")}</span>
               </button>
 
               {stream.demoTestSession.sessionId && (
                 <>
-                  <div className="demo-clip-switcher" role="radiogroup" aria-label="Demo-test clip">
+                  <div className="demo-clip-switcher" role="radiogroup" aria-label={t("Demo-test clip")}>
                     {stream.demoTestSession.clips.map((clip) => (
                       <button
                         key={clip.clipId}
@@ -321,46 +325,46 @@ export default function AdvancedTools({ stream, ask, onReset }) {
                         disabled={!stream.canStart && !stream.isPaused}
                         onClick={() => stream.setDemoTestActiveClip(clip.clipId)}
                       >
-                        <span>{clip.clipId === 'day2' ? 'Day 2' : 'Day 1'}</span>
+                        <span>{clip.clipId === 'day2' ? t("Day 2") : t("Day 1")}</span>
                         <small>{clip.displayDate} {clip.startTime}</small>
                       </button>
                     ))}
                   </div>
                   <div className="demo-session-summary">
-                    <span>{stream.demoTestSession.prepared ? 'prepared' : 'uploaded'}</span>
-                    <span>{stream.demoTestSession.memoryReady ? 'memory ready' : 'memory pending'}</span>
-                    <span>{activeDemoTestClip ? `${activeDemoTestClip.displayDate} ${activeDemoTestClip.startTime}` : 'clip selected'}</span>
+                    <span>{stream.demoTestSession.prepared ? t("prepared") : t("uploaded")}</span>
+                    <span>{stream.demoTestSession.memoryReady ? t("memory ready") : t("memory pending")}</span>
+                    <span>{activeDemoTestClip ? `${activeDemoTestClip.displayDate} ${activeDemoTestClip.startTime}` : t("clip selected")}</span>
                   </div>
                   <div className="demo-test-actions">
                     <button className="icon-button secondary" type="button" onClick={stream.refreshDemoTestStatus} disabled={stream.demoTestBusy}>
                       <RefreshCw size={16} />
-                      <span>Status</span>
+                      <span>{t("Status")}</span>
                     </button>
                     <button className="icon-button secondary" type="button" onClick={() => stream.enqueueDemoTestMemory({ enqueueEvidence: false })} disabled={stream.demoTestBusy}>
-                      <span>Queue preprocess</span>
+                      <span>{t("Queue preprocess")}</span>
                     </button>
                     <button className="icon-button secondary" type="button" onClick={() => stream.enqueueDemoTestMemory({ enqueueEvidence: true })} disabled={stream.demoTestBusy}>
-                      <span>Queue evidence</span>
+                      <span>{t("Queue evidence")}</span>
                     </button>
                     <button className="icon-button secondary" type="button" onClick={() => stream.buildDemoTestParentMemory({ force: true })} disabled={stream.demoTestBusy}>
-                      <span>Build memory</span>
+                      <span>{t("Build memory")}</span>
                     </button>
                   </div>
                 </>
               )}
-              {stream.demoError && <div className="inline-error">{stream.demoError}</div>}
-              <p className="mode-description">After upload, pick Day 1 or Day 2, return to Live View, and press Start.</p>
+              {stream.demoError && <div className="inline-error">{t(stream.demoError)}</div>}
+              <p className="mode-description">{t("After upload, pick Day 1 or Day 2, return to Live View, and press Start.")}</p>
             </section>
           )}
 
           <section className="advanced-section">
             <div className="advanced-section-heading">
               <div>
-                <span>Answer Mode</span>
-                <strong>{ask.answerMode === ANSWER_MODES.STREAM ? 'Progressive stream' : 'Legacy polling'}</strong>
+                <span>{t('Answer Mode')}</span>
+                <strong>{ask.answerMode === ANSWER_MODES.STREAM ? t("Progressive stream") : t("Legacy polling")}</strong>
               </div>
             </div>
-            <div className="input-mode-switcher answer-mode-switcher" role="radiogroup" aria-label="Answer mode">
+            <div className="input-mode-switcher answer-mode-switcher" role="radiogroup" aria-label={t("Answer mode")}>
               <button
                 className={ask.answerMode === ANSWER_MODES.LEGACY ? 'active' : ''}
                 type="button"
@@ -369,7 +373,7 @@ export default function AdvancedTools({ stream, ask, onReset }) {
                 disabled={ask.loading}
                 onClick={() => ask.setAnswerMode(ANSWER_MODES.LEGACY)}
               >
-                <span>Legacy</span>
+                <span>{t('Legacy')}</span>
               </button>
               <button
                 className={ask.answerMode === ANSWER_MODES.STREAM ? 'active' : ''}
@@ -379,13 +383,13 @@ export default function AdvancedTools({ stream, ask, onReset }) {
                 disabled={ask.loading}
                 onClick={() => ask.setAnswerMode(ANSWER_MODES.STREAM)}
               >
-                <span>Stream</span>
+                <span>{t('Stream')}</span>
               </button>
             </div>
             <p className="mode-description">
               {ask.answerMode === ANSWER_MODES.STREAM
-                ? 'Shows a draft and token deltas, then reconciles with the final result JSON.'
-                : 'Uses the stable queued task flow and waits for the complete result.'}
+                ? t("Shows a draft and token deltas, then reconciles with the final result JSON.")
+                : t("Uses the stable queued task flow and waits for the complete result.")}
             </p>
           </section>
 
@@ -393,11 +397,11 @@ export default function AdvancedTools({ stream, ask, onReset }) {
           <section className="advanced-section">
             <div className="advanced-section-heading">
               <div>
-                <span>Retrieval Scheme</span>
-                <strong>{ask.longTermRetrievalScheme === LONG_TERM_RETRIEVAL_SCHEMES.LIGHTMEM_EGO_LEGACY ? 'LightMemEgo legacy' : 'EM2Memory'}</strong>
+                <span>{t('Retrieval Scheme')}</span>
+                <strong>{ask.longTermRetrievalScheme === LONG_TERM_RETRIEVAL_SCHEMES.LIGHTMEM_EGO_LEGACY ? t("LightMemEgo legacy") : t("EM2Memory")}</strong>
               </div>
             </div>
-            <div className="input-mode-switcher answer-mode-switcher" role="radiogroup" aria-label="Long-term retrieval scheme">
+            <div className="input-mode-switcher answer-mode-switcher" role="radiogroup" aria-label={t("Long-term retrieval scheme")}>
               <button
                 className={ask.longTermRetrievalScheme === LONG_TERM_RETRIEVAL_SCHEMES.EM2MEMORY ? 'active' : ''}
                 type="button"
@@ -406,7 +410,7 @@ export default function AdvancedTools({ stream, ask, onReset }) {
                 disabled={ask.loading}
                 onClick={() => ask.setLongTermRetrievalScheme(LONG_TERM_RETRIEVAL_SCHEMES.EM2MEMORY)}
               >
-                <span>EM2Memory</span>
+                <span>{t("EM2Memory")}</span>
               </button>
               <button
                 className={ask.longTermRetrievalScheme === LONG_TERM_RETRIEVAL_SCHEMES.LIGHTMEM_EGO_LEGACY ? 'active' : ''}
@@ -416,95 +420,97 @@ export default function AdvancedTools({ stream, ask, onReset }) {
                 disabled={ask.loading}
                 onClick={() => ask.setLongTermRetrievalScheme(LONG_TERM_RETRIEVAL_SCHEMES.LIGHTMEM_EGO_LEGACY)}
               >
-                <span>Legacy</span>
+                <span>{t('Legacy')}</span>
               </button>
             </div>
-            <p className="mode-description">Selects the long-term memory retrieval path used by ask requests.</p>
+            <p className="mode-description">{t(ask.longTermRetrievalScheme === LONG_TERM_RETRIEVAL_SCHEMES.LIGHTMEM_EGO_LEGACY
+              ? 'LightMemEgo legacy retrieves long-term memory using the original LightMemEgo scheme.'
+              : 'EM2Memory retrieves long-term memory using the EM2Memory scheme.')}</p>
           </section>
 
           <div className="tools-row">
             <button className="icon-button secondary" type="button" onClick={stream.refreshStatus} disabled={!stream.sessionId || stream.diagnosticsLoading}>
               <RefreshCw size={16} />
-              <span>{stream.diagnosticsLoading ? 'Refreshing' : 'Refresh status'}</span>
+              <span>{stream.diagnosticsLoading ? t('Refreshing') : t('Refresh status')}</span>
             </button>
             <button className="icon-button secondary danger-text" type="button" onClick={onReset}>
               <RotateCcw size={16} />
-              <span>Reset session</span>
+              <span>{t('Reset session')}</span>
             </button>
           </div>
 
           <div className="diagnostic-id-list">
             <div>
-              <span>session_id</span>
+              <span>{t("session_id")}</span>
               <strong>{stream.sessionId || '-'}</strong>
             </div>
             <div>
-              <span>owner_id</span>
+              <span>{t("owner_id")}</span>
               <strong>{stream.activeSession.ownerId || '-'}</strong>
             </div>
             <div>
-              <span>device_id</span>
+              <span>{t("device_id")}</span>
               <strong>{stream.activeSession.deviceId || '-'}</strong>
             </div>
             <div>
-              <span>device_type</span>
+              <span>{t("device_type")}</span>
               <strong>{stream.activeSession.deviceType || stream.activeSession.deviceKind || '-'}</strong>
             </div>
             <div>
-              <span>query_task</span>
+              <span>{t("query_task")}</span>
               <strong>{ask.queryTaskId || '-'}</strong>
             </div>
             <div>
-              <span>answer_mode</span>
-              <strong>{ask.answerMode || '-'}</strong>
+              <span>{t("answer_mode")}</span>
+              <strong>{t(ask.answerMode) || '-'}</strong>
             </div>
             <div>
-              <span>answer_phase</span>
-              <strong>{ask.answerPhase || '-'}</strong>
+              <span>{t("answer_phase")}</span>
+              <strong>{t(ask.answerPhase) || '-'}</strong>
             </div>
             <div>
-              <span>mode</span>
-              <strong>{stream.activeInputMode || 'not started'}</strong>
+              <span>{t("mode")}</span>
+              <strong>{t(stream.activeInputMode) || t('not started')}</strong>
             </div>
             {stream.isLegacyDemoMode && (
               <div>
-                <span>demo_session</span>
+                <span>{t("demo_session")}</span>
                 <strong>{stream.demoSession.sessionId || '-'}</strong>
               </div>
             )}
             {stream.isDemoTestMode && (
               <>
                 <div>
-                  <span>demo_test_session</span>
+                  <span>{t("demo_test_session")}</span>
                   <strong>{stream.demoTestSession.sessionId || '-'}</strong>
                 </div>
                 <div>
-                  <span>demo_test_clip</span>
+                  <span>{t("demo_test_clip")}</span>
                   <strong>{stream.demoTestSession.activeClipId || '-'}</strong>
                 </div>
               </>
             )}
             <div>
-              <span>stream</span>
-              <strong>{stream.status}</strong>
+              <span>{t("stream")}</span>
+              <strong>{t(stream.status)}</strong>
             </div>
             {stream.isWebRtcMode && (
               <>
                 <div>
-                  <span>webrtc_state</span>
-                  <strong>{stream.webrtcState}</strong>
+                  <span>{t("webrtc_state")}</span>
+                  <strong>{t(stream.webrtcState)}</strong>
                 </div>
                 <div>
-                  <span>stream_name</span>
+                  <span>{t("stream_name")}</span>
                   <strong>{stream.streamName || '-'}</strong>
                 </div>
                 <div>
-                  <span>WHIP URL</span>
-                  <strong>{stream.whipUrlAvailable ? 'available' : 'missing'}</strong>
+                  <span>{t("WHIP URL")}</span>
+                  <strong>{stream.whipUrlAvailable ? t("available") : t("missing")}</strong>
                 </div>
                 <div>
-                  <span>live_ingest</span>
-                  <strong>{stream.liveIngestStatus}</strong>
+                  <span>{t("live_ingest")}</span>
+                  <strong>{t(stream.liveIngestStatus)}</strong>
                 </div>
               </>
             )}
@@ -512,33 +518,33 @@ export default function AdvancedTools({ stream, ask, onReset }) {
 
           {stream.isWebRtcMode ? (
             <div className="advanced-stat-grid">
-              <Stat label="WebRTC" value={stream.webrtcState} tone={stream.webrtcState === 'live' ? 'ready' : 'warn'} />
-              <Stat label="Live ingest" value={stream.liveIngestStatus} tone={stream.liveIngestStatus === 'running' ? 'ready' : 'warn'} />
-              <Stat label="Frames ingested" value={stream.liveIngestFrames} tone="ready" />
-              <Stat label="Audio ingested" value={stream.liveIngestAudioChunks} tone="ready" />
+              <Stat label={t("WebRTC")} value={t(stream.webrtcState)} tone={stream.webrtcState === 'live' ? 'ready' : 'warn'} />
+              <Stat label={t("Live ingest")} value={t(stream.liveIngestStatus)} tone={stream.liveIngestStatus === 'running' ? 'ready' : 'warn'} />
+              <Stat label={t("Frames ingested")} value={stream.liveIngestFrames} tone="ready" />
+              <Stat label={t("Audio ingested")} value={stream.liveIngestAudioChunks} tone="ready" />
             </div>
           ) : (
             <div className="advanced-stat-grid">
-              <Stat label="Frame index" value={stream.stats.frameIndex} />
-              <Stat label="Frame uploaded" value={stream.stats.frameUploadedCount} tone="ready" />
-              <Stat label="Frame dropped" value={stream.stats.frameDroppedCount} tone="warn" />
-              <Stat label="Frame failed" value={stream.stats.frameFailedCount} tone="bad" />
-              <Stat label="Audio index" value={stream.stats.audioIndex} />
-              <Stat label="Audio uploaded" value={stream.stats.audioUploadedCount} tone="ready" />
-              <Stat label="Audio failed" value={stream.stats.audioFailedCount} tone="bad" />
-              <Stat label="Can ask" value={stream.canAsk ? 'yes' : 'not yet'} tone={stream.canAsk ? 'ready' : 'warn'} />
+              <Stat label={t("Frame index")} value={stream.stats.frameIndex} />
+              <Stat label={t("Frame uploaded")} value={stream.stats.frameUploadedCount} tone="ready" />
+              <Stat label={t("Frame dropped")} value={stream.stats.frameDroppedCount} tone="warn" />
+              <Stat label={t("Frame failed")} value={stream.stats.frameFailedCount} tone="bad" />
+              <Stat label={t("Audio index")} value={stream.stats.audioIndex} />
+              <Stat label={t("Audio uploaded")} value={stream.stats.audioUploadedCount} tone="ready" />
+              <Stat label={t("Audio failed")} value={stream.stats.audioFailedCount} tone="bad" />
+              <Stat label={t("Can ask")} value={stream.canAsk ? 'yes' : 'not yet'} tone={stream.canAsk ? 'ready' : 'warn'} />
             </div>
           )}
 
-          {stream.liveIngestLastError && <div className="inline-error">{stream.liveIngestLastError}</div>}
+          {stream.liveIngestLastError && <div className="inline-error">{t(stream.liveIngestLastError)}</div>}
 
           {(stream.statusSnapshot || stream.statusError || ask.rawDebug) && (
             <div className="raw-tools">
               <button className="icon-button secondary" type="button" onClick={() => setShowRaw((value) => !value)}>
                 <Bug size={16} />
-                <span>{showRaw ? 'Hide raw' : 'Show raw'}</span>
+                <span>{showRaw ? t('Hide raw') : t('Show raw')}</span>
               </button>
-              {stream.statusError && <div className="inline-error">{stream.statusError}</div>}
+              {stream.statusError && <div className="inline-error">{t(stream.statusError)}</div>}
               {showRaw && (
                 <pre className="raw-box">
                   {JSON.stringify({
@@ -558,10 +564,11 @@ export default function AdvancedTools({ stream, ask, onReset }) {
 }
 
 function Stat({ label, value, tone = '' }) {
+  const { t } = useLanguage()
   return (
     <div className={`stat-chip ${tone}`}>
-      <span>{label}</span>
-      <strong>{value ?? '-'}</strong>
+      <span>{t(label)}</span>
+      <strong>{typeof value === 'string' ? t(value) : value ?? '-'}</strong>
     </div>
   )
 }

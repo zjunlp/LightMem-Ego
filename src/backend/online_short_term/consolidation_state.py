@@ -22,6 +22,7 @@ def load_consolidation_state(session_dir: Path, session_id: str) -> dict[str, An
         "generated_episode_count": int(state.get("generated_episode_count", 0) or 0),
         "generated_episode_ids": list(state.get("generated_episode_ids", []) or []),
         "window_to_episode": dict(state.get("window_to_episode", {}) or {}),
+        "pending_memory_handoffs": dict(state.get("pending_memory_handoffs", {}) or {}),
         "pending_ready_window_count": int(state.get("pending_ready_window_count", 0) or 0),
         "not_ready_window_count": int(state.get("not_ready_window_count", 0) or 0),
         "skipped_windows": list(state.get("skipped_windows", []) or []),
@@ -40,3 +41,15 @@ def write_consolidation_state(session_dir: Path, state: dict[str, Any]) -> Path:
     payload.setdefault("last_run_at", payload["updated_at"])
     write_json_atomic(path, payload)
     return path
+
+
+def memory_handoff(episode: dict[str, Any], *, force: bool = False, requested: bool = False) -> dict[str, Any]:
+    """Durable intent, committed with the completed consolidation window."""
+    version = int(episode.get("version", 1) or 1)
+    return {
+        "episode_id": str(episode["episode_id"]),
+        "episode_version": version,
+        "force": bool(force or version > 1),
+        "requested": bool(requested),
+        "created_at": utc_now_iso(),
+    }

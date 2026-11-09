@@ -78,6 +78,9 @@ def build_retrieval_text(event: dict[str, Any]) -> str:
         parts.append(f"Actions: {actions}")
     if changes:
         parts.append(f"State changes: {changes}")
+    observations = event.get("visual_observations") or []
+    if observations:
+        parts.append(f"Timed visual observations: {observations}")
     parts.append(f"Time: {event.get('start_time')} to {event.get('end_time')} seconds")
     parts.append(f"Boundary: {event.get('boundary_reason')} diff_score={event.get('diff_score')}")
     return "\n".join(str(part) for part in parts if part)

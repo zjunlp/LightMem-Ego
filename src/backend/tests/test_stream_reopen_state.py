@@ -1,37 +1,8 @@
-import importlib.util
 import json
-import sys
-import types
 from pathlib import Path
 
 
-def _write_json(path: Path, data: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-
-
-def _install_import_stubs() -> None:
-    online_preprocess = sys.modules.get("online_preprocess") or types.ModuleType("online_preprocess")
-    online_preprocess.__path__ = []
-    io_utils = sys.modules.get("online_preprocess.io_utils") or types.ModuleType("online_preprocess.io_utils")
-    io_utils.ffmpeg_bin = lambda: "ffmpeg"
-    io_utils.ffprobe_bin = lambda: "ffprobe"
-    io_utils.read_json = lambda path, default=None: json.loads(Path(path).read_text(encoding="utf-8")) if Path(path).exists() else default
-    io_utils.utc_now_iso = lambda: "2026-07-16T00:00:00+00:00"
-    io_utils.write_json_atomic = lambda path, data: _write_json(Path(path), data)
-    sys.modules["online_preprocess"] = online_preprocess
-    sys.modules["online_preprocess.io_utils"] = io_utils
-
-
-_install_import_stubs()
-
-MODULE_PATH = Path(__file__).resolve().parents[1] / "online_short_term" / "stream_chunk_manager.py"
-SPEC = importlib.util.spec_from_file_location("stream_chunk_manager", MODULE_PATH)
-assert SPEC is not None
-stream_chunk_manager = importlib.util.module_from_spec(SPEC)
-assert SPEC.loader is not None
-SPEC.loader.exec_module(stream_chunk_manager)
-StreamChunkManager = stream_chunk_manager.StreamChunkManager
+from online_short_term.stream_chunk_manager import StreamChunkManager
 
 
 def test_init_stream_reopens_terminal_stream_state(tmp_path: Path) -> None:

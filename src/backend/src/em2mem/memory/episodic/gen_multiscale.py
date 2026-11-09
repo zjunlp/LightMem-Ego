@@ -16,6 +16,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from tqdm import tqdm
 
+from online_memory.visual_summary import aggregate_visual_summaries, build_child_visual_evidence
+
 
 _PROMPTS: Dict[str, List[str]] = {}
 
@@ -432,6 +434,33 @@ def _collect_child_ids(batch: Sequence[Dict[str, Any]]) -> List[str]:
     return [_get_item_doc_id(item) for item in batch]
 
 
+def _summarize_child_visuals(batch: Sequence[Dict[str, Any]], llm: Any) -> Tuple[str, str, Optional[str]]:
+    children = list(batch)
+    evidence = build_child_visual_evidence(children)
+    if not evidence:
+        return "", "unavailable", None
+    fallback = aggregate_visual_summaries(children)
+    try:
+        response = llm.generate([
+            {"role": "system", "content": (
+                "Independently summarize the provided child visual observations in one to three concise English sentences. "
+                "Preserve visible environments, objects, appearances and observable actions without inventing details. "
+                "Do not add speech, plans, hidden intentions or facts absent from these visual observations. "
+                'Return valid JSON only: {"visual_summary": "string"}.'
+            )},
+            {"role": "user", "content": json.dumps({"child_visual_evidence": evidence}, ensure_ascii=False)},
+        ])
+        raw = str(response or "").strip()
+        raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw).strip()
+        data = json.loads(raw)
+        summary = data.get("visual_summary") if isinstance(data, dict) else None
+        if not isinstance(summary, str) or not summary.strip():
+            raise ValueError("Missing nonempty visual_summary in visual aggregation response.")
+        return re.sub(r"\s+", " ", summary).strip(), "generated", None
+    except Exception as exc:
+        return fallback, "derived", f"{type(exc).__name__}: {exc}"
+
+
 def _summarize_batch(
     batch: Sequence[Dict[str, Any]],
     window_start: int,
@@ -465,6 +494,7 @@ def _summarize_batch(
     end_time = str(_seconds_to_time(window_end)).zfill(8)
     scene_summary = _aggregate_scene_summary(sorted_batch)
     visual_object_threads = _collect_visual_objects(sorted_batch)
+    visual_summary, visual_status, visual_error = _summarize_child_visuals(sorted_batch, llm)
 
     return {
         "doc_id": f"{date}_{start_time}_{end_time}_{level_name}",
@@ -483,7 +513,9 @@ def _summarize_batch(
             limit=10 if level_name == "3min" else 8,
         ),
         "scene_summary": scene_summary,
-        "visual_summary": _build_visual_summary(scene_summary, visual_object_threads),
+        "visual_summary": visual_summary,
+        "visual_summary_status": visual_status,
+        "visual_summary_debug": {"source": "child_visual_summaries", "error": visual_error},
         "visual_object_threads": visual_object_threads,
         "child_ids": _collect_child_ids(sorted_batch),
         "source_doc_ids": _collect_source_doc_ids(sorted_batch),

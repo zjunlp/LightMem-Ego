@@ -5,6 +5,16 @@ import os
 from typing import Any
 
 
+STATE_GROUNDING_INSTRUCTION = (
+    "For state questions, distinguish directly confirmed presence, directly confirmed absence, "
+    "and an unobservable state: not visible does not mean absent. Occluded hands or an object "
+    "outside the frame support 'cannot confirm', not 'no longer holding it'. "
+    "For NOW, use the latest supplied observation for the requested actor; earlier states are historical references. "
+    "Give a complete state sentence instead of an isolated yes/no, and ensure its polarity agrees with the explanation. "
+    "Keep posture and activity separate: holding a phone at an ear does not establish a connected call."
+)
+
+
 def _answer_language_instruction() -> str:
     language = str(os.getenv("EM2MEM_ANSWER_LANGUAGE", "zh") or "zh").strip().lower()
     if language in {"zh", "cn", "chinese", "中文", "zh-cn", "zh_hans", "zh-hans", "simplified_chinese"}:
@@ -49,6 +59,15 @@ def build_current_prompt(question: str, current_context: dict[str, Any], selecti
         "You are answering a current-perception question about a first-person video stream.\n"
         "Use only the current rolling memory below and any attached current frames. "
         "The current memory is a lightweight 30-second rolling buffer and may not contain refined captions.\n"
+        "For a question about NOW, ground the current state in the frame labelled latest at current_time. "
+        "Verify the premise of the question: naming a bag, phone or action does not establish that it is visible or held. "
+        "First check the latest frame for an actual grasp/contact with the requested object; do not substitute a nearby fixed interior object. "
+        "If a requested object cannot be identified in the latest frame, state that uncertainty instead of assigning an object category or color. "
+        "Older frames are temporal references; an object visible only earlier must not be reported as held now. "
+        "Every attached image has its own timestamp label. If the latest image is unclear, say so rather than substituting an earlier state.\n"
+        "Describe only what is needed to answer the question. Do not add uncertain vehicle subtypes or object details. "
+        "Distinguish visible posture from inferred activity: a phone held at an ear does not prove a connected call.\n"
+        f"{STATE_GROUNDING_INSTRUCTION}\n"
         f"{_answer_language_instruction()} Be concise and state uncertainty when the current frames/transcript are insufficient.\n\n"
         f"Question: {question}\n\n"
         f"Current memory package:\n{json.dumps(payload, ensure_ascii=False, indent=2, default=str)}"

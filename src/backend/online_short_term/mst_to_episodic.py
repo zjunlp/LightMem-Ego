@@ -5,12 +5,13 @@ from pathlib import Path
 from typing import Any
 
 from online_preprocess.io_utils import read_json, relative_to_session, utc_now_iso, write_json, write_json_atomic
-from online_short_term.consolidation_state import load_consolidation_state, write_consolidation_state
+from online_short_term.consolidation_state import load_consolidation_state, memory_handoff, write_consolidation_state
 from online_short_term.episodic_window_builder import MSTEpisodicWindowBuilder
 from online_short_term.mst_store import MSTStore
 from online_short_term.refine_status import write_refine_status
 from online_short_term.schemas import DEFAULT_SESSIONS_ROOT
 from online_pipeline.rokid_day import apply_demo_day_fields
+from online_memory_edit.lock import session_memory_mutation_lock
 
 
 REFINED_STATUSES = {"refined", "final"}
@@ -49,7 +50,10 @@ def _episode_version(existing: list[dict[str, Any]], episode_id: str, force: boo
     versions = [int(item.get("version", 1) or 1) for item in existing if item.get("episode_id") == episode_id]
     if not versions:
         return 1
-    return max(versions) + 1 if force else max(versions)
+    # An already-completed window is skipped before generation unless forced
+    # or reopened by source invalidation. Either replacement is a new source
+    # revision, including the ordinary retry of a reopened window.
+    return max(versions) + 1
 
 
 def _replace_or_append_episode(existing: list[dict[str, Any]], episode: dict[str, Any]) -> list[dict[str, Any]]:
@@ -62,6 +66,7 @@ def _replace_or_append_episode(existing: list[dict[str, Any]], episode: dict[str
 def _caption_doc_from_episode(episode: dict[str, Any]) -> dict[str, Any]:
     output = {
         "episode_id": episode.get("episode_id"),
+        "version": int(episode.get("version", 1) or 1),
         "doc_id": episode.get("episode_id"),
         "segment_id": episode.get("segment_id"),
         "session_id": episode.get("session_id"),
@@ -71,6 +76,10 @@ def _caption_doc_from_episode(episode: dict[str, Any]) -> dict[str, Any]:
         "clip_path": "",
         "caption": episode.get("caption"),
         "fine_caption": episode.get("fine_caption"),
+        "visual_summary": episode.get("visual_summary", ""),
+        "visual_summary_status": episode.get("visual_summary_status"),
+        "visual_summary_debug": episode.get("visual_summary_debug", {}),
+        "visual_observations": episode.get("visual_observations", []),
         "transcript": episode.get("transcript"),
         "transcript_segments": episode.get("transcript_segments", []),
         "scene": episode.get("scene"),
@@ -107,6 +116,7 @@ def _evidence_doc_from_episode(episode: dict[str, Any]) -> dict[str, Any]:
     doc_id = f"mst_evd_{start:06d}_{end:06d}"
     output = {
         "doc_id": doc_id,
+        "version": int(episode.get("version", 1) or 1),
         "evidence_doc_id": doc_id,
         "episode_id": episode.get("episode_id"),
         "session_id": episode.get("session_id"),
@@ -115,6 +125,10 @@ def _evidence_doc_from_episode(episode: dict[str, Any]) -> dict[str, Any]:
         "end_time": episode.get("end_time"),
         "caption": episode.get("caption"),
         "fine_caption": episode.get("fine_caption"),
+        "visual_summary": episode.get("visual_summary", ""),
+        "visual_summary_status": episode.get("visual_summary_status"),
+        "visual_summary_debug": episode.get("visual_summary_debug", {}),
+        "visual_observations": episode.get("visual_observations", []),
         "scene": episode.get("scene"),
         "transcript": episode.get("transcript"),
         "transcript_segments": episode.get("transcript_segments", []),
@@ -198,6 +212,13 @@ def _write_outputs(session_dir: Path, episodes: list[dict[str, Any]], result: di
 
 
 def _update_memory_config_metadata(session_dir: Path, update_mode: str | None = None) -> None:
+    # Share the publisher's lock for the complete read/modify/write. Callers
+    # must release M_st's mutation lock before waiting for memory publication.
+    with session_memory_mutation_lock(session_dir):
+        _update_memory_config_metadata_unlocked(session_dir, update_mode)
+
+
+def _update_memory_config_metadata_unlocked(session_dir: Path, update_mode: str | None = None) -> None:
     memory_config_path = session_dir / "em2mem" / "memory_config.json"
     if not memory_config_path.exists() and update_mode is None:
         return
@@ -269,6 +290,7 @@ def build_episodic_from_mst(
     backend: str = "openai",
     force: bool = False,
     dry_run: bool = False,
+    queue_memory_handoff: bool = False,
     window_start: float | None = None,
     window_end: float | None = None,
     limit_windows: int | None = None,
@@ -337,19 +359,14 @@ def build_episodic_from_mst(
         return result
 
     builder = MSTEpisodicWindowBuilder(backend=backend)
-    generated = []
-    updated_events = []
-    merged_at = utc_now_iso()
-    episodes = existing_episodes
+    prepared = []
     for window, events in ready_windows:
-        episode_id = _window_episode_id(window)
-        version = _episode_version(episodes, episode_id, force=force)
         episode = builder.build_episode(
             window,
             events,
             session_id=session_id,
             session_dir=session_dir,
-            version=version,
+            version=_episode_version(existing_episodes, _window_episode_id(window), force=force),
         )
         apply_demo_day_fields(
             episode,
@@ -357,40 +374,125 @@ def build_episodic_from_mst(
             start_seconds=episode.get("start_time"),
             end_seconds=episode.get("end_time"),
         )
-        episodes = _replace_or_append_episode(episodes, episode)
-        generated.append(episode)
-        window_id = str(window.get("window_id") or f"{window.get('start_time')}-{window.get('end_time')}")
-        window_to_episode[window_id] = episode["episode_id"]
-        for event in events:
-            updated = dict(event)
-            updated["merged_to_long_term"] = True
-            updated["merged_episode_id"] = episode["episode_id"]
-            updated["merged_at"] = merged_at
-            updated["merged_version"] = episode["version"]
-            updated["needs_reconsolidation"] = False
-            updated["dirty_reason"] = None
-            updated["dirty_window_id"] = None
-            updated["dirty_time_range"] = None
-            updated_events.append(updated)
-        if verbose:
-            print(f"[mst_episodic] built {episode['episode_id']} events={len(events)} version={episode['version']}")
+        prepared.append((window, events, episode))
 
-    update_result = store.update_events(updated_events) if updated_events else {"active_updated": False, "archive_updated": False}
-    output_paths = _write_outputs(session_dir, episodes, {**result, "generated_episode_count": len(generated), "generated_episode_ids": [e["episode_id"] for e in generated]})
-    generated_ids = [episode["episode_id"] for episode in generated]
-    new_state = {
-        **state,
-        "session_id": session_id,
-        "last_consolidated_window_end": max([float(ep.get("end_time", 0.0)) for ep in generated] or [state.get("last_consolidated_window_end", 0.0)]),
-        "generated_episode_count": len(episodes),
-        "generated_episode_ids": [item.get("episode_id") for item in episodes],
-        "window_to_episode": window_to_episode,
-        "pending_ready_window_count": max(0, len([w for w in windows if isinstance(w, dict) and w.get("ready_for_30s_episodic")]) - len(window_to_episode)),
-        "not_ready_window_count": len([w for w in windows if isinstance(w, dict) and not w.get("ready_for_30s_episodic")]),
-        "skipped_windows": skipped,
-        "last_run_at": utc_now_iso(),
-    }
-    consolidation_path = write_consolidation_state(session_dir, new_state)
+    # Model generation stays outside the lock. Source validation, rebasing onto
+    # the latest episode/state files, publication, and merge flags form one
+    # serialized commit shared with ASR and other consolidation workers.
+    with store.mutation_lock():
+        latest_by_id = {str(item.get("event_id")): item for item in store.load_archive_events()}
+        state = load_consolidation_state(session_dir, session_id)
+        window_to_episode = dict(state.get("window_to_episode", {}) or {})
+        episodes = _load_existing_episodes(existing_path)
+        generated = []
+        updates = []
+        for window, events, episode in prepared:
+            latest_window = {
+                event_id: event for event_id, event in latest_by_id.items()
+                if float(event.get("start_time", 0.0)) < float(window["end_time"])
+                and float(event.get("end_time", 0.0)) > float(window["start_time"])
+            }
+            source_ids = {str(event.get("event_id")) for event in events}
+            membership_changed = set(latest_window) != source_ids
+            changed = [
+                latest_by_id.get(str(event.get("event_id")))
+                for event in events
+                if latest_by_id.get(str(event.get("event_id"))) is None
+                or any(
+                    latest_by_id[str(event.get("event_id"))].get(field) != event.get(field)
+                    for field in ("version", "transcript_version", "needs_refine", "refined_stale")
+                )
+            ]
+            changed.extend(event for event_id, event in latest_window.items() if event_id not in source_ids)
+            if changed or membership_changed:
+                from online_streaming.transcript_backfill import mark_transcript_dirty_windows
+
+                current_episode = next((item for item in episodes if item.get("episode_id") == episode["episode_id"]), {})
+                published_versions = {str(item.get("event_id")): item.get("version")
+                                      for item in current_episode.get("source_micro_events", [])}
+                if (current_episode and set(published_versions) == set(latest_window)
+                        and all(published_versions[event_id] == latest.get("version")
+                                and not any(latest.get(field) for field in
+                                            ("needs_refine", "refined_stale", "needs_reconsolidation"))
+                                for event_id, latest in latest_window.items())):
+                    skipped.append({"window_id": window.get("window_id"), "reason": "newer events already consolidated"})
+                    continue
+                dirty_events = []
+                for latest in changed:
+                    if latest is None:
+                        continue
+                    # Another worker may already have published this newer
+                    # event. Rejecting our old result must not dirty it again.
+                    if (published_versions.get(str(latest.get("event_id"))) == latest.get("version")
+                            and not any(latest.get(field) for field in
+                                        ("needs_refine", "refined_stale", "needs_reconsolidation"))):
+                        continue
+                    dirty = dict(latest)
+                    dirty["needs_reconsolidation"] = True
+                    dirty["dirty_reason"] = "event_changed_during_consolidation"
+                    dirty_events.append(dirty)
+                updates.extend(dirty_events)
+                dirty_ranges = list(dirty_events)
+                if membership_changed:
+                    dirty_ranges.append({"start_time": window["start_time"], "end_time": window["end_time"]})
+                mark_transcript_dirty_windows(session_dir, dirty_ranges)
+                # A normal refine-ready task may already be queued. Removing
+                # this obsolete completion lets it retry without force=True.
+                window_to_episode.pop(str(window.get("window_id")), None)
+                skipped.append({"window_id": window.get("window_id"), "reason": "events changed during consolidation"})
+                continue
+
+            window_id = str(window.get("window_id") or f"{window.get('start_time')}-{window.get('end_time')}")
+            if window_id in window_to_episode and not force:
+                skipped.append({"window_id": window_id, "reason": "already consolidated"})
+                continue
+            episode["version"] = _episode_version(episodes, episode["episode_id"], force=force)
+            episodes = _replace_or_append_episode(episodes, episode)
+            generated.append(episode)
+            window_to_episode[window_id] = episode["episode_id"]
+            for event in events:
+                updated = dict(latest_by_id[str(event.get("event_id"))])
+                updated["merged_to_long_term"] = True
+                updated["merged_episode_id"] = episode["episode_id"]
+                updated["merged_at"] = utc_now_iso()
+                updated["merged_version"] = episode["version"]
+                updated["needs_reconsolidation"] = False
+                updated["dirty_reason"] = None
+                updated["dirty_window_id"] = None
+                updated["dirty_window_ids"] = []
+                updated["dirty_time_range"] = None
+                updates.append(updated)
+            if verbose:
+                print(f"[mst_episodic] built {episode['episode_id']} events={len(events)} version={episode['version']}")
+
+        generated_ids = [episode["episode_id"] for episode in generated]
+        pending_handoffs = dict(state.get("pending_memory_handoffs", {}) or {})
+        for episode in generated:
+            previous = pending_handoffs.get(episode["episode_id"], {})
+            pending_handoffs[episode["episode_id"]] = memory_handoff(
+                episode, force=force,
+                requested=bool(queue_memory_handoff or previous.get("requested")),
+            )
+        output_paths = _write_outputs(session_dir, episodes, {
+            **result, "generated_episode_count": len(generated), "generated_episode_ids": generated_ids,
+        })
+        new_state = {
+            **state,
+            "session_id": session_id,
+            "last_consolidated_window_end": max([float(ep.get("end_time", 0.0)) for ep in episodes]
+                                                 + [state.get("last_consolidated_window_end", 0.0)]),
+            "generated_episode_count": len(episodes),
+            "generated_episode_ids": [item.get("episode_id") for item in episodes],
+            "window_to_episode": window_to_episode,
+            "pending_memory_handoffs": pending_handoffs,
+            "pending_ready_window_count": max(0, len([w for w in windows if isinstance(w, dict) and w.get("ready_for_30s_episodic")]) - len(window_to_episode)),
+            "not_ready_window_count": len([w for w in windows if isinstance(w, dict) and not w.get("ready_for_30s_episodic")]),
+            "skipped_windows": skipped,
+            "last_run_at": utc_now_iso(),
+        }
+        consolidation_path = write_consolidation_state(session_dir, new_state)
+        update_result = store.update_events(updates) if updates else {"active_updated": False, "archive_updated": False}
+
     _update_memory_config_metadata(session_dir)
     _update_status_outputs(session_dir, session_id)
 

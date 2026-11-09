@@ -1059,9 +1059,14 @@ def list_queued_memory_tasks(project_root: Path) -> list[Path]:
 
 def list_queued_query_tasks(project_root: Path) -> list[Path]:
     dirs = ensure_queue_dirs(project_root)
-    def _sort_key(path: Path) -> tuple[int, float]:
+    def _sort_key(path: Path) -> tuple[int, float] | None:
         priority = 5
-        payload = read_json(path, default={})
+        try:
+            payload = read_json(path, default={})
+            mtime = path.stat().st_mtime
+        except FileNotFoundError:
+            # A peer lane can claim the file after glob or after the read.
+            return None
         if isinstance(payload, dict):
             try:
                 priority = int(payload.get("priority"))
@@ -1074,9 +1079,14 @@ def list_queued_query_tasks(project_root: Path) -> list[Path]:
                     use_short_term=_coerce_optional_bool(payload.get("use_short_term")),
                     use_long_term=_coerce_optional_bool(payload.get("use_long_term")),
                 )
-        return priority, path.stat().st_mtime
+        return priority, mtime
 
-    paths = sorted(dirs["query_queued"].glob("*.json"), key=_sort_key)
+    sortable_paths = []
+    for path in dirs["query_queued"].glob("*.json"):
+        sort_key = _sort_key(path)
+        if sort_key is not None:
+            sortable_paths.append((sort_key, path))
+    paths = [path for _, path in sorted(sortable_paths, key=lambda item: item[0])]
     try:
         from online_pipeline.active_session import read_active_session_id, single_active_session_enabled
 
@@ -1086,7 +1096,10 @@ def list_queued_query_tasks(project_root: Path) -> list[Path]:
                 active_paths = []
                 other_paths = []
                 for path in paths:
-                    payload = read_json(path, default={})
+                    try:
+                        payload = read_json(path, default={})
+                    except FileNotFoundError:
+                        continue
                     if isinstance(payload, dict) and str(payload.get("session_id") or "") == active_session_id:
                         active_paths.append(path)
                     else:
@@ -1104,7 +1117,15 @@ def list_queued_visual_tasks(project_root: Path) -> list[Path]:
 
 def list_queued_mst_refine_tasks(project_root: Path) -> list[Path]:
     dirs = ensure_queue_dirs(project_root)
-    return sorted(dirs["mst_refine_queued"].glob("*.json"), key=lambda p: p.stat().st_mtime)
+    queued = []
+    for path in dirs["mst_refine_queued"].glob("*.json"):
+        try:
+            mtime = path.stat().st_mtime
+        except FileNotFoundError:
+            # A peer worker can claim a task after glob yields its path.
+            continue
+        queued.append((mtime, path))
+    return [path for _, path in sorted(queued, key=lambda item: item[0])]
 
 
 def list_queued_mst_consolidation_tasks(project_root: Path) -> list[Path]:

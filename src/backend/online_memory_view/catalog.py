@@ -95,6 +95,11 @@ class LongTermMemoryCatalogService:
             if not _valid_session_id(session_id):
                 continue
             try:
+                upload_path = session_dir / 'video_upload.json'
+                if upload_path.exists():
+                    upload = json.loads(upload_path.read_text(encoding='utf-8'))
+                    if upload.get('status') != 'ready' or upload.get('query_ready') is not True:
+                        continue
                 metadata = LongTermMemoryRepository(self.sessions_root, session_id).catalog_metadata()
                 updated_at, timestamp = _normalize_config_time(metadata.get("updated_at"))
                 metadata["updated_at"] = updated_at

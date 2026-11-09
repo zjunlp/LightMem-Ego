@@ -15,6 +15,8 @@ export function useMemoryGraph(sessionId, { authoritativeUpdate, onSessionUnavai
   const [error, setError] = useState(null)
   const [requestId, setRequestId] = useState('')
   const [lastCheckedAt, setLastCheckedAt] = useState(null)
+  const requestGenerationRef = useRef(0)
+  const minimumVersionRef = useRef(0)
   const etagRef = useRef('')
   const timerRef = useRef(null)
   const controllerRef = useRef(null)
@@ -45,6 +47,8 @@ export function useMemoryGraph(sessionId, { authoritativeUpdate, onSessionUnavai
     clearTimer()
     inFlightRef.current = true
     const controller = new AbortController()
+    const generation = ++requestGenerationRef.current
+    const timeout = window.setTimeout(() => controller.abort(), 15000)
     controllerRef.current = controller
     setStatus((current) => (payload ? current : 'loading'))
 
@@ -55,7 +59,11 @@ export function useMemoryGraph(sessionId, { authoritativeUpdate, onSessionUnavai
         etag: etagRef.current,
         signal: controller.signal
       })
-      if (!mountedRef.current) return
+      if (!mountedRef.current || controller.signal.aborted || generation !== requestGenerationRef.current) return
+      if (result.status === 'ok' && (result.graph?.sessionId !== sessionId || result.graph.memoryVersion < minimumVersionRef.current)) {
+        throw Object.assign(new Error('Graph is behind the current Memory version.'), { status: 503, code: 'memory_component_lagging' })
+      }
+      if (result.status === 'ok') minimumVersionRef.current = Math.max(minimumVersionRef.current, result.graph.memoryVersion)
       etagRef.current = result.etag || etagRef.current
       setRequestId(result.requestId || '')
       setLastCheckedAt(Date.now())
@@ -65,7 +73,8 @@ export function useMemoryGraph(sessionId, { authoritativeUpdate, onSessionUnavai
       setStatus('ready')
       schedule(NORMAL_POLL_MS)
     } catch (loadError) {
-      if (loadError?.name === 'AbortError' || !mountedRef.current) return
+      if (!mountedRef.current || generation !== requestGenerationRef.current) return
+      if (loadError?.name === 'AbortError') { schedule(5000); return }
       setRequestId(loadError?.requestId || '')
       setError(loadError)
       setLastCheckedAt(Date.now())
@@ -86,6 +95,7 @@ export function useMemoryGraph(sessionId, { authoritativeUpdate, onSessionUnavai
 
       setStatus('error')
     } finally {
+      window.clearTimeout(timeout)
       if (controllerRef.current === controller) {
         controllerRef.current = null
         inFlightRef.current = false
@@ -97,6 +107,8 @@ export function useMemoryGraph(sessionId, { authoritativeUpdate, onSessionUnavai
 
   useEffect(() => {
     mountedRef.current = true
+    requestGenerationRef.current += 1
+    minimumVersionRef.current = 0
     setPayload(null)
     setError(null)
     setRequestId('')
@@ -118,6 +130,7 @@ export function useMemoryGraph(sessionId, { authoritativeUpdate, onSessionUnavai
 
     return () => {
       mountedRef.current = false
+      requestGenerationRef.current += 1
       document.removeEventListener('visibilitychange', handleVisibility)
       clearTimer()
       controllerRef.current?.abort()
@@ -128,7 +141,13 @@ export function useMemoryGraph(sessionId, { authoritativeUpdate, onSessionUnavai
 
   useEffect(() => {
     if (!authoritativeUpdate || authoritativeUpdate.sessionId !== sessionId) return
+    const nextVersion = authoritativeUpdate.memory?.memoryVersion || 0
+    if (nextVersion < minimumVersionRef.current) return
+    minimumVersionRef.current = nextVersion
+    requestGenerationRef.current += 1
     controllerRef.current?.abort()
+    controllerRef.current = null
+    inFlightRef.current = false
     clearTimer()
     etagRef.current = authoritativeUpdate.graphEtag || ''
     retryIndexRef.current = 0

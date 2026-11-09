@@ -11,6 +11,7 @@ import functools
 import io
 import json
 import logging
+import httpx
 import os
 import sqlite3
 import hashlib
@@ -47,6 +48,7 @@ logger = logging.getLogger(__name__)
 
 # Model configuration
 MODEL_DICT = {
+    "gpt-6.1-sol": "gpt-6.1-sol",
     "gpt-5": "gpt-5-2025-08-07",
     "gpt-5.1": "gpt-5.1",
     "gpt-5.2": "gpt-5.2",
@@ -387,7 +389,10 @@ class OpenAIModel:
         print(f"Using OpenAI base URL: {base_url}")
         timeout = kwargs.pop("timeout", None)
         if timeout is None:
-            timeout = _env_float("EM2MEM_OPENAI_TIMEOUT_SECONDS", 120.0)
+            timeout = httpx.Timeout(
+                _env_float("EM2MEM_OPENAI_TIMEOUT_SECONDS", 120.0),
+                connect=_env_float("EM2MEM_OPENAI_CONNECT_TIMEOUT_SECONDS", 15.0),
+            )
         # Initialize OpenAI clients
         try:
             self.async_client = AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=timeout, max_retries=max_retries)

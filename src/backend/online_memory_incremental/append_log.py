@@ -8,6 +8,8 @@ from typing import Any
 from online_preprocess.io_utils import ensure_dir, utc_now_iso, write_json_atomic
 
 
+# These statuses make the *fast event append* idempotent. The appender retries
+# graph/semantic pending components separately; they are not fully-ready states.
 READY_STATUSES = {"appended_fast", "graph_semantic_pending", "fully_ready"}
 
 
@@ -51,12 +53,17 @@ class MemoryAppendLog:
                 latest[episode_id] = entry
         return latest
 
-    def decide(self, episode: dict[str, Any], force: bool = False) -> AppendDecision:
+    def decide(
+        self, episode: dict[str, Any], force: bool = False,
+        *, latest_by_episode: dict[str, dict[str, Any]] | None = None,
+    ) -> AppendDecision:
         episode_id = str(episode.get("episode_id") or "")
         append_id = f"append_{episode_id}"
         if not episode_id:
             return AppendDecision(episode_id="", append_id=append_id, should_append=False, reason="missing_episode_id")
-        latest = self.latest_by_episode().get(episode_id)
+        latest = (self.latest_by_episode() if latest_by_episode is None else latest_by_episode).get(episode_id)
+        if latest and int(episode.get("version", 1) or 1) > int(latest.get("episode_version", 1) or 1):
+            return AppendDecision(episode_id, append_id, True, "new_source_version", latest)
         if latest and latest.get("status") in READY_STATUSES and not force:
             return AppendDecision(
                 episode_id=episode_id,
@@ -97,6 +104,7 @@ class MemoryAppendLog:
             "append_id": f"append_{episode_id}",
             "session_id": episode.get("session_id"),
             "episode_id": episode_id,
+            "episode_version": int(episode.get("version", 1) or 1),
             "segment_id": episode.get("segment_id"),
             "start_time": float(episode.get("start_time") or 0.0),
             "end_time": float(episode.get("end_time") or episode.get("start_time") or 0.0),

@@ -4053,6 +4053,7 @@ from tqdm.auto import tqdm
 from ...llm import LLMModel, PromptTemplateManager
 from ...embedding import EmbeddingModel
 from ..timestamp_utils import memory_timestamp_range
+from ...embedding.cache_identity import embedding_cache_identity
 
 logger = logging.getLogger(__name__)
 
@@ -4120,7 +4121,12 @@ def _load_json(file_path: str) -> Any:
 
 def _tokenize(text: str) -> set:
     toks = re.findall(r"[a-zA-Z0-9_/-]+", str(text).lower())
-    return {t for t in toks if len(t) > 1 and t not in STOPWORDS}
+    tokens = {t for t in toks if len(t) > 1 and t not in STOPWORDS}
+    # CJK has no whitespace word boundaries. Character bigrams allow local
+    # matches without requiring a tokenizer model or language-specific service.
+    for run in re.findall(r"[\u3400-\u9fff]+", str(text)):
+        tokens.update(run[i:i + 2] for i in range(max(1, len(run) - 1)))
+    return tokens
 
 
 def _safe_cache_tag(x: Optional[str]) -> str:
@@ -4199,6 +4205,7 @@ class EpisodicMemoryRAG:
         self.dense_index_built: bool = False
         self._query_embedding_cache: Dict[str, np.ndarray] = {}
         self._thread_local = threading.local()
+        self._dense_index_lock = threading.RLock()
 
         # graph-aware rerank weights
         self.retrieval_text_score_weight = 0.18
@@ -4335,6 +4342,12 @@ class EpisodicMemoryRAG:
 
             metadata = {
                 "action_threads": entry.get("action_threads", entry.get("main_actions", [])),
+                "main_actions": entry.get("main_actions", entry.get("action_threads", [])),
+                "state_changes": entry.get("state_changes", []),
+                "visual_observations": entry.get("visual_observations", []),
+                "visual_objects": entry.get("visual_objects", []),
+                "keyframe_captions": entry.get("keyframe_captions", []),
+                "source_micro_events": entry.get("source_micro_events", []),
                 "object_threads": entry.get("object_threads", entry.get("salient_objects", [])),
                 "topic_threads": entry.get("topic_threads", entry.get("conversation_focus", [])),
                 "speaker_stats": entry.get("speaker_stats", entry.get("speakers", [])),
@@ -4464,6 +4477,8 @@ class EpisodicMemoryRAG:
 
     def _build_cache_meta(self, granularity: str, texts: List[str]) -> Dict[str, Any]:
         return {
+            "cache_version": 3,
+            "embedding_identity": embedding_cache_identity(self.embedding_model),
             "doc_ids": [e.doc_id for e in self.captions[granularity]],
             "text_hashes": [_md5_text(t) for t in texts],
             "end_times": [e.timestamp_int[1] for e in self.captions[granularity]],
@@ -4481,10 +4496,17 @@ class EpisodicMemoryRAG:
             with open(meta_path, "r", encoding="utf-8") as f:
                 meta = json.load(f)
             expected = self._build_cache_meta(granularity, texts)
+            dimension = meta.pop("embedding_dimension", None)
             if meta != expected:
                 return False
-            embeddings = np.load(emb_path)
-            if embeddings.shape[0] != len(self.captions[granularity]):
+            embeddings = np.load(emb_path, allow_pickle=False)
+            configured_dimension = getattr(self.embedding_model, "dimension", None)
+            if configured_dimension is None:
+                configured_dimension = getattr(self.embedding_model, "embedding_dimension", None)
+            if (embeddings.ndim != 2 or embeddings.shape[0] != len(self.captions[granularity])
+                    or embeddings.shape[1] != dimension
+                    or (configured_dimension is not None and dimension != configured_dimension)
+                    or not np.isfinite(embeddings).all()):
                 return False
             self.doc_embeddings[granularity] = embeddings.astype(np.float32)
             self.doc_end_times[granularity] = np.asarray(expected["end_times"], dtype=np.int64)
@@ -4499,11 +4521,63 @@ class EpisodicMemoryRAG:
         cache_dir = self._granularity_cache_dir(granularity)
         os.makedirs(cache_dir, exist_ok=True)
         meta = self._build_cache_meta(granularity, texts)
+        meta["embedding_dimension"] = int(embeddings.shape[1])
         with open(os.path.join(cache_dir, "meta.json"), "w", encoding="utf-8") as f:
             json.dump(meta, f, ensure_ascii=False, indent=2)
         np.save(os.path.join(cache_dir, "doc_embeddings.npy"), embeddings)
 
+    def _document_vector_cache_dir(self, granularity: str) -> str:
+        identity = self._build_cache_meta(granularity, []).get("embedding_identity", {})
+        key = _md5_text(json.dumps({"version": 1, "model": identity}, sort_keys=True))
+        path = os.path.join(self.dense_cache_dir, "text_vectors", key)
+        os.makedirs(path, exist_ok=True)
+        return path
+
+    def _encode_document_texts(self, granularity: str, texts: List[str], force_rebuild: bool = False) -> np.ndarray:
+        """Keep vectors for unchanged documents when the corpus grows."""
+        cache_dir = self._document_vector_cache_dir(granularity)
+        vectors = [None] * len(texts)
+        missing = {}
+        for index, text in enumerate(texts):
+            path = os.path.join(cache_dir, _md5_text(text) + ".npy")
+            try:
+                if force_rebuild:
+                    raise FileNotFoundError(path)
+                vector = np.load(path, allow_pickle=False)
+                dimension = getattr(self.embedding_model, "dimension", None) or getattr(self.embedding_model, "embedding_dimension", None)
+                if vector.ndim != 1 or (dimension and len(vector) != dimension) or not np.isfinite(vector).all():
+                    raise ValueError("invalid cached document vector")
+                vectors[index] = vector
+            except (OSError, ValueError):
+                missing.setdefault(text, []).append(index)
+        if missing:
+            encoded = self._encode_texts(list(missing), desc=f"Dense index [{granularity}] new texts")
+            if encoded.ndim != 2 or len(encoded) != len(missing) or not np.isfinite(encoded).all():
+                raise ValueError("invalid embedding response for document texts")
+            for text, vector in zip(missing, encoded):
+                for index in missing[text]:
+                    vectors[index] = vector
+                path = os.path.join(cache_dir, _md5_text(text) + ".npy")
+                temporary = path + ".tmp-" + os.urandom(8).hex()
+                try:
+                    with open(temporary, "wb") as stream:
+                        np.save(stream, vector, allow_pickle=False)
+                    os.replace(temporary, path)
+                finally:
+                    if os.path.exists(temporary):
+                        os.unlink(temporary)
+        stats = getattr(self, "dense_cache_stats", {})
+        stats[granularity] = {"reused_texts": len(texts)-sum(map(len, missing.values())), "encoded_texts": len(missing)}
+        self.dense_cache_stats = stats
+        return np.asarray(vectors, dtype=np.float32)
+
     def build_dense_index(self, force_rebuild: bool = False) -> None:
+        # A shared memory can receive its first queries from multiple workers.
+        # Only the immutable dense corpus is shared; query prefixes stay local.
+        with self._dense_index_lock:
+            self._build_dense_index_locked(force_rebuild=force_rebuild)
+
+    def _build_dense_index_locked(self, force_rebuild: bool = False) -> None:
         if self.dense_index_built and not force_rebuild:
             return
 
@@ -4523,10 +4597,7 @@ class EpisodicMemoryRAG:
                 continue
 
             logger.info("Building dense episodic index for %s: %d docs", granularity, len(entries))
-            embeddings = self._encode_texts(
-                texts,
-                desc=f"Dense index [{granularity}]",
-            )
+            embeddings = self._encode_document_texts(granularity, texts, force_rebuild=force_rebuild)
             self.doc_embeddings[granularity] = embeddings
             self.doc_end_times[granularity] = np.asarray([e.timestamp_int[1] for e in entries], dtype=np.int64)
             self.doc_retrieval_texts[granularity] = texts
@@ -4732,6 +4803,18 @@ class EpisodicMemoryRAG:
             return 0
         return int(prefixes.get(granularity, 0))
 
+    def set_query_constraints(self, constraints: Dict[str, Any]) -> None:
+        self._thread_local.query_constraints = dict(constraints or {})
+
+    def _matches_requested_time(self, entry: CaptionEntryRAG) -> bool:
+        from online_query_constraints import overlaps, constraint_window, constraint_windows, reserve_time_coverage
+        constraints = getattr(self._thread_local, "query_constraints", {}) or {}
+        return entry is not None and overlaps(entry.start_time, entry.end_time, constraint_window(constraints))
+
+    def _matches_indexed_request(self, entry: CaptionEntryRAG) -> bool:
+        return (entry is not None and entry.timestamp_int[1] <= self._get_thread_indexed_time()
+                and self._matches_requested_time(entry))
+
     # -----------------------------------------------------
     # Helpers
     # -----------------------------------------------------
@@ -4769,10 +4852,7 @@ class EpisodicMemoryRAG:
     def _normalize_scores(self, scores: List[float]) -> List[float]:
         if not scores:
             return []
-        mn, mx = min(scores), max(scores)
-        if mx - mn < 1e-8:
-            return [1.0 for _ in scores]
-        return [(s - mn) / (mx - mn) for s in scores]
+        return [max(0.0, float(s)) / (1.0 + max(0.0, float(s))) for s in scores]
 
     def _overlap_score(self, query_tokens: set, candidate_tokens: set) -> float:
         if not query_tokens or not candidate_tokens:
@@ -5018,7 +5098,10 @@ class EpisodicMemoryRAG:
         if parent_granularity not in self.doc_id_to_entry:
             return None
 
+        cutoff = self._get_thread_indexed_time()
         child_start, child_end = child_entry.timestamp_int
+        if child_end > cutoff:
+            return None
         best_parent: Optional[CaptionEntryRAG] = None
         best_span: Optional[int] = None
 
@@ -5026,6 +5109,8 @@ class EpisodicMemoryRAG:
             if parent.date != child_entry.date:
                 continue
             parent_start, parent_end = parent.timestamp_int
+            if parent_end > cutoff:
+                continue
             if parent_start <= child_start and parent_end >= child_end:
                 span = parent_end - parent_start
                 if best_parent is None or best_span is None or span < best_span:
@@ -5112,6 +5197,8 @@ class EpisodicMemoryRAG:
         neighbor_radius: int = 2,
         max_candidates: int = 64,
     ) -> List[Tuple[CaptionEntryRAG, float]]:
+        from online_query_constraints import constraint_windows, reserve_time_coverage
+        constraints = getattr(self._thread_local, "query_constraints", {}) or {}
         if not doc_ids:
             return []
         if not self.dense_index_built:
@@ -5123,8 +5210,10 @@ class EpisodicMemoryRAG:
         query_tokens = _tokenize(query)
         seed_doc_ids = self.normalize_doc_ids_to_30s(doc_ids)
         pool_doc_ids = self.expand_seed_doc_ids_with_neighbors(seed_doc_ids, radius=neighbor_radius, indexed_time=indexed_time)
+        pool_doc_ids = [doc_id for doc_id in pool_doc_ids if self._matches_requested_time(self.get_caption_by_doc_id(doc_id, "30sec"))]
         if max_candidates and len(pool_doc_ids) > max_candidates:
-            pool_doc_ids = pool_doc_ids[:max_candidates]
+            pool_doc_ids = reserve_time_coverage(pool_doc_ids, constraint_windows(constraints), max_candidates,
+                span=lambda doc_id: (self.get_caption_by_doc_id(doc_id, "30sec").start_time, self.get_caption_by_doc_id(doc_id, "30sec").end_time))
         if not pool_doc_ids:
             return []
 
@@ -5174,7 +5263,8 @@ class EpisodicMemoryRAG:
                 best_by_doc[entry.doc_id] = (entry, score)
         deduped = list(best_by_doc.values())
         deduped.sort(key=lambda x: -x[1])
-        return deduped[:max(1, final_top_k)]
+        return reserve_time_coverage(deduped, constraint_windows(constraints), max(1, final_top_k),
+            span=lambda row: (row[0].start_time, row[0].end_time))
 
     # -----------------------------------------------------
     # Dense retrieval
@@ -5184,7 +5274,9 @@ class EpisodicMemoryRAG:
         cached = self._query_embedding_cache.get(query)
         if cached is not None:
             return cached
-        emb = self._encode_texts([query], desc="Encoding query")[0]
+        encode_query = getattr(self.embedding_model, "encode_query", None)
+        emb = (self._normalize_embedding_matrix(encode_query(query))[0] if callable(encode_query)
+               else self._encode_texts([query], desc="Encoding query")[0])
         self._query_embedding_cache[query] = emb
         return emb
 
@@ -5208,6 +5300,7 @@ class EpisodicMemoryRAG:
             logger.warning("No captions indexed. Call index(until_time) before retrieve().")
             return []
 
+        from online_query_constraints import constraint_windows, overlaps, reserve_time_coverage
         query_emb = self._get_query_embedding(query)
         all_candidates: List[Tuple[CaptionEntryRAG, float]] = []
 
@@ -5225,7 +5318,11 @@ class EpisodicMemoryRAG:
             if emb is None or emb.shape[0] == 0:
                 continue
 
-            active_emb = emb[:prefix_size]
+            eligible = [index for index in range(prefix_size)
+                        if self._matches_requested_time(self._lookup_entry_from_index(granularity, index))]
+            if not eligible:
+                continue
+            active_emb = emb[eligible]
             scores = np.matmul(active_emb, query_emb)
             if scores.size == 0:
                 continue
@@ -5238,8 +5335,21 @@ class EpisodicMemoryRAG:
                 top_idx = partial[np.argsort(-scores[partial])]
 
             raw_candidates: List[Tuple[CaptionEntryRAG, float]] = []
-            for idx in top_idx.tolist():
-                entry = self._lookup_entry_from_index(granularity, idx)
+            constraints = getattr(self._thread_local, "query_constraints", {}) or {}
+            if constraints.get("summary"):
+                count = min(granularity_top_k, len(eligible))
+                coverage = [round(i*(len(eligible)-1)/max(1,count-1)) for i in range(count)]
+                top_idx = list(dict.fromkeys(top_idx.tolist() + coverage))
+            else:
+                top_idx = top_idx.tolist()
+            for window in constraint_windows(constraints):
+                indices = [i for i, entry_idx in enumerate(eligible) if overlaps(self._lookup_entry_from_index(granularity, entry_idx).start_time, self._lookup_entry_from_index(granularity, entry_idx).end_time, window)]
+                if indices:
+                    best = max(indices, key=lambda i: scores[i])
+                    if best not in top_idx:
+                        top_idx.append(best)
+            for idx in top_idx:
+                entry = self._lookup_entry_from_index(granularity, eligible[idx])
                 if entry is None:
                     continue
                 raw_candidates.append((entry, float(scores[idx])))
@@ -5250,7 +5360,16 @@ class EpisodicMemoryRAG:
                 candidates=raw_candidates,
             )
 
-            selected_base = reranked_candidates[:granularity_top_k]
+            selected_base = reserve_time_coverage(reranked_candidates, constraint_windows(constraints), granularity_top_k,
+                span=lambda row: (row[0].start_time, row[0].end_time))
+            if constraints.get("summary"):
+                timeline = sorted(reranked_candidates, key=lambda row: row[0].timestamp_int)
+                count = min(granularity_top_k, len(timeline))
+                reserved = [timeline[round(i*(len(timeline)-1)/max(1,count-1))] for i in range(count)]
+                selected_base = list({entry.doc_id: (entry, score) for entry, score in reserved + selected_base}.values())[:granularity_top_k]
+            if len(constraint_windows(constraints)) > 1:
+                selected_base = reserve_time_coverage(reranked_candidates, constraint_windows(constraints), granularity_top_k,
+                    span=lambda row: (row[0].start_time, row[0].end_time))
             expanded_temporal = self._expand_temporal_neighbors(granularity, selected_base)
             expanded_entity = self._expand_entity_neighbors(granularity, selected_base)
 
@@ -5267,6 +5386,8 @@ class EpisodicMemoryRAG:
             all_candidates.extend(expanded_temporal)
             all_candidates.extend(expanded_entity)
 
+        all_candidates = [(entry, score) for entry, score in all_candidates if self._matches_requested_time(entry)]
+
         if dedup_by_doc_id:
             best_by_doc: Dict[str, Tuple[CaptionEntryRAG, float]] = {}
             for entry, score in all_candidates:
@@ -5276,7 +5397,9 @@ class EpisodicMemoryRAG:
             all_candidates = list(best_by_doc.values())
 
         all_candidates.sort(key=lambda x: -x[1])
-        return all_candidates
+        constraints = getattr(self._thread_local, "query_constraints", {}) or {}
+        return reserve_time_coverage(all_candidates, constraint_windows(constraints), len(all_candidates),
+            span=lambda row: (row[0].start_time, row[0].end_time))
 
     def _family_policy(self, family_info: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         family = str((family_info or {}).get("question_family", "event")).strip().lower()
@@ -5409,6 +5532,8 @@ class EpisodicMemoryRAG:
                 child_entry = self.get_caption_by_doc_id(doc_id, "30sec")
                 if child_entry is None:
                     continue
+                if not self._matches_requested_time(child_entry):
+                    continue
                 if indexed_time > 0 and child_entry.timestamp_int[1] > indexed_time:
                     continue
                 target_doc_ids.append(doc_id)
@@ -5421,7 +5546,18 @@ class EpisodicMemoryRAG:
                 if local_score is None:
                     local_score = self._projection_local_score_30s(query_tokens, doc_id)
                     local_cache[doc_id] = local_score
-                projected[doc_id] += (base / denom) * (0.80 + 0.40 * local_score)
+                if entry.granularity == "30sec":
+                    child_support = 1.0
+                else:
+                    # A parent match supplies context, not equal support for
+                    # every child. Confirm against the child's own content.
+                    dense_support = 0.0
+                    pos = self.doc_pos_by_doc_id.get("30sec", {}).get(doc_id)
+                    embeddings = self.doc_embeddings.get("30sec")
+                    if pos is not None and embeddings is not None and pos < len(embeddings):
+                        dense_support = max(0.0, float(np.dot(self._get_query_embedding(query), embeddings[pos])))
+                    child_support = max(local_score, dense_support)
+                projected[doc_id] += (base / denom) * child_support
 
         if max_total_candidates and len(projected) > max_total_candidates:
             ranked_items = sorted(
@@ -5519,7 +5655,7 @@ class EpisodicMemoryRAG:
             ranked = []
             for doc_id, score in sorted(anchor_scores.items(), key=lambda x: -x[1])[: policy["final_top_k"]]:
                 entry = self.get_caption_by_doc_id(doc_id, "30sec")
-                if entry is not None:
+                if self._matches_indexed_request(entry):
                     ranked.append((entry, score))
             return ranked
 
@@ -5530,7 +5666,7 @@ class EpisodicMemoryRAG:
 
         for seed_rank, seed_doc_id in enumerate(seed_doc_ids):
             seed_entry = self.get_caption_by_doc_id(seed_doc_id, "30sec")
-            if seed_entry is None:
+            if not self._matches_indexed_request(seed_entry):
                 continue
             seed_base = anchor_scores.get(seed_doc_id, 0.0) * (1.0 / (seed_rank + 1))
             accumulated[seed_doc_id] += seed_base + self._family_direct_score(seed_entry, query_tokens, family)
@@ -5541,7 +5677,7 @@ class EpisodicMemoryRAG:
                     continue
                 for neighbor_doc_id in self._family_neighbor_doc_ids(current_doc_id, policy):
                     neighbor_entry = self.get_caption_by_doc_id(neighbor_doc_id, "30sec")
-                    if neighbor_entry is None:
+                    if not self._matches_indexed_request(neighbor_entry):
                         continue
                     prev_hop = visited_best_hop.get(neighbor_doc_id)
                     if prev_hop is not None and prev_hop <= hop + 1:
@@ -5563,7 +5699,7 @@ class EpisodicMemoryRAG:
         final_items: List[Tuple[CaptionEntryRAG, float]] = []
         for doc_id, score in sorted(accumulated.items(), key=lambda x: -x[1]):
             entry = self.get_caption_by_doc_id(doc_id, "30sec")
-            if entry is None:
+            if not self._matches_indexed_request(entry):
                 continue
             final_score = score + 0.60 * anchor_scores.get(doc_id, 0.0)
             final_items.append((entry, final_score))
@@ -5603,11 +5739,11 @@ class EpisodicMemoryRAG:
             return refined
         # fallback: simple projection ranking
         fallback = []
-        for doc_id, score in sorted(projected.items(), key=lambda x: -x[1])[: policy["final_top_k"]]:
+        for doc_id, score in sorted(projected.items(), key=lambda x: -x[1]):
             entry = self.get_caption_by_doc_id(doc_id, "30sec")
-            if entry is not None:
+            if self._matches_indexed_request(entry):
                 fallback.append((entry, score))
-        return fallback
+        return fallback[: policy["final_top_k"]]
 
     def retrieve_with_family(
         self,

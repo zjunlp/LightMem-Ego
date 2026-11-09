@@ -1,3 +1,4 @@
+import { useLanguage } from '../../i18n.jsx'
 import { AlertTriangle, Network, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useMemoryGraph } from '../../hooks/useMemoryGraph.js'
@@ -12,6 +13,7 @@ import GraphToolbar from './GraphToolbar.jsx'
 import SemanticGraph from './SemanticGraph.jsx'
 
 export default function MemoryGraphView({ session, authoritativeUpdate, onSessionUnavailable }) {
+  const { t } = useLanguage()
   const graphRequest = useMemoryGraph(session.sessionId, {
     authoritativeUpdate,
     onSessionUnavailable
@@ -106,16 +108,16 @@ export default function MemoryGraphView({ session, authoritativeUpdate, onSessio
   const linkedFactIds = selection?.kind === 'event' ? model.eventIdToFactIds.get(selection.id) || [] : []
   const linkedEntityId = selection?.kind === 'entity' ? selection.id : null
   const visibleLinkedFactIds = linkedFactIds.filter((id) => view.visibleFactIds.has(id))
-  const warnings = collectWarnings(graphRequest.payload)
+  const warnings = collectWarnings(graphRequest.payload, t)
   const versions = graphRequest.payload.componentVersions
 
   return (
     <div className="memory-graph-view">
       <div className="memory-graph-meta">
         <div>
-          <span>30-second linked memory graph</span>
-          <strong>M_lt v{graphRequest.payload.memoryVersion ?? session.memoryVersion} · Graph v{versions.graph} · Semantic v{versions.semantic}</strong>
-          <small>{formatUpdatedAt(graphRequest.payload.updatedAt || session.updatedAt)}</small>
+          <span>{t("30-second linked memory graph")}</span>
+          <strong>{t("M_lt v")}{graphRequest.payload.memoryVersion ?? session.memoryVersion} {t("· Graph v")}{versions.graph} {t("· Semantic v")}{versions.semantic}</strong>
+          <small>{formatUpdatedAt(graphRequest.payload.updatedAt || session.updatedAt, t)}</small>
         </div>
         <GraphStatus status={graphRequest.status} lastCheckedAt={graphRequest.lastCheckedAt} />
       </div>
@@ -123,12 +125,10 @@ export default function MemoryGraphView({ session, authoritativeUpdate, onSessio
       {graphRequest.error && (
         <div className="memory-graph-banner is-warning" role="status">
           <AlertTriangle size={15} />
-          <span>{formatGraphError(graphRequest.error)}</span>
+          <span>{t(formatGraphError(graphRequest.error))}</span>
           {graphRequest.status === 'error' && (
             <button className="icon-button secondary" type="button" onClick={graphRequest.retry}>
-              <RefreshCw size={14} />
-              Retry
-            </button>
+              <RefreshCw size={14} />{t("Retry")}</button>
           )}
         </div>
       )}
@@ -149,27 +149,27 @@ export default function MemoryGraphView({ session, authoritativeUpdate, onSessio
       />
 
       <div className="memory-graph-summary">
-        <span>{view.visibleEvents.length} events</span>
-        <span>Showing {view.visibleFacts.length} of {view.semanticCandidateCount} matching facts</span>
-        {selection?.kind === 'event' && <span>{linkedFactIds.length} related facts · {visibleLinkedFactIds.length} currently visible</span>}
+        <span>{view.visibleEvents.length} {t("events")}</span>
+        <span>{t("Showing")} {view.visibleFacts.length} {t("of")} {view.semanticCandidateCount} {t("matching facts")}</span>
+        {selection?.kind === 'event' && <span>{linkedFactIds.length} {t("related facts ·")} {visibleLinkedFactIds.length} {t("currently visible")}</span>}
       </div>
 
-      <div className="memory-graph-mobile-tabs" role="tablist" aria-label="Memory graph type">
-        <button type="button" role="tab" aria-selected={activeMobileGraph === 'episodic'} className={activeMobileGraph === 'episodic' ? 'active' : ''} onClick={() => setActiveMobileGraph('episodic')}>Episodic</button>
-        <button type="button" role="tab" aria-selected={activeMobileGraph === 'semantic'} className={activeMobileGraph === 'semantic' ? 'active' : ''} onClick={() => setActiveMobileGraph('semantic')}>Semantic</button>
+      <div className="memory-graph-mobile-tabs" role="tablist" aria-label={t("Memory graph type")}>
+        <button type="button" role="tab" aria-selected={activeMobileGraph === 'episodic'} className={activeMobileGraph === 'episodic' ? 'active' : ''} onClick={() => setActiveMobileGraph('episodic')}>{t("Episodic")}</button>
+        <button type="button" role="tab" aria-selected={activeMobileGraph === 'semantic'} className={activeMobileGraph === 'semantic' ? 'active' : ''} onClick={() => setActiveMobileGraph('semantic')}>{t("Semantic")}</button>
       </div>
 
       <div className="memory-graph-board">
         <section className={`memory-graph-pane episodic ${activeMobileGraph === 'episodic' ? 'is-mobile-active' : ''}`}>
           <div className="memory-graph-pane-heading">
             <div>
-              <strong>Episodic Graph</strong>
-              <span>Event timeline · select an Event to expand entities</span>
+              <strong>{t("Episodic Graph")}</strong>
+              <span>{t("Event timeline · select an Event to expand entities")}</span>
             </div>
-            <small>{view.visibleEvents.length} events</small>
+            <small>{view.visibleEvents.length} {t("events")}</small>
           </div>
           <EpisodicGraph
-            elements={view.episodic.elements}
+            elements={localizeGraphLabels(view.episodic.elements, t)}
             selection={selection}
             linkedEventIds={linkedEventIds}
             linkedEntityId={linkedEntityId}
@@ -182,10 +182,10 @@ export default function MemoryGraphView({ session, authoritativeUpdate, onSessio
         <section className={`memory-graph-pane semantic ${activeMobileGraph === 'semantic' ? 'is-mobile-active' : ''}`}>
           <div className="memory-graph-pane-heading">
             <div>
-              <strong>Semantic Graph</strong>
-              <span>Stable knowledge · edge width represents support</span>
+              <strong>{t("Semantic Graph")}</strong>
+              <span>{t("Stable knowledge · edge width represents support")}</span>
             </div>
-            <small>{view.visibleFacts.length} / {view.semanticCandidateCount} facts</small>
+            <small>{view.visibleFacts.length} / {view.semanticCandidateCount} {t("facts")}</small>
           </div>
           <SemanticGraph
             elements={view.semantic.elements}
@@ -211,15 +211,16 @@ export default function MemoryGraphView({ session, authoritativeUpdate, onSessio
 }
 
 function GraphRequestState({ status, error, requestId, onRetry }) {
+  const { t } = useLanguage()
   const waiting = status === 'waiting'
   const loading = status === 'idle' || status === 'loading'
   if (loading || waiting) {
     return (
       <div className="memory-graph-request-state" aria-live="polite">
         <span className="memory-spinner" />
-        <strong>{waiting ? 'Memory graph is being built' : 'Loading linked memory graph…'}</strong>
-        <span>{waiting ? 'The page will retry automatically.' : 'Loading Episodic and Semantic data.'}</span>
-        {requestId && <small>Request {requestId}</small>}
+        <strong>{waiting ? t("Memory graph is being built") : t("Loading linked memory graph…")}</strong>
+        <span>{waiting ? t("The page will retry automatically.") : t("Loading Episodic and Semantic data.")}</span>
+        {requestId && <small>{t("Request")} {requestId}</small>}
       </div>
     )
   }
@@ -227,38 +228,37 @@ function GraphRequestState({ status, error, requestId, onRetry }) {
   return (
     <div className="memory-graph-request-state is-error" role="alert">
       <Network size={28} />
-      <strong>{formatGraphError(error)}</strong>
-      <span>{error?.code === 'graph_not_supported' ? 'The Records tab remains available for this legacy Session.' : 'The graph could not be displayed.'}</span>
-      {requestId && <small>Request {requestId}</small>}
+      <strong>{t(formatGraphError(error))}</strong>
+      <span>{error?.code === 'graph_not_supported' ? t("The Records tab remains available for this legacy Session.") : t("The graph could not be displayed.")}</span>
+      {requestId && <small>{t("Request")} {requestId}</small>}
       {error?.status !== 409 && error?.status !== 413 && (
         <button className="icon-button secondary" type="button" onClick={onRetry}>
-          <RefreshCw size={14} />
-          Retry
-        </button>
+          <RefreshCw size={14} />{t("Retry")}</button>
       )}
     </div>
   )
 }
 
 function GraphStatus({ status, lastCheckedAt }) {
+  const { t } = useLanguage()
   const label = status === 'waiting' ? 'Building' : status === 'error' ? 'Refresh failed' : 'Synced'
   return (
     <div className={`memory-graph-sync-status is-${status}`} aria-live={status === 'waiting' ? 'polite' : 'off'}>
       <span />
-      <strong>{label}</strong>
+      <strong>{t(label)}</strong>
       {lastCheckedAt && <small>{new Date(lastCheckedAt).toLocaleTimeString()}</small>}
     </div>
   )
 }
 
-function collectWarnings(payload) {
+function collectWarnings(payload, t) {
   const warnings = []
   const serverWarningTotal = Object.values(payload.warnings || {}).reduce((total, value) => total + (Number(value) || 0), 0)
-  if (serverWarningTotal > 0) warnings.push(`${serverWarningTotal} server normalization warnings`)
-  if (payload.clientWarnings.invalidNodeCount) warnings.push(`${payload.clientWarnings.invalidNodeCount} invalid nodes skipped`)
-  if (payload.clientWarnings.duplicateNodeCount) warnings.push(`${payload.clientWarnings.duplicateNodeCount} duplicate nodes skipped`)
-  if (payload.clientWarnings.invalidEdgeCount) warnings.push(`${payload.clientWarnings.invalidEdgeCount} invalid edges skipped`)
-  if (payload.clientWarnings.missingRelationEventIdCount) warnings.push(`${payload.clientWarnings.missingRelationEventIdCount} entity relations cannot be assigned to an Event`)
+  if (serverWarningTotal > 0) warnings.push(t('{count} server normalization warnings', { count: serverWarningTotal }))
+  if (payload.clientWarnings.invalidNodeCount) warnings.push(t('{count} invalid nodes skipped', { count: payload.clientWarnings.invalidNodeCount }))
+  if (payload.clientWarnings.duplicateNodeCount) warnings.push(t('{count} duplicate nodes skipped', { count: payload.clientWarnings.duplicateNodeCount }))
+  if (payload.clientWarnings.invalidEdgeCount) warnings.push(t('{count} invalid edges skipped', { count: payload.clientWarnings.invalidEdgeCount }))
+  if (payload.clientWarnings.missingRelationEventIdCount) warnings.push(t('{count} entity relations cannot be assigned to an Event', { count: payload.clientWarnings.missingRelationEventIdCount }))
   return warnings
 }
 
@@ -277,10 +277,10 @@ function formatGraphError(error) {
   return error?.message || 'Unable to load the memory graph.'
 }
 
-function formatUpdatedAt(value) {
-  if (!value) return '30-second scale'
+function formatUpdatedAt(value, t) {
+  if (!value) return t('30-second scale')
   const parsed = new Date(value)
-  return Number.isNaN(parsed.getTime()) ? '30-second scale' : `Updated ${parsed.toLocaleString()}`
+  return Number.isNaN(parsed.getTime()) ? t('30-second scale') : t('Updated {date}', { date: parsed.toLocaleString() })
 }
 
 function useDebouncedValue(value, delay) {
@@ -290,4 +290,23 @@ function useDebouncedValue(value, delay) {
     return () => window.clearTimeout(timer)
   }, [delay, value])
   return debounced
+}
+
+// Translate generated graph annotations without changing titles or relation data.
+function localizeGraphLabels(elements, t) {
+  return elements.map((element) => {
+    const data = element.data
+    let label = data.label
+    if (data.graphKind === 'event') {
+      const lines = String(label).split('\n')
+      const confidenceLine = lines.at(-1)?.match(/^confidence ([\d.]+)$/)
+      if (confidenceLine) lines[lines.length - 1] = t('confidence {confidence}', { confidence: confidenceLine[1] })
+      if (lines[0] === 'TIME —') lines[0] = t('TIME —')
+      if (lines[1] === 'Untitled event') lines[1] = t('Untitled event')
+      label = lines.join('\n')
+    } else if (data.graphKind === 'mentions' && data.occurrenceCount > 1) {
+      label = t('mentions ×{count}', { count: data.occurrenceCount })
+    }
+    return label === data.label ? element : { ...element, data: { ...data, label } }
+  })
 }

@@ -52,6 +52,7 @@ class QAResult:
     fallback_used: bool = False
     llm_debug: Dict[str, Any] = field(default_factory=dict)
     timing_ms: Dict[str, Any] = field(default_factory=dict)
+    event_scores: Dict[str, Dict[str, float]] = field(default_factory=dict)
 
 
 def transform_timestamp(ts_str: str) -> str:

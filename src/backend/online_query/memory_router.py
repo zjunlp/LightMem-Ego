@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from .router_schema import contains_any, parse_optional_bool, safe_float, time_overlap
+from online_query_constraints import constraint_window, constraint_windows, reserve_time_coverage, observed_query_time, overlaps, resolve_query_constraints
 
 
 class MemoryRouter:
@@ -109,17 +110,26 @@ class MemoryRouter:
         request_options: dict[str, Any] | None,
         runtime_state: dict[str, Any],
         cache_context: dict[str, Any] | None = None,
+        *, query_constraints: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         request_options = request_options or {}
         cache_context = cache_context or {}
         q = (question or "").strip().lower()
         warnings: list[str] = []
+        constraints = resolve_query_constraints(question, query_constraints=query_constraints, latest=observed_query_time(runtime_state))
 
         has_current = contains_any(q, self.CURRENT_KWS)
         has_recent = contains_any(q, self.RECENT_KWS)
-        has_followup = bool(cache_context.get("is_followup")) or contains_any(q, self.FOLLOWUP_KWS)
+        if constraints.get("scope") == "history":
+            # "Earlier / 前面" need not mean the current short-term window.
+            # The original request contract wins over a keyword type label.
+            has_recent = False
+        # Pronouns alone do not establish a reference to the previous answer.
+        has_followup = bool(cache_context.get("is_followup"))
         has_long_term_scope = contains_any(q, self.LONG_TERM_SCOPE_KWS)
-        has_summary = contains_any(q, self.SUMMARY_KWS) or (has_long_term_scope and contains_any(q, self.SUMMARY_ACTION_KWS))
+        if has_long_term_scope:
+            has_current = bool(constraints.get("requires_current"))
+        has_summary = bool(constraints.get("summary")) or contains_any(q, self.SUMMARY_KWS) or (has_long_term_scope and contains_any(q, self.SUMMARY_ACTION_KWS))
         has_visual = contains_any(q, self.VISUAL_KWS)
         has_temporal = contains_any(q, self.TEMPORAL_KWS)
         has_speech = contains_any(q, self.SPEECH_KWS)
@@ -131,7 +141,7 @@ class MemoryRouter:
         query_type = "general_qa"
         if is_span_count:
             query_type = "temporal_count"
-        elif has_summary and not has_recent:
+        elif has_summary:
             query_type = "long_term_summary"
         elif has_recent:
             query_type = "recent_recall"
@@ -141,12 +151,27 @@ class MemoryRouter:
             query_type = "temporal_reasoning" if contains_any(q, ["为什么", "原因", "why", "how", "后来", "之后", "after", "later"]) else "temporal_localization"
         elif has_followup:
             query_type = "followup"
-        elif has_entity:
-            query_type = "entity_tracking"
         elif has_current:
             query_type = "current_perception"
+        elif has_entity:
+            query_type = "entity_tracking"
         elif has_visual:
             query_type = "visual_attribute"
+        if constraints.get("time_explicit"):
+            has_current = has_recent = False
+            if not has_summary:
+                query_type = "temporal_localization"
+        elif constraints.get("scope") == "current" and not has_summary and not has_recent:
+            query_type = "current_perception"
+
+        if constraints.get("requires_current") and constraints.get("requires_history"):
+            query_type = "temporal_reasoning"
+        elif constraints.get("scope") == "current":
+            query_type = "current_perception"
+        elif has_current and not constraints.get("requires_current"):
+            has_current = False
+            if query_type == "current_perception":
+                query_type = "general_qa"
 
         route = {
             "use_current": False,
@@ -180,10 +205,11 @@ class MemoryRouter:
             reason = "Follow-up/coreference query uses interaction cache plus short/long-term context."
             self._apply_followup_time_routing(route, priority, runtime_state, cache_context)
         elif query_type == "long_term_summary":
-            route.update({"use_current": False, "use_short_term": False, "use_long_term": True})
-            fallback_order = ["M_lt"]
-            priority.update({"M_cur": 0.0, "M_st": 0.15, "M_lt": 1.0, "M_cache": 0.1})
-            reason = "Summary query should use long-term episodic/semantic memories."
+            tail = self._uncovered_tail(runtime_state)
+            route.update({"use_current": False, "use_short_term": bool(tail), "use_long_term": True})
+            fallback_order = ["M_lt", "M_st"] if tail else ["M_lt"]
+            priority.update({"M_cur": 0.0, "M_st": 0.85 if tail else 0.15, "M_lt": 1.0, "M_cache": 0.1})
+            reason = "Summaries use long-term memory and short-term events for the unaggregated tail."
         elif query_type == "visual_attribute":
             route.update({"use_current": has_current, "use_short_term": has_recent, "use_long_term": not (has_current or has_recent)})
             route["use_interaction_cache"] = True
@@ -206,24 +232,54 @@ class MemoryRouter:
             priority.update({"M_cur": 0.55 if has_current else 0.1, "M_st": 0.7 if (has_recent or has_followup) else 0.4, "M_lt": 0.8, "M_cache": 0.45})
             reason = "Entity tracking may need cache references and long-term state history."
 
+        if constraints.get("requires_current") and constraints.get("requires_history"):
+            route.update(use_current=True, use_short_term=True, use_long_term=True)
+            priority.update(M_cur=0.8, M_st=0.8, M_lt=0.85)
+            fallback_order = ["M_cur", "M_st", "M_lt"]
+
+        # Fill only the history required by the question, not every available
+        # source. Explicit user source switches are applied afterwards.
+        tail = self._uncovered_tail(runtime_state)
+        window = constraint_window(constraints)
+        short_span = runtime_state.get("mst_time_span") or []
+        if (query_type not in {"current_perception", "long_term_summary"}
+                and constraints.get("requires_history") and runtime_state.get("short_term_ready")
+                and (len(short_span) < 2 or overlaps(short_span[0], short_span[1], window))):
+            # Aggregation coverage says nothing about preservation of detail.
+            # Existing fine events remain eligible even after LT publication.
+            route["use_short_term"] = True
+            priority["M_st"] = max(priority["M_st"], 0.75)
+            reason += " Relevant short-term details remain independently retrievable after long-term aggregation."
+        if route.get("use_long_term") and constraints.get("scope") != "current":
+            if tail and overlaps(tail[0], tail[1], window):
+                route["use_short_term"] = True
+                priority["M_st"] = max(priority["M_st"], 0.75)
+                reason += " Short-term memory supplies relevant history not yet aggregated into long-term memory."
+            current_span = runtime_state.get("mcur_time_span") or []
+            short_span = runtime_state.get("mst_time_span") or []
+            long_span = runtime_state.get("mlt_time_span") or []
+            covered_end = max([safe_float(span[1]) for span in (short_span, long_span) if len(span) > 1] or [0.0])
+            if len(current_span) > 1 and safe_float(current_span[1]) > covered_end and overlaps(covered_end, current_span[1], window):
+                route["use_current"] = True
+                priority["M_cur"] = max(priority["M_cur"], 0.55)
+        if window:
+            for key, span_name in (("use_current", "mcur_time_span"), ("use_short_term", "mst_time_span"), ("use_long_term", "mlt_time_span")):
+                span = runtime_state.get(span_name) or []
+                if len(span) > 1 and not overlaps(span[0], span[1], window):
+                    route[key] = False
         self._apply_readiness(route, priority, fallback_order, runtime_state, query_type, warnings)
         self._apply_user_overrides(route, request_options, warnings)
-        requested_mode = str(request_options.get("retrieval_mode") or "auto").strip().lower()
-        if query_type == "long_term_summary" and requested_mode != "current":
-            if route.get("use_current"):
-                warnings.append("ignored use_current for long-term summary unless retrieval_mode=current")
-            route["use_current"] = False
-            route["use_short_term"] = False
-            route["use_long_term"] = True
 
         return {
             "query_type": query_type,
+            "question": question,
             "memory_route": route,
             "fallback_order": fallback_order,
             "memory_priority": priority,
             "reason": reason,
             "warnings": warnings,
             "runtime_state": runtime_state,
+            "query_constraints": constraints,
             "cache_context": {
                 "cache_hit": bool(cache_context.get("cache_hit")),
                 "is_followup": bool(cache_context.get("is_followup")),
@@ -234,7 +290,20 @@ class MemoryRouter:
                 "confidence": cache_context.get("confidence", 0.0),
                 "reason": cache_context.get("reason", ""),
             },
+            "short_term_tail_range": self._uncovered_tail(runtime_state) if query_type == "long_term_summary" else None,
         }
+
+    def _uncovered_tail(self, runtime_state: dict[str, Any]) -> list[float] | None:
+        from online_time import event_time_seconds
+        short_span = runtime_state.get("mst_time_span") or []
+        long_span = runtime_state.get("mlt_time_span") or []
+        if len(short_span) < 2:
+            return None
+        short_end = event_time_seconds(short_span[1])
+        long_end = event_time_seconds(long_span[1]) if len(long_span) >= 2 else 0.0
+        if short_end is not None and long_end is not None and short_end > long_end:
+            return [long_end, short_end]
+        return None
 
     def _apply_followup_time_routing(
         self,
@@ -252,11 +321,11 @@ class MemoryRouter:
         for item in ranges:
             start = item.get("start") if isinstance(item, dict) else None
             end = item.get("end") if isinstance(item, dict) else start
-            if mcur and time_overlap(mcur[0], mcur[1], start, end) > 0:
+            if mcur and overlaps(mcur[0], mcur[1], [safe_float(start), safe_float(end, safe_float(start))]):
                 route["use_current"] = True
                 priority["M_cur"] = max(priority["M_cur"], 0.75)
                 matched = True
-            if mst and time_overlap(mst[0], mst[1], start, end) > 0:
+            if mst and overlaps(mst[0], mst[1], [safe_float(start), safe_float(end, safe_float(start))]):
                 route["use_short_term"] = True
                 priority["M_st"] = max(priority["M_st"], 0.8)
                 matched = True
@@ -324,5 +393,4 @@ class MemoryRouter:
                 if route_key != "use_interaction_cache":
                     warnings.append(f"{route_key} set by user_override")
         if not any(route.get(key) for key in ("use_current", "use_short_term", "use_long_term")):
-            route["use_long_term"] = True
-            warnings.append("all memory sources disabled by overrides; falling back to long-term memory")
+            warnings.append("all memory sources are disabled or unavailable; no retrieval will run")

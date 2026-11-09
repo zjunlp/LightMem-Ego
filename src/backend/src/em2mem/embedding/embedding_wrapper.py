@@ -1,4 +1,7 @@
 import os
+import json
+import threading
+from collections import OrderedDict
 import numpy as np
 from typing import Union, List, Optional
 from PIL import Image
@@ -35,6 +38,9 @@ class EmbeddingModel:
             device: Device to run models on
         """
         self.device = device
+        self._query_vectors = OrderedDict()
+        self._query_vectors_lock = threading.RLock()
+        self._query_vectors_limit = 128
         
         # Initialize models lazily
         self._text_model = None
@@ -97,6 +103,30 @@ class EmbeddingModel:
     def encode_text(self, texts: Union[str, List[str]], **kwargs) -> np.ndarray:
         """Encode text using Qwen3 model"""
         return self.text_model.encode_text(texts, **kwargs)
+
+    def encode_query(self, query: str) -> np.ndarray:
+        """Share a bounded raw query vector across episodic and semantic search.
+
+        Memory snapshots do not affect a text vector. Model/endpoint/normalization
+        identity does; callers receive copies so normalization cannot leak.
+        """
+        from .cache_identity import embedding_cache_identity
+
+        key = (json.dumps(embedding_cache_identity(self), sort_keys=True), query)
+        with self._query_vectors_lock:
+            cached = self._query_vectors.get(key)
+            if cached is not None:
+                self._query_vectors.move_to_end(key)
+                return cached.copy()
+            encoded = np.asarray(self.encode_text(query, batch_size=1), dtype=np.float32)
+            if encoded.ndim == 1:
+                encoded = encoded[None, :]
+            if encoded.ndim != 2 or encoded.shape[0] != 1 or not encoded.shape[1] or not np.isfinite(encoded).all():
+                raise ValueError("Invalid query embedding response")
+            self._query_vectors[key] = encoded.copy()
+            while len(self._query_vectors) > self._query_vectors_limit:
+                self._query_vectors.popitem(last=False)
+            return encoded.copy()
 
     def encode_vis_query(self, texts: Union[str, List[str]], **kwargs) -> np.ndarray:
         """Encode visual query using VLM2VecV2 model"""

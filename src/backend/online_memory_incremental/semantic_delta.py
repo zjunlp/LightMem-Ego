@@ -77,6 +77,47 @@ def _time_key(value: dict[str, Any] | None, default: str) -> str:
     return str(value.get("date", "DAY1")) + str(value.get("start_time", "")) + str(value.get("end_time", ""))
 
 
+def _update_support_metadata(fact: dict[str, Any]) -> None:
+    records = [r for r in fact.get("support_records", []) if isinstance(r, dict)]
+    if not records:
+        return
+    by_doc = {str(r["doc_id"]): r for r in records if r.get("doc_id")}
+    records = list(by_doc.values())
+    fact["support_records"] = records
+    for key in ("support_docs", "source_doc_ids", "evidence_event_ids", "provenance_root_ids"):
+        fact[key] = list(by_doc)
+    fact["support_count"] = fact["raw_support_count"] = len(by_doc)
+    fact["support_days"] = sorted({str(r.get("date") or "DAY1") for r in records})
+    fact["confidence"] = max(float(r.get("confidence") or 0.0) for r in records)
+    first = min(records, key=lambda r: _time_key(r, "zz"))
+    last = max(records, key=lambda r: _time_key(r, ""))
+    fact["first_seen"] = {k: first.get(k) for k in ("date", "start_time", "end_time")}
+    fact["last_seen"] = {k: last.get(k) for k in ("date", "start_time", "end_time")}
+    fact["source_episode_id"] = first.get("source_episode_id") or first["doc_id"]
+
+
+def _legacy_support_records(fact: dict[str, Any], documents: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """Recover per-doc times for existing stores before retracting one support."""
+    known = {str(r.get("doc_id")): r for r in fact.get("support_records", []) if isinstance(r, dict)}
+    records = []
+    for doc_id in fact.get("support_docs") or fact.get("source_doc_ids") or []:
+        doc_id = str(doc_id)
+        if doc_id in known:
+            records.append(known[doc_id])
+            continue
+        doc = documents.get(doc_id, {})
+        first, last = fact.get("first_seen") or {}, fact.get("last_seen") or {}
+        records.append({
+            "doc_id": doc_id,
+            "source_episode_id": doc.get("episode_id") or doc_id,
+            "date": doc.get("date") or first.get("date") or "DAY1",
+            "start_time": doc.get("start_time") or first.get("start_time") or "00000000",
+            "end_time": doc.get("end_time") or last.get("end_time") or "00000000",
+            "confidence": fact.get("confidence", .7),
+        })
+    return records
+
+
 def _consolidate_semantic_facts(facts: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
     removed = 0
@@ -97,6 +138,7 @@ def _consolidate_semantic_facts(facts: list[dict[str, Any]]) -> tuple[list[dict[
         existing["provenance_root_ids"] = _merge_unique(existing.get("provenance_root_ids"), fact.get("provenance_root_ids"))
         existing["support_days"] = _merge_unique(existing.get("support_days"), fact.get("support_days"))
         existing["support_scales"] = _merge_unique(existing.get("support_scales"), fact.get("support_scales"))
+        existing["support_records"] = _merge_unique(existing.get("support_records"), fact.get("support_records"))
         existing["raw_support_count"] = int(existing.get("raw_support_count") or 1) + int(fact.get("raw_support_count") or 1)
         existing["support_count"] = len(existing.get("support_docs") or existing.get("source_doc_ids") or [])
         existing["confidence"] = max(float(existing.get("confidence") or 0.0), float(fact.get("confidence") or 0.0))
@@ -112,6 +154,8 @@ def _consolidate_semantic_facts(facts: list[dict[str, Any]]) -> tuple[list[dict[
         if versions:
             existing["semantic_version"] = max(versions)
         existing["consolidated_at"] = utc_now_iso()
+    for fact in by_key.values():
+        _update_support_metadata(fact)
     return list(by_key.values()), {"input_count": len(facts), "output_count": len(by_key), "dedup_removed": removed}
 
 
@@ -162,6 +206,11 @@ def generate_semantic_delta(
                 "provenance_root_ids": [doc_id],
                 "source_doc_ids": [doc_id],
                 "source_episode_id": episode_id,
+                "support_records": [{
+                    "doc_id": doc_id, "source_episode_id": episode_id, "date": "DAY1",
+                    "start_time": start_code, "end_time": end_code,
+                    "confidence": row.get("confidence", .7), "semantic_version": version,
+                }],
                 "first_seen": {"date": "DAY1", "start_time": start_code, "end_time": end_code},
                 "last_seen": {"date": "DAY1", "start_time": start_code, "end_time": end_code},
                 "semantic_version": version,
@@ -197,29 +246,34 @@ def generate_semantic_delta(
     existing_facts = memory.get("facts") if isinstance(memory.get("facts"), list) else []
     new_ids = {str(fact.get("fact_id")) for fact in facts}
     current_doc_ids = {str(row.get("source_doc_id") or "") for row in rows if row.get("source_doc_id")}
+    captions = read_json(session_dir / "em2mem/caption_root" / f"{session_dir.name}_30sec.json", default=[])
+    sidecar = read_json(session_dir / "em2mem/sidecar_root/30s" / f"episodic_triplets_30s_{model}.json", default={})
+    units = sidecar.get("units", []) if isinstance(sidecar, dict) else []
+    documents = {str(d.get("doc_id")): d for d in [*units, *(captions if isinstance(captions, list) else [])] if isinstance(d, dict)}
     merged_facts = []
     for fact in existing_facts:
         if not isinstance(fact, dict):
             continue
         fact_id = str(fact.get("fact_id") or "")
-        support_docs = {str(x) for x in (fact.get("support_docs") or fact.get("source_doc_ids") or [])}
         if fact_id in new_ids:
             continue
-        if fact_id.startswith("fact_delta_v") and support_docs.intersection(current_doc_ids):
-            continue
+        fact = dict(fact)
+        records = _legacy_support_records(fact, documents)
+        if records:
+            fact["support_records"] = [r for r in records if r["doc_id"] not in current_doc_ids]
+            if not fact["support_records"]:
+                continue
+            _update_support_metadata(fact)
         merged_facts.append(fact)
     merged_facts.extend(facts)
     merged_facts, consolidation_summary = _consolidate_semantic_facts(merged_facts)
-    timeline = memory.get("timeline") if isinstance(memory.get("timeline"), list) else []
-    timeline = [
-        item for item in timeline
-        if not (
-            isinstance(item, dict)
-            and any((fid in new_ids or str(fid).startswith("fact_delta_v")) for fid in (item.get("fact_ids") or []))
-        )
-    ]
-    for fact in facts:
-        ts = f"1{str(fact.get('last_seen', {}).get('end_time') or '').replace(':', '')}"
+    # Consolidation keeps one canonical fact ID. Build the timeline from those
+    # final facts so neither retracted nor merged-away IDs remain referenced.
+    timeline = []
+    for fact in merged_facts:
+        last = fact.get('last_seen') or {}
+        day = str(last.get('date') or 'DAY1').upper().removeprefix('DAY')
+        ts = f"{day}{str(last.get('end_time') or '00000000').replace(':', '')}"
         timeline.append({"timestamp": ts, "fact_ids": [fact["fact_id"]], "source": "incremental_delta"})
     memory.update(
         {

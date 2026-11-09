@@ -1,18 +1,20 @@
-import { Activity } from 'lucide-react'
+import { Activity, MessageSquareText } from 'lucide-react'
+import { useLanguage } from '../i18n.jsx'
 
 export default function AnswerCard({ answer, loading, latency, queryStatus, answerMode, answerPhase, error }) {
+  const { t } = useLanguage()
   const isProvisional = ['draft', 'streaming', 'final'].includes(answerPhase)
 
   return (
-    <section className="surface answer-card fade-in">
+    <section className={`surface answer-card fade-in ${loading ? 'is-loading' : ''}`} aria-busy={loading}>
       <div className="card-header">
         <div>
-          <p className="eyebrow">AI Answer</p>
-          <h2>LightMem-Ego response</h2>
+          <h2>{t('AI Answer')}</h2>
+          <p className="section-description">{t('LightMem-Ego response')}</p>
         </div>
         <div className={`query-pill ${loading ? 'active' : ''}`}>
           <span className="live-dot" />
-          <span>{formatQueryStatus(queryStatus, loading)}</span>
+          <span>{t(formatQueryStatus(queryStatus, loading))}</span>
         </div>
       </div>
 
@@ -21,7 +23,7 @@ export default function AnswerCard({ answer, loading, latency, queryStatus, answ
           <>
             {isProvisional && (
               <div className="provisional-label">
-                {answerPhase === 'draft' ? 'Provisional draft' : 'Streaming'}
+                {answerPhase === 'draft' ? t('Provisional draft') : t('Streaming')}
                 {loading && (
                   <span className="typing-dots" aria-hidden="true">
                     <i />
@@ -31,19 +33,21 @@ export default function AnswerCard({ answer, loading, latency, queryStatus, answ
                 )}
               </div>
             )}
-            <p>{answer}</p>
+            <p key={answerPhase} className="answer-copy">{answer}</p>
           </>
         ) : loading ? (
-          <div className="answer-empty">
-            <span>Retrieving live memory and composing an answer</span>
-            <span className="typing-dots" aria-hidden="true">
-              <i />
-              <i />
-              <i />
-            </span>
+          <div className="answer-loading" role="status">
+            <div className="answer-skeleton" aria-hidden="true"><i /><i /><i /></div>
+            <div className="answer-empty">
+              <span>{t('Retrieving live memory and composing an answer')}</span>
+              <span className="typing-dots" aria-hidden="true"><i /><i /><i /></span>
+            </div>
           </div>
         ) : (
-          <p className="answer-empty-text">Ask a question while LightMem-Ego is watching.</p>
+          <div className="answer-idle">
+            <span className="empty-state-icon"><MessageSquareText size={21} strokeWidth={1.6} aria-hidden="true" /></span>
+            <p className="answer-empty-text">{t('Ask a question while LightMem-Ego is watching.')}</p>
+          </div>
         )}
       </div>
 
@@ -51,12 +55,12 @@ export default function AnswerCard({ answer, loading, latency, queryStatus, answ
         <div className="answer-meta">
           <span>
             <Activity size={14} />
-            Latency: {formatLatency(latency)}
+            {t('Latency')}: {formatLatency(latency)}
           </span>
         </div>
       )}
 
-      {error && <div className="inline-error">{error}</div>}
+      {error && <div className="inline-error">{t(error)}</div>}
     </section>
   )
 }

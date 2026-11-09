@@ -7,12 +7,17 @@ from pathlib import Path
 from typing import Any
 
 from online_preprocess.io_utils import utc_now_iso
+from online_preprocess.vlm_captioner import _image_data_url, select_keyframes_for_vlm
+from online_memory.visual_summary import VISUAL_SUMMARY_SYSTEM_PROMPT, visual_summary_from_evidence
+from online_memory.frame_captions import merge_frame_captions, short_term_frame_captions
+from online_time import keyframe_path_seconds, seconds_value
 from online_llm_config import (
     external_openai_api_key,
     external_openai_base_url,
     external_openai_model,
     local_llm_enabled,
     merge_local_chat_request_kwargs,
+    chat_response_text,
 )
 
 
@@ -139,25 +144,7 @@ def _event_keyframe_paths(event: dict[str, Any]) -> list[str]:
 
 
 def _event_keyframe_captions(event: dict[str, Any]) -> list[dict[str, Any]]:
-    captions = []
-    for frame in event.get("keyframes", []) or []:
-        if not isinstance(frame, dict):
-            continue
-        caption = _clean_text(frame.get("caption") or frame.get("keyframe_caption"))
-        if caption:
-            captions.append(
-                {
-                    "timestamp": frame.get("timestamp"),
-                    "path": frame.get("path"),
-                    "caption": caption,
-                }
-            )
-    for item in event.get("keyframe_captions", []) or []:
-        if isinstance(item, dict):
-            captions.append(item)
-        elif _clean_text(item):
-            captions.append({"caption": _clean_text(item)})
-    return _dedupe_list(captions)
+    return short_term_frame_captions(event)
 
 
 def _event_payload(event: dict[str, Any]) -> dict[str, Any]:
@@ -197,6 +184,7 @@ class MSTEpisodicWindowBuilder:
         self.model = model or external_openai_model()
         self.timeout = float(timeout or os.getenv("EM2MEM_MST_EPISODIC_TIMEOUT", "120"))
         self.retries = int(retries if retries is not None else os.getenv("EM2MEM_MST_EPISODIC_RETRIES", "3"))
+        self.max_visual_images = max(1, int(os.getenv("EM2MEM_MST_EPISODIC_VISUAL_MAX_IMAGES", "8")))
         self._client = None
 
     def build_episode(
@@ -262,13 +250,21 @@ class MSTEpisodicWindowBuilder:
                 seen_segments.add(key)
                 transcript_segments.append(segment)
         keyframe_paths = _dedupe_list([path for event in ordered_events for path in _event_keyframe_paths(event)])
-        keyframe_captions = _dedupe_list([item for event in ordered_events for item in _event_keyframe_captions(event)])
+        keyframe_captions = merge_frame_captions([item for event in ordered_events for item in _event_keyframe_captions(event)])
+        visual_summary, visual_status, visual_debug = self._build_visual_summary(
+            window, payload, keyframe_paths, keyframe_captions, " ".join(transcripts), session_dir,
+        )
+        generated_captions = [{**row, "source_episode_id": episode_id}
+                              for row in visual_debug.get("keyframe_captions", [])]
+        keyframe_captions = merge_frame_captions(keyframe_captions + generated_captions)
         source_micro_events = [
             {
                 "event_id": event.get("event_id"),
                 "start_time": event.get("start_time"),
                 "end_time": event.get("end_time"),
                 "caption": _caption_for_event(event),
+                "main_actions": event.get("main_actions", []),
+                "state_changes": event.get("state_changes", []),
                 "status": event.get("status"),
                 "version": event.get("version"),
             }
@@ -287,6 +283,10 @@ class MSTEpisodicWindowBuilder:
             "version": int(version),
             "caption": _clean_text(payload.get("caption")) or "A refined 30-second episodic memory is available.",
             "fine_caption": _clean_text(payload.get("fine_caption")) or _clean_text(payload.get("caption")),
+            "visual_summary": visual_summary,
+            "visual_summary_status": visual_status,
+            "visual_summary_debug": visual_debug,
+            "visual_observations": visual_debug.get("visual_observations", []),
             "scene": _clean_text(payload.get("scene")),
             "transcript": " ".join(transcripts),
             "transcript_segments": transcript_segments,
@@ -319,6 +319,97 @@ class MSTEpisodicWindowBuilder:
             "created_at": now,
             "updated_at": now,
         }
+
+    def _build_visual_summary(
+        self,
+        window: dict[str, Any],
+        payload: dict[str, Any],
+        paths: list[str],
+        frame_captions: list[dict[str, Any]],
+        transcript: str,
+        session_dir: Path,
+    ) -> tuple[str, str, dict[str, Any]]:
+        if self.backend != "openai":
+            summary = visual_summary_from_evidence({**payload, "keyframe_captions": frame_captions})
+            return summary, "derived" if summary else "unavailable", {"source": "visual_metadata"}
+
+        metadata = {frame["path"]: frame for frame in frame_captions if isinstance(frame, dict) and frame.get("path")}
+        frames = [
+            {"path": path, "timestamp": metadata.get(path, {}).get("timestamp", keyframe_path_seconds(path))}
+            for path in paths if (session_dir / path).is_file()
+        ]
+        frames = select_keyframes_for_vlm(frames, self.max_visual_images)
+        debug: dict[str, Any] = {"source": "vlm_keyframes", "model": self.model, "keyframe_paths": [f["path"] for f in frames], "error": None}
+        described_paths = {row["path"] for row in frame_captions if isinstance(row, dict) and row.get("path")
+                           and (row.get("caption") or row.get("description"))}
+        missing = [frame for frame in frames if frame["path"] not in described_paths]
+        if not frames:
+            return "", "unavailable", debug
+
+        try:
+            if self._client is None:
+                from openai import OpenAI
+                self._client = OpenAI(api_key=external_openai_api_key(), base_url=external_openai_base_url(), timeout=self.timeout, max_retries=0)
+            content: list[dict[str, Any]] = [{"type": "text", "text": json.dumps({
+                "window": window,
+                "weak_text_context": {"caption": payload.get("fine_caption") or payload.get("caption"), "transcript": transcript},
+                "frames_needing_descriptions": missing,
+                "instruction": "Return JSON with visual_summary and keyframe_captions for the listed attached frames lacking saved descriptions. Generate the summary independently from the images. Text is weak context, not visual evidence.",
+            }, ensure_ascii=False)}]
+            for frame in frames:
+                content.append({"type": "text", "text": f"Keyframe at {frame['timestamp']} seconds; path: {frame['path']}"})
+                content.append({"type": "image_url", "image_url": {"url": _image_data_url(session_dir / frame["path"])}})
+            visual_prompt = VISUAL_SUMMARY_SYSTEM_PROMPT
+            messages = [{"role": "system", "content": visual_prompt}, {"role": "user", "content": content}]
+            last_exc = None
+            for _ in range(max(1, self.retries)):
+                try:
+                    kwargs = merge_local_chat_request_kwargs(_reasoning_effort_kwargs(), enabled=False)
+                    kwargs["response_format"] = {"type": "json_object"}
+                    try:
+                        response = self._client.chat.completions.create(model=self.model, messages=messages, **kwargs)
+                    except Exception as exc:
+                        if not _looks_like_unsupported_reasoning(exc):
+                            raise
+                        response = self._client.chat.completions.create(model=self.model, messages=messages, response_format={"type": "json_object"})
+                    result = _extract_json_object(chat_response_text(response))
+                    summary = result.get("visual_summary")
+                    if not isinstance(summary, str) or not summary.strip():
+                        raise ValueError("Visual summary response is missing a nonempty string visual_summary.")
+                    captions = []
+                    raw_captions = result.get("keyframe_captions")
+                    for caption in raw_captions if isinstance(raw_captions, list) else []:
+                        if not isinstance(caption, dict) or not isinstance(caption.get("caption"), str) or not caption["caption"].strip():
+                            continue
+                        timestamp = seconds_value(caption.get("timestamp"))
+                        matched = next((frame for frame in missing if caption.get("path") == frame["path"]
+                            and timestamp is not None and frame.get("timestamp") is not None
+                            and abs(timestamp-float(frame["timestamp"])) < 0.01), None)
+                        if matched:
+                            captions.append({"timestamp": matched["timestamp"], "path": matched["path"],
+                                "caption": caption["caption"].strip(), "description_source": "long_term_visual_keyframes"})
+                    debug["keyframe_captions"] = merge_frame_captions(captions)
+                    debug["missing_caption_paths"] = [frame["path"] for frame in missing
+                        if frame["path"] not in {row["path"] for row in captions}]
+                    observations = []
+                    for observation in result.get("visual_observations", []) or []:
+                        if not isinstance(observation, dict) or not isinstance(observation.get("description"), str):
+                            continue
+                        try:
+                            timestamp = float(observation.get("timestamp"))
+                        except (TypeError, ValueError):
+                            continue
+                        matched = next((frame for frame in frames if observation.get("path") == frame["path"] and frame.get("timestamp") is not None and abs(timestamp-float(frame["timestamp"])) < 0.01), None)
+                        if matched:
+                            observations.append({"timestamp": matched["timestamp"], "path": matched["path"], "description": observation["description"].strip()})
+                    debug["visual_observations"] = observations[:12]
+                    return _clean_text(summary), "generated", debug
+                except Exception as exc:
+                    last_exc = exc
+            raise RuntimeError(f"Visual summary generation failed after {self.retries} attempts: {last_exc}")
+        except Exception as exc:
+            debug["error"] = f"{type(exc).__name__}: {exc}"
+            return "", "failed", debug
 
     def _aggregate_mock(self, window: dict[str, Any], events: list[dict[str, Any]], source_ids: list[str]) -> dict[str, Any]:
         start = window.get("start_time")
@@ -418,7 +509,7 @@ class MSTEpisodicWindowBuilder:
                             {"role": "user", "content": user_text},
                         ],
                     )
-                raw_text = response.choices[0].message.content or ""
+                raw_text = chat_response_text(response)
                 payload = _extract_json_object(raw_text)
                 payload["source_micro_event_ids"] = source_ids
                 return payload, raw_text[:1000]

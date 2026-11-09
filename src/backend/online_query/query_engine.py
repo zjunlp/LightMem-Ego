@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import sys
 import time
 import traceback
+import threading
 from contextlib import contextmanager
 from collections import deque
 from pathlib import Path
 from typing import Any
 
+from online_time import event_time_seconds, keyframe_path_seconds, seconds_value
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = PROJECT_ROOT / "src"
 HIPPO_SRC_ROOT = PROJECT_ROOT / "src" / "HippoRAG" / "src"
@@ -19,15 +22,23 @@ for _path in (SRC_ROOT, HIPPO_SRC_ROOT):
         sys.path.insert(0, str(_path))
 
 from online_preprocess.io_utils import read_json, utc_now_iso, write_json, write_json_atomic
-from online_current.mcur_query import build_current_prompt, build_local_current_answer
+from online_current.mcur_query import build_current_prompt, build_local_current_answer, STATE_GROUNDING_INSTRUCTION
 from online_current.mcur_selector import MCurFrameSelector
 from online_current.mcur_store import MCurStore
 from online_query.coreference_resolver import CoreferenceResolver
-from online_query.evidence_packer import EvidencePacker
-from online_query.interaction_cache import InteractionCache
+from online_query.cache_schema import has_valid_binding, resolved_search_question
+from online_query.evidence_packer import EvidencePacker, image_evidence_label
+from online_query.evidence_validation import validate_evidence
+from online_evidence_content import content_fields, prompt_evidence, supplemental_observation_matches, comparison_observation_matches, supplemental_requirement_support, has_multiple_object_targets
+from online_query.interaction_cache import InteractionCache, generation_outcome
+from online_query.generation_errors import (
+    GenerationCallError, allow_text_fallback, exception_chain, failure_details,
+    mark_answer_failure, safe_error_text,
+)
 from online_query.memory_fusion import MemoryFusion
 from online_query.memory_plan import RetrievalPlanner
 from online_query.memory_router import MemoryRouter
+from online_query_constraints import constraint_window, constraint_windows, reserve_time_coverage, overlaps, parse_query_constraints, resolve_query_constraints, observed_query_time, prompt_query_constraints
 from online_query.query_router import QueryRouter
 from online_query.day_prompt_context import build_day_context_block
 from online_query.evidence_sufficiency import EvidenceSufficiencyEvaluator, apply_recent_recall_decision
@@ -35,10 +46,9 @@ from online_short_term.mst_retriever import MSTRetriever
 from online_short_term.mst_store import MSTStore
 from online_query.stream_query_context import load_stream_query_context
 from online_llm_config import (
+    answer_openai_client_kwargs,
     external_openai_api_key,
     external_openai_base_url,
-    local_openai_api_key,
-    local_openai_base_url,
 )
 from online_pipeline.stream_timeline import append_timeline_event
 from online_pipeline.rokid_day import (
@@ -57,6 +67,67 @@ def _query_rag_helpers() -> Any:
     from eval import query_rag
 
     return query_rag
+
+
+def _merge_supplemental_events(*, question: str, selected_events: list[dict[str, Any]],
+                               selected_doc_ids: list[str], event_scores: dict[str, Any],
+                               catalog: list[dict[str, Any]], hits: list[tuple[str, float]],
+                               constraints: dict[str, Any], summarize: Any) -> list[dict[str, Any]]:
+    """Keep rule matches separate from original retrieval scores.
+
+    Existing selector hits gain the same requirement metadata as newly added
+    evidence. Unscored additions remain explicit, for a bounded supplemental
+    slot downstream rather than numeric competition with dense scores.
+    """
+    catalog_by_id = {str(row.get("doc_id") or row.get("evidence_doc_id")): row for row in catalog}
+    selected_by_id = {str(row.get("doc_id")): row for row in selected_events}
+    def mark(event, match_score, support):
+        event.update(supplement_match_score=match_score, requirement_support=support)
+        # The checked source observation must reach text/image packing too,
+        # not merely protect a candidate through an opaque metadata flag.
+        observations = list(event.get("visual_observations") or [])
+        observation = support.get("observation")
+        if observation and observation not in observations:
+            event["visual_observations"] = observations + [observation]
+    pending = []
+    for doc_id, match_score in hits:
+        source = catalog_by_id.get(doc_id)
+        if source is None:
+            continue
+        support = supplemental_requirement_support(question, source, constraints)
+        if not support.get("observation_matched"):
+            continue
+        if doc_id in selected_by_id:
+            mark(selected_by_id[doc_id], match_score, support)
+        else:
+            pending.append((doc_id, match_score, support))
+    comparison = bool((constraints.get("requirements") or {}).get("comparison"))
+    if comparison and len(pending) > 2:
+        pending = [pending[0], pending[-1]]
+    added = []
+    for doc_id, match_score, support in pending[:2 if comparison else 1]:
+        extra = summarize(doc_id)
+        if not extra:
+            continue
+        event = extra[0]
+        original = event_scores.get(doc_id) or {}
+        if original.get("score") is not None:
+            event.update(original)
+            event.setdefault("score_policy", "absolute_projected_score_s_over_1_plus_s")
+            event.setdefault("score_provenance", "episodic_projection")
+        else:
+            event.update(score=None, raw_score=None, score_policy="unscored_supplemental_observation",
+                         score_provenance="not_retrieved")
+        event["supplemental"] = True
+        mark(event, match_score, support)
+        selected_events.append(event)
+        selected_by_id[doc_id] = event
+        if doc_id not in selected_doc_ids:
+            selected_doc_ids.append(doc_id)
+        added.append({"doc_id": doc_id, "supplement_match_score": match_score,
+                      "score": event.get("score"), "score_provenance": event.get("score_provenance"),
+                      "requirement_support": support})
+    return added
 
 
 def _em2mem_classes(long_term_retrieval_scheme: str | None = None) -> tuple[Any, Any, Any, Any, Any]:
@@ -325,7 +396,7 @@ def _answer_language_instruction() -> str:
     return f"Answer in {language}."
 
 
-_SHORT_TERM_ANSWER_MODELS: dict[tuple[str, int], Any] = {}
+_SHORT_TERM_ANSWER_MODELS: dict[tuple[Any, ...], Any] = {}
 
 
 def _contains_keyword(text: str, keyword: str) -> bool:
@@ -348,10 +419,43 @@ def _current_fast_path_enabled() -> bool:
     return _env_bool("EM2MEM_CURRENT_FAST_PATH_ENABLED", True)
 
 
+def _interaction_cache_policy(enabled: bool, mode: str) -> tuple[str, bool, bool, bool]:
+    mode = str(mode or "auto").strip().lower()
+    if mode not in {"auto", "off", "read_only", "write_only"}:
+        mode = "auto"
+    active = bool(enabled) and _env_bool("EM2MEM_INTERACTION_CACHE_ENABLED", True) and mode != "off"
+    return mode, active, active and mode in {"auto", "read_only"}, active and mode in {"auto", "write_only"}
+
+
+def _finalize_cache_result(
+    result: dict[str, Any], *, question: str, resolved_question: str,
+    cache_mode: str, interaction_enabled: bool, cache_write_enabled: bool,
+    cache_context: dict[str, Any], interaction_cache: InteractionCache | None,
+) -> dict[str, Any]:
+    """Use the same success/mode contract for loaded, fallback and direct paths."""
+    result["generation_status"] = generation_outcome(result)
+    update = {"updated": False, "reason": "interaction cache disabled" if not interaction_enabled else "cache_mode does not allow writes"}
+    if cache_write_enabled and result.get("status") == "ok" and interaction_cache is not None:
+        try:
+            update = interaction_cache.update_from_query_result(question, resolved_question, result)
+        except Exception as exc:
+            update = {"updated": False, "error": str(exc)}
+    result.update(cache_used=bool(interaction_enabled), cache_hit=bool(cache_context.get("cache_hit") and cache_context.get("is_followup")),
+                  cache_mode=cache_mode, resolved_question=resolved_question,
+                  cache_context=_normalize_frame_timestamps_in_context(cache_context), cache_update=update)
+    result.setdefault("raw", {}).update(cache_context=result["cache_context"], cache_update=update)
+    return result
+
+
 def _is_current_fast_question(question: str) -> bool:
     q = (question or "").strip().lower()
     if not q:
         return False
+    constraints = parse_query_constraints(question)
+    if constraints.get("requires_history") or constraints.get("summary"):
+        return False
+    if constraints.get("requires_current"):
+        return True
     if _is_non_current_history_scope_question(q):
         return False
     return _contains_keyword_any(q, _EXPLICIT_CURRENT_FAST_KEYWORDS)
@@ -392,6 +496,8 @@ def _llm_generate_with_retries(model: Any, prompt: Any, attempts: int) -> tuple[
     attempts = max(1, int(attempts or 1))
     errors: list[str] = []
     last_debug: dict[str, Any] = {}
+    failures: list[dict[str, Any]] = []
+    last_error = None
     for attempt in range(1, attempts + 1):
         call_started_at = _eval_utc_now_iso()
         call_start = time.perf_counter()
@@ -409,11 +515,15 @@ def _llm_generate_with_retries(model: Any, prompt: Any, attempts: int) -> tuple[
                 }
             raise RuntimeError("empty answer from LLM")
         except Exception as exc:
+            last_error = exc
             last_debug = _model_last_debug(model)
-            errors.append(f"attempt {attempt}/{attempts}: {type(exc).__name__}: {exc}")
+            errors.append(f"attempt {attempt}/{attempts}: {type(exc).__name__}: {safe_error_text(exc)}")
+            failures.append({"attempt": attempt, "started_at": call_started_at,
+                             "duration_ms": _eval_duration_ms(call_start),
+                             "error_chain": exception_chain(exc), "last_debug": last_debug})
             if attempt < attempts:
                 time.sleep(min(2.0, 0.25 * attempt))
-    raise RuntimeError("; ".join(errors) or "LLM generation failed")
+    raise GenerationCallError("; ".join(errors) or "LLM generation failed", {"attempts": failures}) from last_error
 
 
 def _llm_stream_with_retries(
@@ -425,6 +535,8 @@ def _llm_stream_with_retries(
     attempts = max(1, int(attempts or 1))
     errors: list[str] = []
     last_debug: dict[str, Any] = {}
+    failures: list[dict[str, Any]] = []
+    last_error = None
     for attempt in range(1, attempts + 1):
         call_started_at = _eval_utc_now_iso()
         call_start = time.perf_counter()
@@ -446,11 +558,15 @@ def _llm_stream_with_retries(
                 }
             raise RuntimeError("empty answer from LLM")
         except Exception as exc:
+            last_error = exc
             last_debug = _model_last_debug(model)
-            errors.append(f"attempt {attempt}/{attempts}: {type(exc).__name__}: {exc}")
+            errors.append(f"attempt {attempt}/{attempts}: {type(exc).__name__}: {safe_error_text(exc)}")
+            failures.append({"attempt": attempt, "started_at": call_started_at,
+                             "duration_ms": _eval_duration_ms(call_start),
+                             "error_chain": exception_chain(exc), "last_debug": last_debug})
             if attempt < attempts:
                 time.sleep(min(2.0, 0.25 * attempt))
-    raise RuntimeError("; ".join(errors) or "LLM generation failed")
+    raise GenerationCallError("; ".join(errors) or "LLM generation failed", {"attempts": failures}) from last_error
 
 
 def _make_timed_chunk_handler(
@@ -523,6 +639,14 @@ def _emit_stream_event(stream_handler: Any, event: dict[str, Any]) -> None:
     if not callable(stream_handler):
         return
     try:
+        if event.get("type") == "final":
+            raw = event.get("raw") or {}
+            debug = raw.get("llm_debug") or raw.get("answer_debug") or {}
+            if (event.get("generation_status") == "local_evidence_summary"
+                    or debug.get("local_fallback_used")
+                    or (debug.get("fallback_used") and debug.get("error_debug"))):
+                event = {"type": "error", "status": "failed", "stage": "answer",
+                         "message": "回答生成失败，未获得有效的模型答案。"}
         stream_handler(event)
     except Exception:
         pass
@@ -552,6 +676,8 @@ def _load_memory_config(session_dir: Path) -> tuple[Path, dict[str, Any]]:
     config = read_json(memory_config_path, default={})
     if not isinstance(config, dict) or config.get("status") != "memory_ready":
         raise RuntimeError("memory is not ready")
+    from online_memory_incremental.snapshot_manager import pin_query_snapshot
+    config = pin_query_snapshot(session_dir, config)
     return memory_config_path, config
 
 
@@ -720,6 +846,8 @@ def _is_span_count_question(question: str) -> bool:
 
 def _is_non_current_history_scope_question(question: str) -> bool:
     text = str(question or "").lower()
+    if parse_query_constraints(question).get("time_explicit"):
+        return True
     if _is_span_count_question(text):
         return True
     if _contains_keyword_any(text, _HISTORY_SCOPE_FAST_PATH_BLOCK_KEYWORDS):
@@ -727,6 +855,36 @@ def _is_non_current_history_scope_question(question: str) -> bool:
     has_aggregate = _contains_keyword_any(text, _COUNT_QUERY_KEYWORDS) or _contains_keyword_any(text, ["所有", "全部", "有哪些", "which", "list"])
     has_current_surface = _contains_keyword_any(text, _CURRENT_SURFACE_KEYWORDS)
     return bool(has_aggregate and not has_current_surface)
+
+
+def _apply_current_tail_requirement(
+    route_decision: dict[str, Any], sufficiency: dict[str, Any],
+    cache_context: dict[str, Any] | None = None,
+) -> None:
+    """Carry a recent open-tail coverage requirement into fusion and packing."""
+    if not sufficiency.get("requires_current_tail"):
+        return
+    constraints = route_decision.setdefault("query_constraints", {})
+    cache_context = cache_context or {}
+    if (cache_context.get("temporal_relation") == "same_time"
+            and has_valid_binding(cache_context)
+            and not constraints.get("requires_current")):
+        # "That segment" requests a resolved past event, not the open tail
+        # after whichever closed ST events happened to be retrieved.
+        sufficiency["requires_current_tail"] = False
+        sufficiency.setdefault("current_tail_coverage", {})["suppressed_reason"] = "resolved_historical_reference"
+        return
+    route_decision["requires_current_tail"] = True
+    constraints["requires_current_tail"] = True
+    tail_range = (sufficiency.get("current_tail_coverage") or {}).get("tail_range")
+    if tail_range:
+        constraints["current_tail_range"] = list(tail_range)
+    memory_decision = route_decision.get("memory_router_decision")
+    if isinstance(memory_decision, dict):
+        memory_decision.setdefault("query_constraints", {}).update(constraints)
+        memory_decision["requires_current_tail"] = True
+    if cache_context is not None:
+        cache_context["query_constraints"] = resolve_query_constraints("", query_constraints=constraints)
 
 
 def _event_is_provisional(event: dict[str, Any]) -> bool:
@@ -837,16 +995,20 @@ def _diagnose_partial_memory(
 def _apply_image_fallback_to_route(route_decision: dict[str, Any], diagnostics: dict[str, Any]) -> None:
     if not diagnostics.get("used_image_fallback"):
         return
-    route_decision["use_image_evidence"] = True
-    route_decision["use_image_evidence_source"] = "auto_partial_memory_fallback"
+    if route_decision.get("use_image_evidence_source") == "user_override" and not route_decision.get("use_image_evidence"):
+        return
     requested_max_images = max(0, int(route_decision.get("max_image_evidence") or 0))
+    if "max_image_evidence" in route_decision and requested_max_images == 0:
+        return
+    if requested_max_images == 0 and route_decision.get("use_image_evidence_source") == "user_override":
+        return
+    route_decision["use_image_evidence"] = True
+    route_decision["use_image_evidence_source"] = "auto_partial_memory_fallback" if route_decision.get("use_image_evidence_source") != "user_override" else "user_override"
     fallback_max_images = max(0, _env_int("EM2MEM_PARTIAL_MEMORY_IMAGE_FALLBACK_MAX_IMAGES", 3))
     per_evidence_limit = max(0, _env_int("EM2MEM_IMAGES_PER_EVIDENCE_LIMIT", 3))
     fallback_cap = min(fallback_max_images, per_evidence_limit) if per_evidence_limit > 0 else 0
-    route_decision["max_image_evidence"] = min(
-        max(requested_max_images, fallback_cap),
-        fallback_cap,
-    )
+    # Missing visual embeddings affects retrieval, not available image capacity.
+    route_decision["max_image_evidence"] = requested_max_images if requested_max_images > 0 else fallback_cap
     route_decision["evidence_frames_k"] = max(
         int(route_decision.get("evidence_frames_k") or 0),
         _env_int("EM2MEM_PARTIAL_MEMORY_IMAGE_FALLBACK_FRAME_K", 6),
@@ -1055,6 +1217,8 @@ def _append_recent_stream_supplement(
     question: str,
     limit: int = 2,
 ) -> bool:
+    if limit <= 0 or (result.get("memory_route") or {}).get("use_short_term") is False:
+        return False
     if not _is_summary_or_semantic_question(question, result):
         return False
     try:
@@ -1111,19 +1275,10 @@ def _append_recent_stream_supplement(
             break
     if not supplements:
         return False
-    result.setdefault("selected_evidence", [])
-    result["selected_evidence"].extend(supplements)
-    result.setdefault("memory_results", {})
-    if isinstance(result["memory_results"], dict):
-        result["memory_results"].setdefault("short_term_results", [])
-        result["memory_results"]["short_term_results"].extend([item["metadata"] for item in supplements])
-    result.setdefault("fusion_summary", {})
-    if isinstance(result["fusion_summary"], dict):
-        sources = list(result["fusion_summary"].get("selected_memory_sources", []) or [])
-        if "M_st" not in sources:
-            sources.append("M_st")
-        result["fusion_summary"]["selected_memory_sources"] = sources
-        result["fusion_summary"]["recent_stream_supplement_count"] = len(supplements)
+    # This code runs after generation. Keep optional display context separate
+    # from evidence actually selected and sent to the answering model.
+    result["stream_supplement"] = supplements
+    result["stream_supplement_used_for_generation"] = False
     return True
 
 
@@ -1140,7 +1295,8 @@ def _attach_stream_query_awareness(result: dict[str, Any], *, session_id: str, s
         result["answer_completeness"] = _stream_answer_completeness(stream_context)
     existing_sources = list(result.get("used_memory_sources") or [])
     result["used_memory_sources"] = list(dict.fromkeys(existing_sources + _used_memory_sources(result)))
-    result["used_stream_supplement"] = bool(used_supplement)
+    result["stream_supplement_available"] = bool(used_supplement)
+    result["used_stream_supplement"] = False
     result["stream_warnings"] = list(dict.fromkeys((result.get("stream_warnings") or []) + _stream_warnings(stream_context)))
     result.setdefault("raw", {})
     if isinstance(result["raw"], dict):
@@ -1172,41 +1328,19 @@ def _event_timestamps(event: dict[str, Any]) -> dict[str, float]:
 
 def _keyframe_timestamp(path: str, evidence_frame: dict[str, Any] | None = None) -> float | None:
     if evidence_frame and evidence_frame.get("timestamp") is not None:
-        try:
-            return _normalize_keyframe_timestamp(evidence_frame["timestamp"], path)
-        except Exception:
-            pass
-    stem = Path(path).stem
-    parts = stem.split("_")
-    for part in reversed(parts):
-        try:
-            value = int(part)
-            return _normalize_keyframe_timestamp(value, path, token=part)
-        except Exception:
-            continue
-    return None
+        timestamp = _normalize_keyframe_timestamp(evidence_frame["timestamp"], path)
+        if timestamp is not None:
+            return timestamp
+    return keyframe_path_seconds(path)
 
 
 def _normalize_keyframe_timestamp(value: Any, path: str | None = None, token: str | None = None) -> float | None:
-    """Normalize outward keyframe timestamps to seconds.
-
-    Stream-generated MST keyframes use millisecond filenames such as
-    kf_000008000.jpg, while legacy preprocess keyframes use second filenames
-    such as kf_000015.jpg. Keep long-video second timestamps intact unless the
-    path/token clearly indicates millisecond encoding.
-    """
-    try:
-        timestamp = float(value)
-    except Exception:
+    """Metadata is seconds; a supplied filename token explicitly encodes its unit."""
+    timestamp = seconds_value(value)
+    if timestamp is None:
         return None
-    path_text = str(path or "")
-    token_text = str(token or "")
-    if not token_text and path_text:
-        match = re.search(r"kf_(\d{7,})(?:\D|$)", Path(path_text).stem)
-        token_text = match.group(1) if match else ""
-    is_stream_keyframe = "stream/keyframes" in path_text.replace("\\", "/")
-    if timestamp >= 1000.0 and (is_stream_keyframe or len(token_text) >= 7):
-        timestamp = timestamp / 1000.0
+    if token is not None and len(token) >= 7:
+        timestamp /= 1000.0
     return round(timestamp, 3)
 
 
@@ -1391,10 +1525,11 @@ class LoadedQueryEngine:
         self.loaded_at = now
         self.last_accessed_at = now
         self.query_count = 0
+        self._runtime_query_lock = threading.RLock()
         self.recent_queries: deque[dict[str, Any]] = deque(maxlen=20)
         self.interaction_cache = InteractionCache(session_id=session_id, session_dir=session_dir)
         self.mst_store = MSTStore(session_dir)
-        self.mst_retriever = MSTRetriever(self.mst_store)
+        self.mst_retriever = MSTRetriever(self.mst_store, embedding_model=getattr(self.em2mem_memory, "embedding_model", None))
         mst_state = self.mst_store.get_state()
         self.short_term_ready = bool(mst_state.get("short_term_ready") and self.mst_store.events_path.exists())
         self.mst_version = int(mst_state.get("mst_version", 0) or 0)
@@ -1419,6 +1554,16 @@ class LoadedQueryEngine:
 
     @contextmanager
     def runtime_session_context(
+        self, **kwargs: Any,
+    ):
+        # The bound stores/cache are mutable engine attributes. Concurrent
+        # requests sharing an engine must not borrow another request's context.
+        with self._runtime_query_lock:
+            with self._runtime_session_context_unlocked(**kwargs):
+                yield self
+
+    @contextmanager
+    def _runtime_session_context_unlocked(
         self,
         *,
         realtime_session_id: str | None = None,
@@ -1459,7 +1604,7 @@ class LoadedQueryEngine:
             self.query_time_override = _rokid_query_time_override(self.day_context, runtime_dir)
             self.interaction_cache = InteractionCache(session_id=cache_id, session_dir=cache_dir)
             self.mst_store = MSTStore(short_term_dir)
-            self.mst_retriever = MSTRetriever(self.mst_store)
+            self.mst_retriever = MSTRetriever(self.mst_store, embedding_model=getattr(self.em2mem_memory, "embedding_model", None))
             mst_state = self.mst_store.get_state()
             self.short_term_ready = bool(mst_state.get("short_term_ready") and self.mst_store.events_path.exists())
             self.mst_version = int(mst_state.get("mst_version", 0) or 0)
@@ -1517,13 +1662,24 @@ class LoadedQueryEngine:
 
     def needs_reload(self) -> bool:
         try:
-            mtime_changed = self.memory_config_path.stat().st_mtime > self.memory_config_mtime
+            self.memory_config_path.stat()
         except FileNotFoundError:
             return True
-        if not mtime_changed:
-            return False
+        # Loading V3 can outlive publication of V4: mtime alone cannot describe
+        # the version of the objects actually installed in this engine.
         config = read_json(self.memory_config_path, default={})
         if not isinstance(config, dict):
+            return True
+        if config.get("latest_snapshot_path"):
+            from online_memory_incremental.snapshot_manager import pin_query_snapshot
+            try:
+                config = pin_query_snapshot(self.session_dir, config)
+            except (OSError, ValueError, RuntimeError):
+                return True
+        installed_config = getattr(self, "memory_config", {}) or {}
+        if config.get("latest_snapshot_path") != installed_config.get("latest_snapshot_path"):
+            return True
+        if config.get("visual_checkpoint_path") != installed_config.get("visual_checkpoint_path"):
             return True
         latest_ready = _memory_version_from_config(config)
         if latest_ready and self.active_query_memory_version:
@@ -1581,6 +1737,12 @@ class LoadedQueryEngine:
         if not memory_route.get("use_short_term"):
             return []
         top_k = int((route_decision.get("short_term_policy") or {}).get("top_k") or route_decision.get("text_top_k") or 5)
+        tail = route_decision.get("short_term_tail_range")
+        explicit = "use_short_term set by user_override" in route_decision.get("warnings", [])
+        if tail and not explicit:
+            events = self.mst_store.load_events()
+            window = constraint_window(route_decision.get("query_constraints"))
+            return [dict(event, score=0.8, source="M_st", score_policy="unaggregated_summary_tail") for event in events if _safe_float(event.get("end_time")) > float(tail[0]) and overlaps(event.get("start_time"), event.get("end_time"), window)][-top_k:]
         return self.mst_retriever.search(question, top_k=top_k, cache_context=cache_context)
 
     def _runtime_state(self, mst_state: dict[str, Any], mcur_state: dict[str, Any], interaction_enabled: bool) -> dict[str, Any]:
@@ -1588,6 +1750,13 @@ class LoadedQueryEngine:
         if not mst_span and mst_state.get("last_processed_time") is not None:
             mst_span = [0.0, mst_state.get("last_processed_time")]
         mlt_span = self.memory_config.get("time_span") or self.memory_config.get("video_time_span")
+        if not mlt_span:
+            entries = getattr(getattr(self.em2mem_memory, "episodic_memory", None), "captions", {}).get("30sec", []) or []
+            from online_time import event_time_seconds
+            ends = [event_time_seconds(entry.end_time) for entry in entries]
+            ends = [value for value in ends if value is not None]
+            if ends:
+                mlt_span = [0.0, max(ends)]
         return {
             "current_ready": self.current_ready,
             "current_stale": self.current_stale,
@@ -1608,14 +1777,18 @@ class LoadedQueryEngine:
         request_options: dict[str, Any],
         runtime_state: dict[str, Any],
         cache_context: dict[str, Any],
+        query_constraints: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], int, int]:
+        constraints = resolve_query_constraints(question, query_constraints=query_constraints, latest=observed_query_time(runtime_state))
         memory_router_start = time.perf_counter()
         memory_decision = MemoryRouter().route(
             question=question,
             request_options=request_options,
             runtime_state=runtime_state,
             cache_context=cache_context,
+            query_constraints=constraints,
         )
+        cache_context["query_constraints"] = memory_decision.get("query_constraints") or {}
         memory_router_ms = _ms(memory_router_start)
         planner_start = time.perf_counter()
         retrieval_plan = RetrievalPlanner().plan(
@@ -1637,6 +1810,7 @@ class LoadedQueryEngine:
                 "session_id": getattr(self, "requested_session_id", self.session_id),
             },
             cache_context=cache_context,
+            query_constraints=constraints,
         )
         route_decision["query_type"] = memory_decision.get("query_type")
         route_decision["memory_route"] = memory_decision.get("memory_route", {})
@@ -1669,6 +1843,8 @@ class LoadedQueryEngine:
         route_decision["final_evidence_k"] = int(retrieval_plan.get("final_evidence_k") or route_decision.get("final_evidence_k") or 4)
         route_decision["evidence_frames_k"] = int(retrieval_plan.get("evidence_frames_k") or route_decision.get("evidence_frames_k") or 5)
         route_decision["memory_router_decision"] = memory_decision
+        route_decision["query_constraints"] = memory_decision.get("query_constraints") or {}
+        route_decision["short_term_tail_range"] = memory_decision.get("short_term_tail_range")
         route_decision.setdefault("warnings", [])
         for warning in memory_decision.get("warnings", []) + retrieval_plan.get("warnings", []):
             if warning not in route_decision["warnings"]:
@@ -1685,6 +1861,9 @@ class LoadedQueryEngine:
         if not plan.get("enabled"):
             return [], {}, {}
         current_context = self.mcur_store.get_current_context()
+        window = constraint_window(route_decision.get("query_constraints"))
+        if window:
+            current_context["frames"] = [frame for frame in current_context.get("frames", []) if overlaps(frame.get("timestamp"), frame.get("timestamp"), window)]
         if not current_context.get("mcur_ready") or current_context.get("is_stale"):
             return [], current_context, {}
         selection = MCurFrameSelector().select_frames_for_query(
@@ -1725,7 +1904,7 @@ class LoadedQueryEngine:
         max_image_evidence: int | None = None,
         text_top_k: int | None = None,
         visual_top_k: int = 8,
-        final_evidence_k: int = 4,
+        final_evidence_k: int | None = None,
         use_interaction_cache: bool = True,
         cache_mode: str = "auto",
         memory_mode: str = "auto",
@@ -1735,22 +1914,19 @@ class LoadedQueryEngine:
         debug_router: bool = False,
         stream_handler: Any = None,
         eval_trace: dict[str, Any] | None = None,
+        query_constraints: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         _eval_mark(eval_trace, "retrieval_started_at")
         explicit_long_term_request = bool(
             use_long_term is not None
             or str(retrieval_mode or "auto").strip().lower() in {"text_only", "visual_only", "hybrid"}
         )
-        cache_mode = str(cache_mode or "auto").strip().lower()
-        if cache_mode not in {"auto", "off", "read_only", "write_only"}:
-            cache_mode = "auto"
-        interaction_enabled = (
-            bool(use_interaction_cache)
-            and _env_bool("EM2MEM_INTERACTION_CACHE_ENABLED", True)
-            and cache_mode != "off"
-        )
-        cache_read_enabled = interaction_enabled and cache_mode in {"auto", "read_only"}
-        cache_write_enabled = interaction_enabled and cache_mode in {"auto", "write_only"}
+        cache_mode, interaction_enabled, cache_read_enabled, cache_write_enabled = _interaction_cache_policy(use_interaction_cache, cache_mode)
+        # Resolve relative cache windows against this stream's observed frontier.
+        mst_state = self._refresh_short_term()
+        mcur_state = self._refresh_current()
+        runtime_state = self._runtime_state(mst_state, mcur_state, interaction_enabled)
+        constraints = resolve_query_constraints(question, query_constraints=query_constraints, latest=observed_query_time(runtime_state))
         cache_context: dict[str, Any] = {
             "cache_hit": False,
             "is_followup": False,
@@ -1760,10 +1936,10 @@ class LoadedQueryEngine:
         resolved_question = question
         if cache_read_enabled:
             try:
-                cache_context = CoreferenceResolver().resolve(question, self.interaction_cache)
-                resolved_question = str(cache_context.get("resolved_question") or question)
-                if cache_context.get("confidence", 0.0) < 0.45:
-                    resolved_question = question
+                cache_context = CoreferenceResolver().resolve(
+                    question, self.interaction_cache, latest_seconds=observed_query_time(runtime_state), query_constraints=constraints
+                )
+                resolved_question = resolved_search_question(question, cache_context)
             except Exception as exc:
                 cache_context = {
                     "cache_hit": False,
@@ -1773,10 +1949,7 @@ class LoadedQueryEngine:
                     "warnings": [str(exc)],
                 }
         cache_context = _normalize_frame_timestamps_in_context(cache_context)
-
-        mst_state = self._refresh_short_term()
-        mcur_state = self._refresh_current()
-        runtime_state = self._runtime_state(mst_state, mcur_state, interaction_enabled)
+        cache_context["query_constraints"] = constraints
         request_options = {
             "memory_mode": memory_mode,
             "retrieval_mode": retrieval_mode,
@@ -1797,6 +1970,7 @@ class LoadedQueryEngine:
             request_options=request_options,
             runtime_state=runtime_state,
             cache_context=cache_context,
+            query_constraints=constraints,
         )
         router_ms = memory_router_ms + retrieval_planner_ms
         retrieval_mode = normalize_retrieval_mode(route_decision["retrieval_mode"])
@@ -1807,6 +1981,10 @@ class LoadedQueryEngine:
         final_evidence_k = int(route_decision.get("final_evidence_k") or final_evidence_k)
         memory_route = route_decision.get("memory_route") or {}
         retrieval_plan_map = retrieval_plan.get("retrieval_plan") or {}
+        if not any(memory_route.get(key) for key in ("use_current", "use_short_term", "use_long_term")):
+            return {"status": "not_ready", "session_id": self.session_id, "question": question,
+                    "message": "No enabled memory source is available for this query.",
+                    "route_decision": route_decision, "memory_route": memory_route, "evidence_frames": []}
         current_results, current_context, current_selection = self._retrieve_current_results(
             resolved_question,
             route_decision,
@@ -1912,11 +2090,12 @@ class LoadedQueryEngine:
         sufficiency_start = time.perf_counter()
         if _env_bool("EM2MEM_RECENT_ST_PROGRESSIVE_ENABLED", True):
             recent_sufficiency = EvidenceSufficiencyEvaluator().evaluate(
-                question=resolved_question,
+                question=question,
                 query_type=str(route_decision.get("query_type") or ""),
                 short_term_results=short_term_results,
                 current_results=current_results,
                 explicit_long_term_override=explicit_long_term_request,
+                query_constraints=route_decision.get("query_constraints"),
             )
         else:
             recent_sufficiency = {
@@ -1927,6 +2106,7 @@ class LoadedQueryEngine:
                 "reason": "progressive_retrieval_disabled",
             }
         sufficiency_ms = _ms(sufficiency_start)
+        _apply_current_tail_requirement(route_decision, recent_sufficiency, cache_context)
         apply_recent_recall_decision(route_decision, retrieval_plan, recent_sufficiency)
         partial_diag = _diagnose_partial_memory(
             question=question,
@@ -2170,6 +2350,7 @@ class LoadedQueryEngine:
             stream_handler=stream_handler,
             prompt_context=day_context_block or None,
             generate_answer=False,
+            query_constraints=route_decision.get("query_constraints"),
         )
         em2mem_answer_ms = _ms(query_start)
         long_term_timing = _qa_timing_ms(qa_result)
@@ -2181,7 +2362,36 @@ class LoadedQueryEngine:
         episodic_retrieval_debug = getattr(getattr(self.em2mem_memory, "episodic_memory", None), "last_retrieval_debug", {})
 
         selected_events = query_rag.summarize_selected_events(self.em2mem_memory, qa_result.selected_doc_ids)
+        constraints = route_decision.get("query_constraints") or {}
+        supplemental = []
+        multiple_targets = has_multiple_object_targets(question)
+        needs_supplement = multiple_targets or any((constraints.get("requirements") or {}).get(key) for key in ("earliest", "simultaneous", "comparison"))
+        if needs_supplement:
+            catalog = list({str(row.get("doc_id") or row.get("evidence_doc_id")): row for row in self.evidence_by_doc_id.values()}.values())
+            cutoff = _hhmmssff_to_seconds(effective_until_time)
+            catalog = [row for row in catalog if event_time_seconds(row.get("end_time")) is not None and event_time_seconds(row.get("end_time")) <= cutoff]
+            matcher = (comparison_observation_matches if (constraints.get("requirements") or {}).get("comparison")
+                       else supplemental_observation_matches)
+            # Match the long-term records as published. Fine short-term
+            # observations enter through M_st retrieval, not archive hydration
+            # of an M_lt candidate (including multi-condition questions).
+            hits = matcher(question, catalog, constraints)
+            supplemental = _merge_supplemental_events(
+                question=question, selected_events=selected_events,
+                selected_doc_ids=qa_result.selected_doc_ids,
+                event_scores=getattr(qa_result, "event_scores", {}) or {},
+                catalog=catalog, hits=hits, constraints=constraints,
+                summarize=lambda doc_id: query_rag.summarize_selected_events(self.em2mem_memory, [doc_id]),
+            )
+        route_decision["supplemental_retrieval"] = {"passes": int(needs_supplement), "added_events": supplemental}
         supporting_semantic_facts = query_rag.summarize_semantic_facts(self.em2mem_memory, qa_result.semantic_fact_ids)
+        for event in selected_events:
+            event.update((getattr(qa_result, "event_scores", {}) or {}).get(str(event.get("doc_id")), {}))
+            event["supporting_facts"] = [fact for fact in supporting_semantic_facts if event.get("doc_id") in (fact.get("support_event_ids") or [])]
+            episodic = self.em2mem_memory.episodic_memory
+            parent = episodic.get_parent_caption(str(event.get("doc_id")), "3min") if hasattr(episodic, "get_parent_caption") else None
+            if parent is not None:
+                event["parent_context"] = [{"doc_id": parent.doc_id, "scope": "coarse background; not localized to this child event", "start_time": parent.start_time, "end_time": parent.end_time, "caption": parent.text, "visual_summary": parent.visual_summary}]
         retrieved_items_summary = query_rag.summarize_retrieved_items(qa_result)
         timestamps = [_event_timestamps(event) for event in selected_events if isinstance(event, dict)]
         evidence_frames = self._build_evidence_frames(selected_events)
@@ -2361,7 +2571,7 @@ class LoadedQueryEngine:
 
         latency = dict(latency or {})
         latency["query_ms"] = text_query_ms + visual_retrieval_ms + fusion_ms
-        latency["long_term_pipeline_ms"] = long_term_retrieval_ms + long_term_selector_ms + long_term_pack_ms
+        latency["long_term_pipeline_ms"] = long_term_retrieval_ms
         latency["router_ms"] = router_ms
         latency["memory_router_ms"] = memory_router_ms
         latency["retrieval_planner_ms"] = retrieval_planner_ms
@@ -2555,29 +2765,13 @@ class LoadedQueryEngine:
         cache_write_enabled: bool,
         cache_context: dict[str, Any],
     ) -> dict[str, Any]:
-        cache_update = {
-            "updated": False,
-            "reason": "interaction cache disabled" if not interaction_enabled else "cache_mode does not allow writes",
-        }
-        if cache_write_enabled and result.get("status") == "ok":
-            try:
-                cache_update = self.interaction_cache.update_from_query_result(
-                    question=question,
-                    resolved_question=resolved_question,
-                    result=result,
-                )
-            except Exception as exc:
-                cache_update = {"updated": False, "error": str(exc)}
-        result["cache_used"] = bool(interaction_enabled)
-        result["cache_hit"] = bool(cache_context.get("cache_hit") and cache_context.get("is_followup"))
-        result["cache_mode"] = cache_mode
-        result["resolved_question"] = resolved_question
-        cache_context = _normalize_frame_timestamps_in_context(cache_context)
-        result["cache_context"] = cache_context
-        result["cache_update"] = cache_update
+        _finalize_cache_result(
+            result, question=question, resolved_question=resolved_question,
+            cache_mode=cache_mode, interaction_enabled=interaction_enabled,
+            cache_write_enabled=cache_write_enabled, cache_context=cache_context,
+            interaction_cache=self.interaction_cache,
+        )
         result.setdefault("memory_component_versions", self._memory_component_versions())
-        result.setdefault("raw", {})["cache_context"] = cache_context
-        result["raw"]["cache_update"] = cache_update
         result["raw"].setdefault("memory_component_versions", self._memory_component_versions())
         return result
 
@@ -2797,6 +2991,7 @@ class LoadedQueryEngine:
     ) -> Any:
         from em2mem.memory.utils import QAResult, RetrievedItem
 
+        evidence_budget: dict[str, Any] = {}
         prompt_text = self._build_visual_answer_prompt(
             question=question,
             retrieval_mode=retrieval_mode,
@@ -2805,6 +3000,10 @@ class LoadedQueryEngine:
             fused_results=fused_results,
             short_term_results=short_term_results or [],
             selected_evidence=selected_evidence or [],
+            query_constraints={**((evidence_pack_summary or {}).get("query_constraints") or {}),
+                               "referenced_time_ranges": (evidence_pack_summary or {}).get("cache_referenced_time_ranges", [])},
+            image_paths=selected_image_paths,
+            evidence_budget=evidence_budget,
         )
         image_paths_used: list[str] = []
         image_warnings: list[str] = []
@@ -2822,6 +3021,8 @@ class LoadedQueryEngine:
             runtime_dir = getattr(self, "runtime_session_dir", self.session_dir)
             for rel_path in image_paths_used:
                 base_dir = runtime_dir if _image_path_runtime_scoped(rel_path) else self.session_dir
+                label = image_evidence_label(rel_path, selected_evidence or [])
+                user_content.append({"type": "text", "text": json.dumps(label, ensure_ascii=False)})
                 user_content.append({"type": "image", "image": base_dir / rel_path})
 
         messages = [
@@ -2845,8 +3046,14 @@ class LoadedQueryEngine:
             "selected_evidence_count": len(selected_evidence or []),
             "image_warnings": image_warnings,
             "evidence_pack_summary": evidence_pack_summary or {},
+            "actual_prompt_text": prompt_text,
+            "evidence_text_budget": evidence_budget,
+            "actual_image_paths": list(image_paths_used),
+            "image_labels": [image_evidence_label(path, selected_evidence or []) for path in image_paths_used],
+            "evidence_validation": validate_evidence(question, selected_evidence or [], [image_evidence_label(path, selected_evidence or []) for path in image_paths_used], (evidence_pack_summary or {}).get("query_constraints")),
         }
         answer_attempts = _env_int("EM2MEM_QUERY_ANSWER_RETRIES", 3)
+        _emit_stream_event(stream_handler, {"type": "progress", "stage": "generating", "reset_answer": True})
         try:
             if callable(stream_handler):
                 on_chunk, stream_timing = _make_timed_chunk_handler(stream_handler, stage="answer")
@@ -2869,8 +3076,10 @@ class LoadedQueryEngine:
             error_debug = f"{type(exc).__name__}: {exc}\n{primary_traceback}"
             llm_debug["primary_error"] = error_debug
             llm_debug["traceback"] = primary_traceback
-            if use_image_evidence:
+            llm_debug["primary_failure"] = failure_details(exc)
+            if use_image_evidence and allow_text_fallback(exc):
                 fallback_used = True
+                _emit_stream_event(stream_handler, {"type": "progress", "stage": "text_fallback", "reset_answer": True})
                 try:
                     if callable(stream_handler):
                         on_chunk, stream_timing = _make_timed_chunk_handler(stream_handler, stage="answer")
@@ -2889,6 +3098,7 @@ class LoadedQueryEngine:
                         )
                     llm_debug["fallback_text_only_debug"] = fallback_debug
                 except Exception as fallback_exc:
+                    llm_debug["fallback_failure"] = failure_details(fallback_exc)
                     fallback_traceback = traceback.format_exc()
                     error_debug += f"\nfallback={type(fallback_exc).__name__}: {fallback_exc}\n{fallback_traceback}"
                     answer = _build_local_evidence_answer(
@@ -2902,6 +3112,7 @@ class LoadedQueryEngine:
                     llm_debug["local_fallback_used"] = True
             else:
                 fallback_used = True
+                llm_debug["text_fallback_skipped"] = not allow_text_fallback(exc)
                 answer = _build_local_evidence_answer(
                     question=question,
                     text_results=text_results,
@@ -2911,6 +3122,16 @@ class LoadedQueryEngine:
                 )
                 llm_debug["local_fallback_used"] = True
 
+        if llm_debug.get("local_fallback_used"):
+            llm_debug["generation_status"] = "local_evidence_summary"
+        elif fallback_used:
+            llm_debug["generation_status"] = "text_only_success"
+        else:
+            llm_debug["generation_status"] = "multimodal_success" if image_paths_used else "text_success"
+        if fallback_used:
+            llm_debug["attempted_image_paths"] = list(image_paths_used)
+            image_paths_used = []
+            llm_debug["actual_image_paths"] = []
         selected_doc_ids = []
         for item in text_results:
             eid = item.get("memory_id") or item.get("evidence_doc_id") or item.get("segment_id")
@@ -2933,6 +3154,7 @@ class LoadedQueryEngine:
                 "text": answer,
                 "answer": answer,
                 "retrieval_mode": retrieval_mode,
+                "generation_status": llm_debug.get("generation_status"),
             },
         )
         return QAResult(
@@ -2979,23 +3201,23 @@ class LoadedQueryEngine:
         fused_results: list[dict[str, Any]],
         short_term_results: list[dict[str, Any]] | None = None,
         selected_evidence: list[dict[str, Any]] | None = None,
+        query_constraints: dict[str, Any] | None = None,
+        image_paths: list[str] | None = None,
+        evidence_budget: dict[str, Any] | None = None,
     ) -> str:
         short_term_results = short_term_results or []
+        authoritative_evidence = selected_evidence is not None
         selected_evidence = selected_evidence or []
         final_evidence: list[dict[str, Any]] = []
-        final_prompt_limit = _env_int("EM2MEM_PROMPT_FINAL_EVIDENCE_K", 10)
-        for item in selected_evidence[: max(1, final_prompt_limit)]:
-            final_evidence.append({
-                "source": item.get("source_memory"),
-                "time": [item.get("start_time"), item.get("end_time")],
-                "caption": item.get("caption") or "",
-                "transcript": item.get("transcript") or "",
-                "status": item.get("status") or "",
-            })
+        final_prompt_limit = max(1, len(selected_evidence) or len(text_results) or len(short_term_results))
+        if selected_evidence:
+            final_evidence, budget_stats = prompt_evidence(question, selected_evidence, max_tokens=max(256, _env_int("EM2MEM_PROMPT_EVIDENCE_TOKENS", 6000)), image_paths=image_paths, constraints=query_constraints)
+            if evidence_budget is not None:
+                evidence_budget.update(budget_stats)
 
         # The fusion result is the authoritative, deduplicated evidence set. Only
         # fall back to raw retrieval payloads if fusion returned nothing.
-        if not final_evidence:
+        if not final_evidence and not authoritative_evidence:
             for item in text_results[: max(1, final_prompt_limit)]:
                 final_evidence.append({
                     "source": "M_lt",
@@ -3004,7 +3226,7 @@ class LoadedQueryEngine:
                     "transcript": item.get("transcript") or "",
                     "status": "final",
                 })
-        if not final_evidence:
+        if not final_evidence and not authoritative_evidence:
             seen_visual: set[tuple[Any, Any, str]] = set()
             visual_items = [
                 visual
@@ -3019,14 +3241,15 @@ class LoadedQueryEngine:
                 seen_visual.add(key)
                 final_evidence.append({
                     "source": "M_lt_visual",
-                    "time": [item.get("start_time") or item.get("timestamp"), item.get("end_time") or item.get("timestamp")],
+                    "time": [item.get("start_time") if item.get("start_time") is not None else item.get("timestamp"),
+                             item.get("end_time") if item.get("end_time") is not None else item.get("timestamp")],
                     "caption": caption,
                     "transcript": "",
                     "status": "final",
                 })
                 if len(final_evidence) >= max(1, final_prompt_limit):
                     break
-        if not final_evidence:
+        if not final_evidence and not authoritative_evidence:
             for item in short_term_results[: max(1, final_prompt_limit)]:
                 final_evidence.append({
                     "source": "M_st",
@@ -3040,12 +3263,35 @@ class LoadedQueryEngine:
                     "transcript": item.get("transcript") or "",
                     "status": item.get("status") or "provisional",
                 })
+        phase_grounding = (
+            "For an initial-versus-later comparison, judge what was observable in each phase separately. "
+            "If a required detail in the initial view is cropped, occluded or missing, keep that detail uncertain. "
+            "A clear later view can suggest continuity, but cannot by itself establish what was identifiable initially.\n"
+            if (query_constraints or {}).get("temporal_preference") == "earlier_and_later" else ""
+        )
         return (
             "You are answering a question about a first-person video session.\n"
             "Use only the evidence and attached frames below. Do not invent facts; if evidence is provisional or insufficient, say so briefly. "
             f"{_answer_language_instruction()}\n\n"
             f"Question: {question}\n"
+            f"{phase_grounding}"
+            "Before answering, check every requested time window and every directly visible occurrence among the supplied images. Report distinct action periods separated by an observed different state; do not answer only the first matching image. For before/after questions, look for repeated occurrences on both sides and avoid implying an action happened only once. If a requested side has no direct image, say exactly which side is missing. Prefer clear direct images over weaker neighboring samples; a weak sample does not negate a clearer image already supplied. Use generic visible vehicle/object categories unless the subtype is directly distinguishable; a short visible vehicle line does not by itself establish a traffic jam, and phone-to-ear does not establish a connected call.\n"
+            f"Query constraints: {json.dumps(prompt_query_constraints(query_constraints), ensure_ascii=False)}\n"
+            f"Evidence checks: {json.dumps(validate_evidence(question, final_evidence, [image_evidence_label(path, selected_evidence) for path in image_paths or []], query_constraints, source_events=selected_evidence), ensure_ascii=False)}\n"
+            "Explicit question times override cached context. Describe only the requested actor and interval. "
+            "Cached citation times are observation anchors, not exhaustive boundaries of an action. "
+            "Additional retrieved events and weakly annotated images are inspection candidates, not proof of a requested condition. "
+            "Use the event narratives as evidence for their recorded times even when no image of that phase is attached. "
+            "Later clear images cannot replace an earlier recorded occurrence. Evidence checks are mechanical diagnostics, not proof that the question is fully covered. "
+            "Check the original question's described phase and subject; do not combine different occurrences to satisfy it. "
+            "For first/earliest, distinguish earliest observed evidence from a proven first occurrence. "
+            "For simultaneous conditions, require the same person and instant; separate facts are insufficient. "
+            f"{STATE_GROUNDING_INSTRUCTION}\n"
             f"Evidence: {json.dumps(final_evidence, ensure_ascii=False, separators=(',', ':'), default=str)}\n\n"
+            "Image labels give exact capture times; event ranges are not exact action start/end times. "
+            "Parent summaries are broader background, not proof that an action happened in every child event. "
+            "Semantic support_count counts supporting records, not occurrences. Distinguish first observed appearance from later continuation. "
+            "For action-time questions retain earlier matching observations even when later images are clearer; report distinct supported episodes without inventing a transition between sampled frames. "
             "Give a concise grounded answer; mention time only when useful."
         )
 
@@ -3139,7 +3385,16 @@ class LoadedQueryEngine:
                 "caption": event.get("text", ""),
                 "start_time": event.get("start_time"),
                 "end_time": event.get("end_time"),
-                "score": 1.0 if idx == 0 else max(0.0, 1.0 - idx * 0.1),
+                "score": _safe_float(event.get("score")) if event.get("score") is not None else None,
+                "raw_score": event.get("raw_score"),
+                "retrieval_rank": idx + 1,
+                "supplemental": bool(event.get("supplemental")),
+                "score_policy": event.get("score_policy") or "unspecified",
+                "score_provenance": event.get("score_provenance") or "unspecified",
+                "supplement_match_score": event.get("supplement_match_score"),
+                "requirement_support": event.get("requirement_support") or {},
+                "semantic_score": _safe_float(event.get("semantic_score")),
+                **content_fields({**event, "metadata": {**(event.get("metadata") or {}), **evidence}}),
                 "keyframe_paths": list(event.get("keyframe_paths", []) or []),
             })
         return results
@@ -3176,11 +3431,11 @@ class LoadedQueryEngine:
     def _normalize_visual_scores(self, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not results:
             return results
-        scores = [float(r.get("score") or 0.0) for r in results]
-        mn, mx = min(scores), max(scores)
         for r in results:
             score = float(r.get("score") or 0.0)
-            r["score"] = 1.0 if mx == mn else (score - mn) / (mx - mn)
+            r["raw_score"] = score
+            r["score"] = max(0.0, min(1.0, score))
+            r["score_policy"] = "nonnegative_cosine"
             r["visual_score"] = r["score"]
         return results
 
@@ -3236,7 +3491,7 @@ class LoadedQueryEngine:
         fused_item: dict[str, Any],
         cache_context: dict[str, Any],
     ) -> tuple[float, list[str]]:
-        if not cache_context.get("is_followup"):
+        if not has_valid_binding(cache_context):
             return 0.0, []
         reasons: list[str] = []
         boost = 0.0
@@ -3531,9 +3786,7 @@ def load_query_engine(
         provider="openai",
         fps=1,
         max_retries=answer_retries,
-        api_key=local_openai_api_key(),
-        base_url=local_openai_base_url(),
-        local_mode=True,
+        **answer_openai_client_kwargs(),
     )
     prompt_template_manager = PromptTemplateManager()
     em2mem_memory = EM2Memory(
@@ -3734,7 +3987,13 @@ def _build_local_evidence_answer(
     return "LLM answer generation failed after retries. Local evidence summary: " + "; ".join(snippets[:5])
 
 
-def _build_short_term_llm_prompt(question: str, short_term_results: list[dict[str, Any]], pack_summary: dict[str, Any]) -> str:
+def _build_short_term_llm_prompt(
+    question: str, short_term_results: list[dict[str, Any]], pack_summary: dict[str, Any],
+    selected_evidence: list[dict[str, Any]] | None = None,
+    *, evidence_budget: dict[str, Any] | None = None,
+) -> str:
+    from online_evidence_coverage import GROUNDING_INSTRUCTION
+    pack_summary = pack_summary or {}
     evidence = []
     prompt_limit = _env_int("EM2MEM_MST_SUMMARY_PROMPT_EVENTS", 16) if _is_summary_question_text(question) else 8
     for item in short_term_results[: max(1, prompt_limit)]:
@@ -3754,6 +4013,10 @@ def _build_short_term_llm_prompt(question: str, short_term_results: list[dict[st
             "transcript": item.get("transcript"),
             "boundary_reason": item.get("boundary_reason"),
             "diff_score": item.get("diff_score"),
+            "main_actions": item.get("main_actions", []),
+            "state_changes": item.get("state_changes", []),
+            "visual_observations": item.get("visual_observations", []),
+            "observed_frames": (item.get("refine") or {}).get("observed_frames", []),
             "keyframes": [
                 {
                     "timestamp": frame.get("timestamp"),
@@ -3764,14 +4027,29 @@ def _build_short_term_llm_prompt(question: str, short_term_results: list[dict[st
                 if isinstance(frame, dict)
             ],
         })
+    if selected_evidence is not None:
+        # The same authoritative event set supplies text and images, including
+        # the unrefined current tail when the closed ST events stop earlier.
+        evidence, budget_stats = prompt_evidence(
+            question, selected_evidence,
+            max_tokens=max(256, _env_int("EM2MEM_PROMPT_EVIDENCE_TOKENS", 6000)),
+            image_paths=pack_summary.get("sent_image_paths", []),
+            constraints=pack_summary.get("query_constraints"),
+        )
+        if evidence_budget is not None:
+            evidence_budget.update(budget_stats)
     return (
         "You are answering a question about recent first-person video short-term memory.\n"
-        "Use only the retrieved M_st micro-events below. Some events may be provisional; say uncertainty when needed.\n"
+        "Use only the selected memory evidence below. Current rolling frames and open events are unrefined; "
+        "do not assume they have been visually described. Some events may be provisional; say uncertainty when needed.\n"
         "If keyframes/images are attached, use the visible content as primary evidence and do not treat placeholder captions as final facts.\n"
         f"{_answer_language_instruction()} Be concise.\n\n"
         f"Question: {question}\n\n"
-        f"Evidence pack summary:\n{json.dumps(pack_summary or {}, ensure_ascii=False, indent=2, default=str)}\n\n"
-        f"Short-term micro-events:\n{json.dumps(evidence, ensure_ascii=False, indent=2, default=str)}"
+        "Explicit requested times take precedence over cache context. Do not turn a missing observation into a negative fact.\n"
+        f"{STATE_GROUNDING_INSTRUCTION}\n"
+        f"{GROUNDING_INSTRUCTION}\n"
+        f"Query constraints:\n{json.dumps(prompt_query_constraints(pack_summary.get('query_constraints')), ensure_ascii=False, default=str)}\n\n"
+        f"Selected memory evidence:\n{json.dumps(evidence, ensure_ascii=False, indent=2, default=str)}"
     )
 
 
@@ -3785,7 +4063,11 @@ def _get_short_term_answer_model() -> Any:
         or "gpt-5.4"
     )
     retries = _env_int("EM2MEM_MCUR_ANSWER_MODEL_RETRIES", _env_int("EM2MEM_QUERY_ANSWER_RETRIES", 3))
-    key = (model_name, retries)
+    client_kwargs = answer_openai_client_kwargs()
+    key = (
+        model_name, retries, client_kwargs["base_url"], client_kwargs["local_mode"],
+        hashlib.sha256(str(client_kwargs["api_key"] or "").encode()).hexdigest(),
+    )
     if key not in _SHORT_TERM_ANSWER_MODELS:
         _, LLMModel, _, _, _ = _em2mem_classes()
         _SHORT_TERM_ANSWER_MODELS[key] = LLMModel(
@@ -3793,9 +4075,7 @@ def _get_short_term_answer_model() -> Any:
             provider="openai",
             fps=1,
             max_retries=retries,
-            api_key=local_openai_api_key(),
-            base_url=local_openai_base_url(),
-            local_mode=True,
+            **client_kwargs,
         )
     return _SHORT_TERM_ANSWER_MODELS[key]
 
@@ -3821,6 +4101,14 @@ def _answer_current_memory(
 ) -> dict[str, Any]:
     store = MCurStore(session_dir)
     current_context = store.get_current_context()
+    constraints = resolve_query_constraints(question, query_constraints=route_decision.get("query_constraints"), latest=observed_query_time(current_context.get("state") or current_context))
+    route_decision["query_constraints"] = constraints
+    if constraint_window(constraints):
+        current_context["frames"] = [frame for frame in current_context.get("frames", []) if overlaps(frame.get("timestamp"), frame.get("timestamp"), constraint_window(constraints))]
+        if not current_context["frames"]:
+            return {"status": "not_ready", "session_id": session_id, "question": question,
+                    "message": "No saved current frame matches the requested instant or interval.",
+                    "query_constraints": constraints, "evidence_frames": []}
     if not current_context.get("mcur_ready") or current_context.get("is_stale"):
         return {
             "status": "not_ready",
@@ -3843,7 +4131,7 @@ def _answer_current_memory(
     max_images = min(max(0, requested_max_images), current_image_cap)
     max_frames = int(route_decision.get("evidence_frames_k") or _env_int("EM2MEM_MCUR_MAX_EVIDENCE_FRAMES", 5))
     use_image = bool(route_decision.get("use_image_evidence", True))
-    if not use_image and _is_visual_event_question(question, route_decision.get("query_type")):
+    if not use_image and route_decision.get("use_image_evidence_source") != "user_override" and _is_visual_event_question(question, route_decision.get("query_type")):
         use_image = True
         fallback_max_images = max(0, _env_int("EM2MEM_MCUR_VISUAL_FALLBACK_MAX_IMAGES", 3))
         max_images = min(max(max_images, fallback_max_images), current_image_cap, max(0, requested_max_images))
@@ -3881,10 +4169,16 @@ def _answer_current_memory(
 
     day_context_block = build_day_context_block(day_context)
     prompt_text = build_current_prompt(resolved_question, current_context, selection)
+    prompt_text += "\nQuery constraints: " + json.dumps(constraints, ensure_ascii=False)
     if day_context_block:
         prompt_text = f"{day_context_block}\n\n{prompt_text}"
     user_content: list[dict[str, Any]] = [{"type": "text", "text": prompt_text}]
+    current_image_labels = []
     for rel_path in selected_image_paths:
+        frame = next((frame for frame in selection.get("evidence_frames", []) if frame.get("path") == rel_path), {})
+        label = {"source": "M_cur", "capture_time_seconds": frame.get("timestamp"), "role": frame.get("role"), "current_time_seconds": (current_context.get("state") or {}).get("current_time"), "image_path": rel_path}
+        current_image_labels.append(label)
+        user_content.append({"type": "text", "text": json.dumps(label, ensure_ascii=False)})
         user_content.append({"type": "image", "image": session_dir / rel_path})
     messages = [
         {
@@ -3897,9 +4191,12 @@ def _answer_current_memory(
     fallback_used = False
     answer_debug: dict[str, Any] = {
         "image_paths_used": selected_image_paths,
+        "image_labels": current_image_labels,
+        "actual_prompt_text": prompt_text,
         "selection_reason": selection.get("selection_reason"),
     }
     error_debug = ""
+    _emit_stream_event(stream_handler, {"type": "progress", "stage": "generating", "reset_answer": True})
     try:
         if callable(stream_handler):
             on_chunk, stream_timing = _make_timed_chunk_handler(stream_handler, stage="answer")
@@ -3921,7 +4218,9 @@ def _answer_current_memory(
         fallback_used = True
         error_debug = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
         answer_debug["error_debug"] = error_debug
-        if selected_image_paths:
+        answer_debug["primary_failure"] = failure_details(exc)
+        if selected_image_paths and allow_text_fallback(exc):
+            _emit_stream_event(stream_handler, {"type": "progress", "stage": "text_fallback", "reset_answer": True})
             try:
                 if callable(stream_handler):
                     on_chunk, stream_timing = _make_timed_chunk_handler(stream_handler, stage="answer")
@@ -3940,10 +4239,20 @@ def _answer_current_memory(
                     )
                 answer_debug["text_only_fallback_debug"] = fallback_debug
             except Exception as fallback_exc:
+                answer_debug["fallback_failure"] = failure_details(fallback_exc)
                 answer_debug["text_only_fallback_error"] = f"{type(fallback_exc).__name__}: {fallback_exc}"
+                answer_debug["local_fallback_used"] = True
                 answer = build_local_current_answer(resolved_question, current_context, selection)
         else:
+            answer_debug["local_fallback_used"] = True
             answer = build_local_current_answer(resolved_question, current_context, selection)
+    answer_debug["generation_status"] = ("local_evidence_summary" if answer_debug.get("local_fallback_used") else "text_only_success" if fallback_used else "multimodal_success" if selected_image_paths else "text_success")
+    if fallback_used:
+        answer_debug["attempted_image_paths"] = list(selected_image_paths)
+        answer_debug["attempted_image_labels"] = current_image_labels
+        answer_debug["image_labels"] = []
+        selected_image_paths = []
+        answer_debug["image_paths_used"] = []
     generation_ms = _ms(generation_start)
 
     state = current_context.get("state") or {}
@@ -4102,6 +4411,7 @@ def _query_short_term_only(
     total_start: float = 0.0,
     day_context: dict[str, Any] | None = None,
     stream_handler: Any = None,
+    query_constraints: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     long_term_retrieval_scheme = normalize_long_term_retrieval_scheme(long_term_retrieval_scheme)
     session_dir = sessions_root / session_id
@@ -4109,24 +4419,24 @@ def _query_short_term_only(
     retriever = MSTRetriever(store)
     current_store = MCurStore(session_dir)
     current_state = current_store.get_state()
+    observed_cutoff = observed_query_time({
+        **current_state, "mst_time_span": store.get_state().get("active_time_span") or [],
+    })
+    constraints = resolve_query_constraints(question, query_constraints=query_constraints, latest=observed_cutoff)
     current_ready = _is_current_memory_ready(current_store, current_state)
     current_stale = current_store.is_stale(current_state)
     synthetic_open_event = _frame_open_event_synthetic_evidence(session_dir)
     interaction_cache = InteractionCache(session_id=session_id, session_dir=session_dir)
-    cache_mode = str(cache_mode or "auto").strip().lower()
-    if cache_mode not in {"auto", "off", "read_only", "write_only"}:
-        cache_mode = "auto"
-    interaction_enabled = bool(use_interaction_cache) and _env_bool("EM2MEM_INTERACTION_CACHE_ENABLED", True) and cache_mode != "off"
-    cache_read_enabled = interaction_enabled and cache_mode in {"auto", "read_only"}
-    cache_write_enabled = interaction_enabled and cache_mode in {"auto", "write_only"}
+    cache_mode, interaction_enabled, cache_read_enabled, cache_write_enabled = _interaction_cache_policy(use_interaction_cache, cache_mode)
     cache_context: dict[str, Any] = {"cache_hit": False, "is_followup": False, "reason": "no cache context", "confidence": 0.0}
     resolved_question = question
     if cache_read_enabled:
-        cache_context = CoreferenceResolver().resolve(question, interaction_cache)
-        resolved_question = str(cache_context.get("resolved_question") or question)
-        if cache_context.get("confidence", 0.0) < 0.45:
-            resolved_question = question
+        cache_context = CoreferenceResolver().resolve(
+            question, interaction_cache, latest_seconds=observed_cutoff, query_constraints=constraints
+        )
+        resolved_question = resolved_search_question(question, cache_context)
     cache_context = _normalize_frame_timestamps_in_context(cache_context)
+    cache_context["query_constraints"] = constraints
     route_start = time.perf_counter()
     route_decision = QueryRouter().route(
         question,
@@ -4137,7 +4447,7 @@ def _query_short_term_only(
             "top_k": top_k,
             "text_top_k": text_top_k,
             "visual_top_k": visual_top_k or 8,
-            "final_evidence_k": final_evidence_k or 4,
+            "final_evidence_k": final_evidence_k,
             "memory_mode": memory_mode,
             "use_current": use_current,
             "use_short_term": use_short_term,
@@ -4153,18 +4463,25 @@ def _query_short_term_only(
             "session_id": session_id,
         },
         cache_context=cache_context,
+        query_constraints=constraints,
     )
+    decision = MemoryRouter().route(question, {
+        "use_current": use_current, "use_short_term": use_short_term,
+        "use_long_term": use_long_term, "use_interaction_cache": interaction_enabled,
+    }, {
+        "current_ready": current_ready, "current_stale": current_stale,
+        "short_term_ready": bool(store.is_ready() or synthetic_open_event), "long_term_ready": False,
+        "mcur_time_span": [current_state.get("window_start_time", 0), current_state.get("current_time", 0)],
+        "mst_time_span": (store.get_state().get("active_time_span") or [0, current_state.get("current_time", 0)]),
+    }, cache_context, query_constraints=constraints)
+    route_decision.update({key: decision[key] for key in ("memory_route", "query_type", "query_constraints")})
+    constraints = decision["query_constraints"]
+    cache_context["query_constraints"] = constraints
     router_ms = _ms(route_start)
     query_type = route_decision.get("query_type")
-    allowed = route_decision.get("memory_route", {}).get("use_short_term") or query_type in {
-        "recent_recall",
-        "current_perception",
-        "entity_tracking",
-        "temporal_reasoning",
-        "temporal_count",
-    }
+    allowed = route_decision.get("memory_route", {}).get("use_short_term") or route_decision.get("memory_route", {}).get("use_current")
     any_evidence_available = bool(store.is_ready() or synthetic_open_event or (current_ready and not current_stale))
-    if not allowed and any_evidence_available:
+    if not allowed and any_evidence_available and use_short_term is not False and use_current is not False:
         route_decision.setdefault("warnings", []).append("preferred memory is not ready; using available current/short-term fallback")
         memory_route = route_decision.setdefault("memory_route", {})
         if synthetic_open_event or store.is_ready():
@@ -4187,16 +4504,52 @@ def _query_short_term_only(
         )
         return status
 
+    # Use the same independent ST budget while long-term memory is still
+    # building; the legacy router's fallback limit must not silently win.
+    decision["memory_route"] = route_decision.get("memory_route") or {}
+    retrieval_plan = RetrievalPlanner().plan(decision, {
+        "top_k": top_k, "text_top_k": text_top_k, "visual_top_k": visual_top_k,
+        "final_evidence_k": final_evidence_k, "retrieval_mode": retrieval_mode,
+        "use_image_evidence": use_image_evidence, "max_image_evidence": max_image_evidence,
+    }, {
+        "current_ready": current_ready, "current_stale": current_stale,
+        "short_term_ready": bool(store.is_ready() or synthetic_open_event), "long_term_ready": False,
+    }, cache_context)
+    route_decision.update(retrieval_plan)
+    source_route = route_decision.get("memory_route") or {}
+    short_term_top_k = retrieval_plan["retrieval_plan"]["M_st"]["top_k"]
+    route_decision["short_term_policy"] = {
+        "enabled": bool(source_route.get("use_short_term")), "top_k": short_term_top_k,
+    }
     search_start = time.perf_counter()
-    short_term_results = retriever.search(resolved_question, top_k=top_k, cache_context=cache_context) if store.is_ready() else []
-    if not short_term_results and synthetic_open_event:
-        short_term_results = [synthetic_open_event]
+    short_term_results = retriever.search(resolved_question, top_k=short_term_top_k, cache_context=cache_context) if store.is_ready() and source_route.get("use_short_term") else []
+    if not short_term_results and synthetic_open_event and source_route.get("use_short_term"):
+        if overlaps(synthetic_open_event.get("start_time"), synthetic_open_event.get("end_time"), constraint_window(constraints)):
+            short_term_results = [synthetic_open_event]
     search_ms = _ms(search_start)
-    if not short_term_results and current_ready and not current_stale:
+    current_context: dict[str, Any] = {}
+    current_selection: dict[str, Any] = {}
+    current_results: list[dict[str, Any]] = []
+    if current_ready and not current_stale and source_route.get("use_current"):
+        current_context = current_store.get_current_context()
+        windows = constraint_windows(constraints)
+        if windows:
+            current_context["frames"] = [
+                frame for frame in current_context.get("frames", [])
+                if any(overlaps(frame.get("timestamp"), frame.get("timestamp"), window) for window in windows)
+            ]
+        current_selection = MCurFrameSelector().select_frames_for_query(
+            current_context, resolved_question,
+            max_images=int(route_decision.get("max_image_evidence") or 0),
+            max_frames=int(route_decision.get("evidence_frames_k") or 5),
+        )
+        if current_selection.get("evidence_frames") or current_context.get("transcript"):
+            current_results = [{"current_context": current_context, "current_selection": current_selection}]
+    if not short_term_results and current_ready and not current_stale and source_route.get("use_current"):
         current_route = dict(route_decision)
         current_route["query_type"] = route_decision.get("query_type") or "recent_recall"
         current_route["retrieval_mode"] = "current"
-        current_route.setdefault("memory_route", {})
+        current_route["memory_route"] = dict(current_route.get("memory_route") or {})
         current_route["memory_route"]["use_current"] = True
         current_route["memory_route"]["use_short_term"] = False
         current_route["memory_route"]["use_long_term"] = False
@@ -4216,6 +4569,7 @@ def _query_short_term_only(
             cache_mode=cache_mode,
             total_start=total_start,
             day_context=day_context,
+            stream_handler=stream_handler,
         )
         return _mark_partial_fallback(
             result,
@@ -4223,10 +4577,15 @@ def _query_short_term_only(
             sources=["M_cur_fallback"],
             warning="answer is based on current frame only because short-term/long-term memory is still building",
         )
+    if not short_term_results:
+        return {"status": "not_ready", "session_id": session_id, "question": question,
+                "message": "No available evidence matches the requested time and enabled memory sources.",
+                "query_constraints": constraints, "memory_route": source_route,
+                "route_decision": route_decision, "evidence_frames": []}
     partial_diag = _diagnose_partial_memory(
         question=question,
         route_decision=route_decision,
-        current_results=[],
+        current_results=current_results,
         short_term_results=short_term_results,
         memory_config={},
         visual_ready=False,
@@ -4237,6 +4596,20 @@ def _query_short_term_only(
         partial_diag["image_fallback_reasons"] = list(dict.fromkeys(["short_term_provisional", "refined_missing"] + list(partial_diag.get("image_fallback_reasons") or [])))
         partial_diag["image_fallback_reason"] = partial_diag.get("image_fallback_reason") or "short_term_provisional"
     _apply_image_fallback_to_route(route_decision, partial_diag)
+    recent_sufficiency = EvidenceSufficiencyEvaluator().evaluate(
+        question=question, query_type=str(query_type or ""),
+        short_term_results=short_term_results, current_results=current_results,
+        explicit_long_term_override=use_long_term is not None,
+        query_constraints=route_decision.get("query_constraints"),
+    )
+    _apply_current_tail_requirement(route_decision, recent_sufficiency, cache_context)
+    decision["query_constraints"] = route_decision["query_constraints"]
+    memory_results = {"current_results": current_results, "short_term_results": short_term_results}
+    fusion_result = MemoryFusion().fuse(
+        memory_results=memory_results, memory_decision=decision,
+        retrieval_plan=retrieval_plan,
+        query_type=str(query_type or "general_qa"), cache_context=cache_context,
+    )
     packer = EvidencePacker(session_dir=session_dir)
     pack_start = time.perf_counter()
     pack_result = packer.pack(
@@ -4246,8 +4619,13 @@ def _query_short_term_only(
             "text_results": [],
             "visual_results": [],
             "fused_results": [],
-            "evidence_frames": [],
+            "current_results": current_results,
+            "current_context": current_context,
+            "current_selection": current_selection,
+            "evidence_frames": current_selection.get("evidence_frames", []),
             "short_term_results": short_term_results,
+            "final_evidence": fusion_result.get("final_evidence", []),
+            "fusion_summary": fusion_result.get("fusion_summary", {}),
         },
         cache_context=cache_context,
     )
@@ -4258,7 +4636,7 @@ def _query_short_term_only(
     ]
     timestamps = [
         {"start": _safe_float(item.get("start_time")), "end": _safe_float(item.get("end_time"))}
-        for item in short_term_results
+        for item in (pack_result.get("selected_evidence") or short_term_results)
     ]
     local_answer = _build_short_term_answer(question, short_term_results)
     answer = local_answer
@@ -4277,15 +4655,21 @@ def _query_short_term_only(
     }
     if answer_debug["llm_enabled"]:
         try:
+            evidence_budget: dict[str, Any] = {}
             prompt = _build_short_term_llm_prompt(
                 resolved_question,
                 short_term_results,
                 pack_result.get("evidence_pack_summary", {}),
+                selected_evidence=pack_result.get("selected_evidence", []),
+                evidence_budget=evidence_budget,
             )
+            answer_debug["evidence_text_budget"] = evidence_budget
+            answer_debug["actual_prompt_text"] = prompt
             if selected_image_paths:
                 user_content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
                 for rel_path in selected_image_paths:
                     if (session_dir / rel_path).exists():
+                        user_content.append({"type": "text", "text": json.dumps(image_evidence_label(rel_path, pack_result.get("selected_evidence", []), evidence_frames), ensure_ascii=False)})
                         user_content.append({"type": "image", "image": session_dir / rel_path})
                 prompt_or_messages: Any = [
                     {
@@ -4302,6 +4686,7 @@ def _query_short_term_only(
                 prompt_or_messages = prompt
             if callable(stream_handler):
                 on_chunk, stream_timing = _make_timed_chunk_handler(stream_handler, stage="answer")
+                _emit_stream_event(stream_handler, {"type": "progress", "stage": "generating", "reset_answer": True})
                 answer, llm_debug = _llm_stream_with_retries(
                     _get_short_term_answer_model(),
                     prompt_or_messages,
@@ -4319,9 +4704,12 @@ def _query_short_term_only(
         except Exception as exc:
             answer = local_answer
             answer_debug["fallback_used"] = True
+            answer_debug["primary_failure"] = failure_details(exc)
             answer_debug["error_debug"] = f"{type(exc).__name__}: {exc}"
     generation_ms = _ms(generation_start)
     stream_timing = _extract_stream_timing(answer_debug)
+    answer_debug["image_paths_used"] = list(selected_image_paths)
+    answer_debug["image_labels"] = [image_evidence_label(path, pack_result.get("selected_evidence", []), evidence_frames) for path in selected_image_paths]
     result = {
         "status": "ok",
         "session_id": session_id,
@@ -4334,8 +4722,12 @@ def _query_short_term_only(
         "retrieval_mode_source": route_decision.get("retrieval_mode_source"),
         "long_term_ready": False,
         "short_term_ready": bool(store.is_ready() or synthetic_open_event),
-        "short_term_only": True,
+        "short_term_only": not bool(current_results),
         "short_term_results": short_term_results,
+        "current_ready": current_ready,
+        "current_stale": current_stale,
+        "current_used": bool(current_results),
+        "recent_recall_sufficiency": recent_sufficiency,
         "visual_embedding_ready": False,
         "visual_fallback": True,
         "use_image_evidence": bool(route_decision.get("use_image_evidence")),
@@ -4365,7 +4757,7 @@ def _query_short_term_only(
             (
                 "short-term event is still open; using provisional frame-stream evidence"
                 if synthetic_open_event and short_term_results and short_term_results[0].get("synthetic")
-                else "long-term memory is not ready; answering from short-term memory only"
+                else "long-term memory is not ready; answering from available current/short-term memory"
             )
         ],
         "latency": {
@@ -4386,8 +4778,14 @@ def _query_short_term_only(
             "route_decision": route_decision,
             "cache_context": cache_context,
             "mst_state": store.get_state(),
+            "current_context": current_context,
+            "current_selection": current_selection,
+            "fusion_summary": fusion_result.get("fusion_summary", {}),
             "evidence_pack_summary": pack_result.get("evidence_pack_summary", {}),
             "answer_debug": answer_debug,
+            "image_paths_used": selected_image_paths,
+            "image_selection_summary": pack_result.get("image_selection_summary", {}),
+            "selected_evidence": pack_result.get("selected_evidence", []),
             "partial_memory_diagnostics": {**partial_diag, "attached_image_count": len(selected_image_paths)},
         },
     }
@@ -4416,12 +4814,12 @@ def _query_short_term_only(
             sources=["M_st_partial"],
             warning="long-term memory is still building; using short-term fallback",
         )
-    cache_update = {"updated": False, "reason": "cache_mode does not allow writes"}
-    if cache_write_enabled:
-        cache_update = interaction_cache.update_from_query_result(question, resolved_question, result)
-    result["cache_update"] = cache_update
-    result["raw"]["cache_update"] = cache_update
-    return result
+    return _finalize_cache_result(
+        result, question=question, resolved_question=resolved_question,
+        cache_mode=cache_mode, interaction_enabled=interaction_enabled,
+        cache_write_enabled=cache_write_enabled, cache_context=cache_context,
+        interaction_cache=interaction_cache,
+    )
 
 
 def query_session(
@@ -4471,8 +4869,30 @@ def query_session(
     short_term_session_dir = sessions_root / short_term_session_id
     long_term_session_dir = sessions_root / long_term_session_id
     long_term_retrieval_scheme = normalize_long_term_retrieval_scheme(long_term_retrieval_scheme)
+    normalized_cache_mode, interaction_enabled, _, cache_write_enabled = _interaction_cache_policy(use_interaction_cache, cache_mode)
+    request_constraints: dict[str, Any] | None = None
+
+    def _request_scope(state: dict[str, Any]) -> dict[str, Any] | None:
+        nonlocal request_constraints
+        # A loaded engine can use ST/LT timing when no current stream exists.
+        # Do not freeze an unobserved default current clock at zero here.
+        if request_constraints is None and state.get("mcur_ready"):
+            request_constraints = resolve_query_constraints(question, latest=observed_query_time(state))
+        return request_constraints
 
     def _finalize_stream_result(result: dict[str, Any]) -> dict[str, Any]:
+        if "cache_update" not in result:
+            # Direct-current answers deliberately skip cache retrieval, but a
+            # successful observed turn still needs to be referable next time.
+            store = (InteractionCache(session_id=interaction_cache_session_id, session_dir=sessions_root / interaction_cache_session_id)
+                     if cache_write_enabled and result.get("status") == "ok" else None)
+            _finalize_cache_result(
+                result, question=question, resolved_question=result.get("resolved_question") or question,
+                cache_mode=normalized_cache_mode, interaction_enabled=interaction_enabled,
+                cache_write_enabled=cache_write_enabled, cache_context=result.get("cache_context") or {},
+                interaction_cache=store,
+            )
+        result = mark_answer_failure(result)
         result = _finalize_eval_trace(result, eval_trace)
         result["session_id"] = requested_session_id
         result["query_session_context"] = query_context
@@ -4547,6 +4967,7 @@ def query_session(
                     "session_id": requested_session_id,
                 },
                 cache_context={},
+                query_constraints=_request_scope(current_state),
             )
             fast_route_decision["retrieval_mode_source"] = "current_fast_path"
             fast_route_decision["fast_path"] = "M_cur_direct"
@@ -4556,7 +4977,7 @@ def query_session(
                 question=question,
                 resolved_question=question,
                 route_decision=fast_route_decision,
-                cache_context={"cache_hit": False, "is_followup": False, "confidence": 0.0, "reason": "current fast path skips interaction cache"},
+                cache_context={"cache_hit": False, "is_followup": False, "confidence": 0.0, "reason": "current fast path skips cache retrieval; successful turns may still be written"},
                 latency={"cache_lookup_ms": 0, "cache_hit": False, "engine_load_ms": 0, "fast_path": "M_cur_direct"},
                 router_ms=0,
                 long_term_ready=query_memory_ready(long_term_session_dir),
@@ -4611,6 +5032,7 @@ def query_session(
                 "session_id": requested_session_id,
             },
             cache_context={},
+            query_constraints=_request_scope(current_state),
         )
         if use_current is not False and route_decision.get("retrieval_mode") == "current" and current_ready and not current_stale:
             result = _answer_current_memory(
@@ -4665,6 +5087,7 @@ def query_session(
                 total_start=total_start,
                 day_context=query_context if query_context.get("day_label") else None,
                 stream_handler=stream_handler,
+                query_constraints=request_constraints,
             )
             result = _finalize_stream_result(result)
             if output_json:
@@ -4693,6 +5116,7 @@ def query_session(
                 total_start=total_start,
                 day_context=query_context if query_context.get("day_label") else None,
                 stream_handler=stream_handler,
+                query_constraints=request_constraints,
             )
             result = _mark_partial_fallback(
                 result,
@@ -4727,21 +5151,16 @@ def query_session(
             write_json(output_json, result)
         return result
     if use_current is not False and current_ready and not current_stale and str(memory_mode or "auto").strip().lower() != "auto":
-        direct_cache_mode = str(cache_mode or "auto").strip().lower()
-        if direct_cache_mode not in {"auto", "off", "read_only", "write_only"}:
-            direct_cache_mode = "auto"
-        interaction_enabled = bool(use_interaction_cache) and _env_bool("EM2MEM_INTERACTION_CACHE_ENABLED", True) and direct_cache_mode != "off"
-        cache_read_enabled = interaction_enabled and direct_cache_mode in {"auto", "read_only"}
-        cache_write_enabled = interaction_enabled and direct_cache_mode in {"auto", "write_only"}
+        direct_cache_mode, interaction_enabled, cache_read_enabled, cache_write_enabled = _interaction_cache_policy(use_interaction_cache, cache_mode)
         interaction_cache = InteractionCache(session_id=interaction_cache_session_id, session_dir=sessions_root / interaction_cache_session_id)
         cache_context: dict[str, Any] = {"cache_hit": False, "is_followup": False, "confidence": 0.0, "reason": "no cache context"}
         resolved_question = question
         if cache_read_enabled:
             try:
-                cache_context = CoreferenceResolver().resolve(question, interaction_cache)
-                resolved_question = str(cache_context.get("resolved_question") or question)
-                if cache_context.get("confidence", 0.0) < 0.45:
-                    resolved_question = question
+                cache_context = CoreferenceResolver().resolve(
+                    question, interaction_cache, latest_seconds=observed_query_time(current_state), query_constraints=_request_scope(current_state)
+                )
+                resolved_question = resolved_search_question(question, cache_context)
             except Exception as exc:
                 cache_context = {"cache_hit": False, "is_followup": False, "confidence": 0.0, "reason": f"cache resolver failed: {exc}"}
         cache_context = _normalize_frame_timestamps_in_context(cache_context)
@@ -4771,6 +5190,7 @@ def query_session(
                 "session_id": requested_session_id,
             },
             cache_context=cache_context,
+            query_constraints=_request_scope(current_state),
         )
         direct_router_ms = _ms(direct_router_start)
         direct_memory_route = direct_route_decision.get("memory_route") or {}
@@ -4798,14 +5218,12 @@ def query_session(
                 day_context=query_context if query_context.get("day_label") else None,
                 stream_handler=stream_handler,
             )
-            cache_update = {"updated": False, "reason": "cache_mode does not allow writes"}
-            if cache_write_enabled and result.get("status") == "ok":
-                try:
-                    cache_update = interaction_cache.update_from_query_result(question, resolved_question, result)
-                except Exception as exc:
-                    cache_update = {"updated": False, "error": str(exc)}
-            result["cache_update"] = cache_update
-            result.setdefault("raw", {})["cache_update"] = cache_update
+            _finalize_cache_result(
+                result, question=question, resolved_question=resolved_question,
+                cache_mode=direct_cache_mode, interaction_enabled=interaction_enabled,
+                cache_write_enabled=cache_write_enabled, cache_context=cache_context,
+                interaction_cache=interaction_cache,
+            )
             result = _finalize_stream_result(result)
             if output_json:
                 write_json(output_json, result)
@@ -4827,6 +5245,7 @@ def query_session(
             lookup_start = time.perf_counter()
             engine, cache_hit, engine_load_ms = cache.get_or_load(
                 session_id=long_term_session_id,
+                acquire=True,
                 long_term_retrieval_scheme=long_term_retrieval_scheme,
                 loader=lambda sid: load_query_engine(
                     sid,
@@ -4868,6 +5287,7 @@ def query_session(
                     "session_id": requested_session_id,
                 },
                 cache_context={},
+                query_constraints=_request_scope(current_state),
             )
             route_memory = route_decision.get("memory_route") or {}
             route_current_only = (
@@ -4936,6 +5356,7 @@ def query_session(
                 long_term_retrieval_scheme=long_term_retrieval_scheme,
                 total_start=total_start,
                 stream_handler=stream_handler,
+                query_constraints=request_constraints,
             )
             result.setdefault("warnings", []).append(f"long-term snapshot load failed; using current/short-term fallback: {exc}")
             result["long_term_available"] = False
@@ -4960,53 +5381,58 @@ def query_session(
             write_json(output_json, output)
         return output
 
-    with engine.runtime_session_context(
-        realtime_session_id=realtime_session_id,
-        short_term_session_id=short_term_session_id,
-        interaction_cache_session_id=interaction_cache_session_id,
-        requested_session_id=requested_session_id,
-        day_context=query_context if query_context.get("day_label") else None,
-    ):
-        result = engine.query(
-            question=question,
-            top_k=top_k,
-            use_image_evidence=use_image_evidence,
-            max_image_frames=max_image_frames,
-            retrieval_mode=retrieval_mode,
-            max_image_evidence=max_image_evidence,
-            text_top_k=text_top_k,
-            visual_top_k=visual_top_k or 8,
-            final_evidence_k=final_evidence_k or 4,
-            use_interaction_cache=use_interaction_cache,
-            cache_mode=cache_mode,
-            memory_mode=memory_mode,
-            use_current=use_current,
-            use_short_term=use_short_term,
-            use_long_term=use_long_term,
-            debug_router=debug_router,
-            latency={
-                "cache_lookup_ms": max(0, cache_lookup_ms),
-                "cache_hit": cache_hit,
-                "engine_load_ms": engine_load_ms,
-            },
-            stream_handler=stream_handler,
-            eval_trace=eval_trace,
+    try:
+        with engine.runtime_session_context(
+            realtime_session_id=realtime_session_id,
+            short_term_session_id=short_term_session_id,
+            interaction_cache_session_id=interaction_cache_session_id,
+            requested_session_id=requested_session_id,
+            day_context=query_context if query_context.get("day_label") else None,
+        ):
+            result = engine.query(
+                question=question,
+                top_k=top_k,
+                use_image_evidence=use_image_evidence,
+                max_image_frames=max_image_frames,
+                retrieval_mode=retrieval_mode,
+                max_image_evidence=max_image_evidence,
+                text_top_k=text_top_k,
+                visual_top_k=visual_top_k or 8,
+                final_evidence_k=final_evidence_k,
+                use_interaction_cache=use_interaction_cache,
+                cache_mode=cache_mode,
+                memory_mode=memory_mode,
+                use_current=use_current,
+                use_short_term=use_short_term,
+                use_long_term=use_long_term,
+                debug_router=debug_router,
+                latency={
+                    "cache_lookup_ms": max(0, cache_lookup_ms),
+                    "cache_hit": cache_hit,
+                    "engine_load_ms": engine_load_ms,
+                },
+                stream_handler=stream_handler,
+                eval_trace=eval_trace,
+                query_constraints=request_constraints,
+            )
+        result["latency"]["total_ms"] = _ms(total_start)
+        result["long_term_retrieval_scheme"] = engine.long_term_retrieval_scheme
+        result.setdefault("raw", {})["long_term_retrieval_scheme"] = engine.long_term_retrieval_scheme
+        result["active_query_memory_version"] = engine.active_query_memory_version
+        result["latest_ready_memory_version"] = engine.latest_ready_memory_version
+        result["building_memory_version"] = engine.building_memory_version
+        result.setdefault("memory_component_versions", engine._memory_component_versions())
+        result["using_stale_while_building"] = bool(
+            engine.building_memory_version
+            and engine.active_query_memory_version
+            and int(engine.building_memory_version) > int(engine.active_query_memory_version)
         )
-    result["latency"]["total_ms"] = _ms(total_start)
-    result["long_term_retrieval_scheme"] = engine.long_term_retrieval_scheme
-    result.setdefault("raw", {})["long_term_retrieval_scheme"] = engine.long_term_retrieval_scheme
-    result["active_query_memory_version"] = engine.active_query_memory_version
-    result["latest_ready_memory_version"] = engine.latest_ready_memory_version
-    result["building_memory_version"] = engine.building_memory_version
-    result.setdefault("memory_component_versions", engine._memory_component_versions())
-    result["using_stale_while_building"] = bool(
-        engine.building_memory_version
-        and engine.active_query_memory_version
-        and int(engine.building_memory_version) > int(engine.active_query_memory_version)
-    )
-    result = _finalize_stream_result(result)
-    if no_cache:
-        engine.close()
-    if output_json:
-        write_json(output_json, result)
-    return result
+        result = _finalize_stream_result(result)
+        if output_json:
+            write_json(output_json, result)
+        return result
+    finally:
+        if no_cache:
+            engine.close()
+        else:
+            cache.release(engine)

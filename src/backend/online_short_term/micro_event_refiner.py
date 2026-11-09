@@ -11,6 +11,7 @@ from typing import Any
 from online_preprocess.io_utils import read_json, utc_now_iso
 from online_short_term.schemas import build_retrieval_text
 from online_llm_config import (
+    chat_response_text,
     external_openai_api_key,
     external_openai_base_url,
     external_openai_model,
@@ -42,7 +43,17 @@ visual_objects: list of objects with name, attributes, confidence
 main_actions: list of objects with action, actor, objects, time_span, confidence
 state_changes: list of objects with entity, attribute, before, after, time_span, confidence
 entities: list of concrete entity names
-confidence: number between 0 and 1"""
+visual_observations: list of objects with timestamp, path, description; use exact attached timestamps and paths
+confidence: number between 0 and 1
+
+For every main_action and state_change, time_span must be [start_seconds, end_seconds]
+using the attached frame times, not an invented continuous duration. Preserve short
+visible transitions even if they occur near the end of the event. Identify people
+consistently by visible position and appearance; do not assume screen-left/right
+is the physical driver/passenger seat. Treat single-frame observations as points.
+Describe visible posture separately from inferred activity: a phone at an ear
+does not establish a connected call. An occluded object does not establish removal.
+"""
 
 
 def _image_data_url(path: Path) -> str:
@@ -206,20 +217,39 @@ def _looks_like_unsupported_reasoning(exc: Exception) -> bool:
     return has_reasoning_field and has_unsupported_signal
 
 
-def _select_keyframes(event: dict[str, Any], max_images: int) -> list[dict[str, Any]]:
+def _select_keyframes(event: dict[str, Any], max_images: int, session_dir: Path | None = None) -> list[dict[str, Any]]:
     frames = [frame for frame in event.get("keyframes", []) or [] if isinstance(frame, dict) and frame.get("path")]
     if max_images <= 0 or len(frames) <= max_images:
         return frames
     if max_images == 1:
         return [frames[0]]
-    indexes = [round(i * (len(frames) - 1) / (max_images - 1)) for i in range(max_images)]
-    selected = []
-    seen = set()
-    for idx in indexes:
-        if idx not in seen:
-            selected.append(frames[idx])
-            seen.add(idx)
-    return selected
+    frames.sort(key=lambda frame: float(frame.get("timestamp", 0)))
+    changes = [max(0.0, float(frame.get("diff_score", 0) or 0)) for frame in frames]
+    if session_dir is not None:
+        from PIL import Image, ImageChops, ImageStat
+        previous = None
+        for index, frame in enumerate(frames):
+            try:
+                with Image.open(session_dir / frame["path"]) as source:
+                    current = source.convert("RGB").resize((128, 72))
+                if previous is not None:
+                    diff = ImageChops.difference(previous, current)
+                    changes[index] = max(sum(ImageStat.Stat(diff.crop((x,y,x+32,y+18))).mean)/(3*255)
+                                         for x in range(0,128,32) for y in range(0,72,18))
+                previous = current
+            except (OSError, ValueError):
+                continue
+    peak = max(changes)
+    if peak <= 0:
+        return [frames[round(i*(len(frames)-1)/(max_images-1))] for i in range(max_images)]
+    selected = [0, len(frames)-1]
+    span = max(1.0, float(frames[-1].get("timestamp",0))-float(frames[0].get("timestamp",0)))
+    while len(selected) < max_images:
+        def utility(index):
+            gap = min(abs(float(frames[index].get("timestamp",0))-float(frames[picked].get("timestamp",0))) for picked in selected)/span
+            return 0.65 * changes[index]/peak + 0.35 * gap
+        selected.append(max((index for index in range(len(frames)) if index not in selected), key=utility))
+    return [frames[index] for index in sorted(selected)]
 
 
 class MicroEventRefiner:
@@ -232,7 +262,9 @@ class MicroEventRefiner:
     ) -> None:
         self.backend = (backend or os.getenv("EM2MEM_MST_REFINE_BACKEND", "openai")).strip().lower()
         self.model = model or external_openai_model()
-        self.max_images = int(max_images or os.getenv("EM2MEM_MST_REFINE_MAX_IMAGES", "4"))
+        # The event store already caps retained keyframes at eight. Inspect all
+        # of them by default; callers can explicitly trade coverage for cost.
+        self.max_images = int(max_images if max_images is not None else os.getenv("EM2MEM_MST_REFINE_MAX_IMAGES", "8"))
         self.timeout = float(timeout or os.getenv("EM2MEM_MST_REFINE_TIMEOUT", "120"))
         self._client = None
 
@@ -299,6 +331,7 @@ class MicroEventRefiner:
         except Exception as exc:
             failed_at_iso = utc_now_iso()
             item["status"] = "refine_failed"
+            item["needs_refine"] = True
             item["updated_at"] = failed_at_iso
             refine = dict(item.get("refine") or {})
             error_text = f"{type(exc).__name__}: {exc}"
@@ -343,7 +376,7 @@ class MicroEventRefiner:
                 base_url=external_openai_base_url(),
                 timeout=self.timeout,
             )
-        frames = _select_keyframes(event, self.max_images)
+        frames = [frame for frame in _select_keyframes(event, self.max_images, session_dir) if (session_dir / str(frame.get("path", ""))).is_file()]
         keyframe_table = "\n".join(f"- {frame.get('timestamp')}: {frame.get('path')}" for frame in frames) or "(no keyframes)"
         user_text = USER_PROMPT_TEMPLATE.format(
             event_id=event.get("event_id"),
@@ -379,18 +412,25 @@ class MicroEventRefiner:
                     {"role": "user", "content": content},
                 ],
             )
-        raw_text = response.choices[0].message.content or ""
-        return _extract_json_object(raw_text)
+        raw_text = chat_response_text(response)
+        payload = _extract_json_object(raw_text)
+        payload["_observed_frames"] = [{"path": frame["path"], "timestamp": frame.get("timestamp")} for frame in frames]
+        return payload
 
     def _apply_payload(self, event: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise ValueError("refinement response must be a JSON object")
+        caption = payload.get("refined_caption") or payload.get("event_caption_refined")
+        if not isinstance(caption, str) or not caption.strip():
+            raise ValueError("refinement response requires a non-empty refined_caption string")
         item = dict(event)
-        caption = str(payload.get("refined_caption") or payload.get("event_caption_refined") or "").strip()
-        if not caption:
-            caption = str(item.get("event_caption_placeholder") or "A refined caption could not be generated.").strip()
-        item["event_caption_refined"] = caption
+        item["event_caption_refined"] = caption.strip()
         for key in ("visual_objects", "main_actions", "state_changes", "entities"):
             value = payload.get(key, [])
             item[key] = value if isinstance(value, list) else []
+        observed = payload.get("_observed_frames", [])
+        item.setdefault("refine", {})["observed_frames"] = observed
+        item["visual_observations"] = [row for row in payload.get("visual_observations", []) if isinstance(row, dict) and any(row.get("path") == frame.get("path") and _safe_float(row.get("timestamp")) == _safe_float(frame.get("timestamp")) for frame in observed)]
         try:
             item["confidence"] = float(payload.get("confidence", item.get("confidence", 0.55)))
         except Exception:

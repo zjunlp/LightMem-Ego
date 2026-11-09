@@ -13,6 +13,7 @@ from online_preprocess.io_utils import read_json, utc_now_iso, write_json_atomic
 from online_preprocess.task_queue import enqueue_mst_refine_task
 from online_short_term.frame_diff_detector import CandidateFrame, FrameDiffEventDetector, cv2
 from online_short_term.mst_store import MSTStore
+from online_short_term.transcript_aligner import TranscriptAligner
 from online_short_term.schemas import build_retrieval_text, env_float, env_int, mst_event_stub
 
 
@@ -70,8 +71,11 @@ class FrameStreamMicroEventBuilder:
         with self.lock():
             state = self._load_state_unlocked()
             frame, diff_record = self._compute_diff(frame, state.get("last_accepted_frame"))
-            closed_events, state, opened_events = self._update_state_with_frame(state, frame, diff_record)
-            appended = self.store.append_events(closed_events)
+            # Serialize final transcript alignment and event insertion with ASR
+            # backfill: it either precedes alignment or sees the closed event.
+            with self.store.mutation_lock():
+                closed_events, state, opened_events = self._update_state_with_frame(state, frame, diff_record)
+                appended = self.store.append_events(closed_events)
             refine_task_paths: list[str] = []
             if appended and enqueue_refine and project_root is not None and _env_bool("EM2MEM_FRAME_STREAM_ENQUEUE_REFINE", True):
                 task_path = enqueue_mst_refine_task(
@@ -156,8 +160,9 @@ class FrameStreamMicroEventBuilder:
                     metadata={"reason": reason, "duration": duration},
                 )
                 return self._empty_result(status="ignored_short_event")
-            event = self._mst_event_from_open_event(open_event, reason=reason, event_seq=int(state.get("event_count", 0) or 0))
-            appended = self.store.append_events([event])
+            with self.store.mutation_lock():
+                event = self._mst_event_from_open_event(open_event, reason=reason, event_seq=int(state.get("event_count", 0) or 0))
+                appended = self.store.append_events([event])
             state["open_event"] = None
             state["event_count"] = int(state.get("event_count", 0) or 0) + len(appended)
             state["closed_event_count"] = int(state.get("closed_event_count", 0) or 0) + len(appended)
@@ -372,8 +377,11 @@ class FrameStreamMicroEventBuilder:
         event["source_frame_indices"] = list(open_event.get("source_frame_indices") or [])
         event["keyframes"] = self._select_keyframes([item for item in open_event.get("keyframes", []) if isinstance(item, dict)])
         event["evidence_frames"] = list(event["keyframes"])
-        event["transcript"] = ""
-        event["transcript_segments"] = []
+        # ASR may arrive while this frame event is still open. Reload the
+        # persisted transcript at closure so those segments reach M_st.
+        aligned = TranscriptAligner(self.session_dir).align(start, end)
+        event["transcript"] = aligned["transcript"]
+        event["transcript_segments"] = aligned["transcript_segments"]
         event["needs_refine"] = True
         event["caption_source"] = "placeholder"
         event["event_caption_placeholder"] = (
