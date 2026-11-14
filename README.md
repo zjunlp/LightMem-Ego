@@ -488,8 +488,9 @@ Representative commercial assistants, text-based memory systems, and egocentric 
 ## 🗺️ Roadmap
 
 - [ ] Ship a native phone app — today the phone client is the web frontend in a mobile browser.
-- [ ] Release the end-to-end evaluation dataset and reproducibility scripts.
-- [ ] Pluggable ASR, VLM, and embedding backends beyond the current defaults.
+- [ ] Release the end-to-end LightMem-Ego evaluation dataset (the EM²Mem reproduction scripts already ship in [`research/em2mem`](research/em2mem/)).
+- [ ] Add accounts and per-user memory isolation — editing is gated by a single administrator passcode, and auth, TLS and reverse proxy are left to each deployment.
+- [ ] Support ASR, VLM and embedding providers beyond WhisperX/Xfyun, VLM2Vec and OpenAI-compatible endpoints.
 - [ ] Support wearable devices beyond Rokid AI Glass.
 - [ ] On-device filtering for privacy-sensitive capture.
 - [ ] One-click deployment template for a full cloud deployment.
