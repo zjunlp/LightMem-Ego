@@ -490,12 +490,9 @@ Representative commercial assistants, text-based memory systems, and egocentric 
 - [x] Memory workspace — browse every memory tier per session, inspect the episodic and semantic graphs, edit records with rollback, rename sessions, and import or export memory.
 - [x] Light and dark themes, English or 中文, and three text sizes across the web UI.
 - [x] Video upload and replay, so the whole pipeline can be tested without the glasses.
-- [x] EM²Mem research implementation with reproduction artifacts and evaluation results on [Google Drive](https://drive.google.com/drive/folders/1YZCp8O7Sje-kh3mFpcwnzz19x0tUvELD).
+- [x] Pluggable ASR, VLM, and embedding backends beyond the current defaults.
+- [x] Release the end-to-end evaluation dataset and reproducibility scripts ([artifacts on Google Drive](https://drive.google.com/drive/folders/1YZCp8O7Sje-kh3mFpcwnzz19x0tUvELD)).
 - [ ] Ship a native phone app — today the phone client is the web frontend in a mobile browser.
-- [ ] Support ASR, VLM and embedding providers beyond WhisperX/Xfyun, VLM2Vec and OpenAI-compatible endpoints.
-- [ ] Support wearable devices beyond Rokid AI Glass.
-- [ ] On-device filtering for privacy-sensitive capture.
-- [ ] One-click deployment template for a full cloud deployment.
 
 ---
 
