@@ -476,7 +476,6 @@ If you find LightMem-Ego useful, please cite our paper:
   title={LightMem-Ego: Your AI Memory for Everyday Life},
   author={Chen, Yijun and Xiao, Boyi and Zhao, Yixian and Xia, Haoting and Xu, Buqiang and Fang, Jizhan and Li, Yanya and Zheng, Yaqi and Wang, Xuehai and Xue, Zirui and others},
   journal={arXiv preprint arXiv:2607.11487},
-  note={Accepted at AAAI 2027 Demo},
   year={2026}
 }
 ```
