@@ -50,9 +50,9 @@
 
 - [📢 News](#news)
 - [🎬 Demo](#demo)
-- [🧠 Memory Workspace](#workspace)
 - [🎯 Why LightMem-Ego](#why)
 - [🚀 Quick Start](#quick-start)
+- [🧠 Memory Workspace](#workspace)
 - [💬 What You Can Ask](#scenarios)
 - [🏗️ How It Works](#architecture)
 - [📊 Results](#results)
@@ -130,27 +130,6 @@ Ask the glasses a question in the middle of your day, and get an answer grounded
 </div>
 
 <h5 align="center">⭐ If LightMem-Ego is useful to you, a star helps more people find it.</h5>
-
----
-
-<span id="workspace"></span>
-
-## 🧠 Memory Workspace
-
-An answer is only as good as the memory behind it, so the web UI now ships a memory workspace: the same sessions, opened up — so you can see what was stored, fix what is wrong, and move memory in and out.
-
-- 🗂️ **Every tier in one place** — episodic events, semantic facts, visual records and the long-term `M_lt` catalog, browsable per session; open a 30-second cell to read its caption, transcript, keyframes and timestamps.
-- 🕸️ **Walk the graphs** — episodic and semantic graphs as interactive node-link views; click an event, fact or entity to read its description, scene, critical speech, triples and first/last-seen time, with the evidence that links the two graphs.
-- ✏️ **Correct memory in place** — edit a 30-second episodic record and save; coarser summaries, semantic memories, graphs and retrieval indexes regenerate, and any earlier version can be rolled back.
-- 🏷️ **Rename sessions** — retitle a session without touching the media behind it.
-- 📦 **Export and import** — export records, or import a `.json` / `.txt` memory file (≤ 10 MiB) and follow the build task through to a ready query service.
-- 🎞️ **Upload a video, then ask** — drop in an MP4/MOV/WebM/MKV/AVI clip (≤ 95 MiB), let the backend build its full memory offline, then replay it and ask. The whole stack, tested without the glasses.
-- 🎨 **Reads the way you like** — light and dark themes, English or 中文, and three text sizes, remembered per browser on every page.
-
-> [!NOTE]
-> Editing controls unlock with an administrator passcode, so a shared demo link stays read-only while owners can still correct their own memory.
-
-The workspace lives at `/memories/` next to the live view, and the saved-video flow at `/history-demo/`; the [frontend README](src/frontend/README.md) covers both in detail.
 
 ---
 
@@ -298,6 +277,27 @@ scripts/start_online_all_workers.sh
 Details: [`src/backend/README.md`](src/backend/README.md) and [`DEPLOYMENT.md`](src/backend/DEPLOYMENT.md).
 
 </details>
+
+---
+
+<span id="workspace"></span>
+
+## 🧠 Memory Workspace
+
+An answer is only as good as the memory behind it, so the web UI ships a memory workspace: the same sessions, opened up — so you can see what was stored, fix what is wrong, and move memory in and out.
+
+- 🗂️ **Every tier in one place** — episodic events, semantic facts, visual records and the long-term `M_lt` catalog, browsable per session; open a 30-second cell to read its caption, transcript, keyframes and timestamps.
+- 🕸️ **Walk the graphs** — episodic and semantic graphs as interactive node-link views; click an event, fact or entity to read its description, scene, critical speech, triples and first/last-seen time, with the evidence that links the two graphs.
+- ✏️ **Correct memory in place** — edit a 30-second episodic record and save; coarser summaries, semantic memories, graphs and retrieval indexes regenerate, and any earlier version can be rolled back.
+- 🏷️ **Rename sessions** — retitle a session without touching the media behind it.
+- 📦 **Export and import** — export records, or import a `.json` / `.txt` memory file (≤ 10 MiB) and follow the build task through to a ready query service.
+- 🎞️ **Upload a video, then ask** — drop in an MP4/MOV/WebM/MKV/AVI clip (≤ 95 MiB), let the backend build its full memory offline, then replay it and ask. The whole stack, tested without the glasses.
+- 🎨 **Reads the way you like** — light and dark themes, English or 中文, and three text sizes, remembered per browser on every page.
+
+> [!NOTE]
+> Editing controls unlock with an administrator passcode, so a shared demo link stays read-only while owners can still correct their own memory.
+
+The workspace lives at `/memories/` next to the live view, and the saved-video flow at `/history-demo/`; the [frontend README](src/frontend/README.md) covers both in detail.
 
 ---
 
