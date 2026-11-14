@@ -11,6 +11,7 @@
 
 <p align="center">
   <a href="https://arxiv.org/abs/2607.11487"><img src="https://img.shields.io/badge/arXiv-2607.11487-b31b1b?logo=arxiv&logoColor=white" alt="arXiv"></a>
+  <img src="https://img.shields.io/badge/AAAI%202027%20Demo-Accepted-1f6feb" alt="AAAI 2027 Demo">
   <a href="https://huggingface.co/papers/2607.11487"><img src="https://img.shields.io/badge/HuggingFace-Paper-yellow?logo=huggingface&logoColor=white" alt="Hugging Face Paper"></a>
   <a href="https://arxiv.org/abs/2609.00551"><img src="https://img.shields.io/badge/EM%C2%B2Mem-2609.00551-b31b1b?logo=arxiv&logoColor=white" alt="EM²Mem paper"></a>
   <img src="https://img.shields.io/badge/EMNLP%202026%20Findings-Accepted-blueviolet" alt="EMNLP 2026 Findings">
@@ -49,6 +50,7 @@
 
 - [📢 News](#news)
 - [🎬 Demo](#demo)
+- [🧠 Memory Workspace](#workspace)
 - [🎯 Why LightMem-Ego](#why)
 - [🚀 Quick Start](#quick-start)
 - [💬 What You Can Ask](#scenarios)
@@ -70,6 +72,7 @@
 
 ## 📢 News
 
+- **[2026-11]** 🎉🎉🎉 [**LightMem-Ego: Your AI Memory for Everyday Life**](https://arxiv.org/abs/2607.11487) has been accepted to **AAAI 2027 Demo**!
 - **[2026-09]** ✨ Multi-session support, online memory editing, and streaming answers land in the backend and web UI.
 - **[2026-08]** 🎉🎉🎉 [**EM²Mem: Event-Centric Multimodal Memory for Large Language Models**](https://arxiv.org/abs/2609.00551) — the long-term memory engine behind this backend — has been accepted to **EMNLP 2026 Findings**!
 - **[2026-07-13]** 📄 [**LightMem-Ego: Your AI Memory for Everyday Life**](https://arxiv.org/abs/2607.11487) is released on arXiv.
@@ -127,6 +130,27 @@ Ask the glasses a question in the middle of your day, and get an answer grounded
 </div>
 
 <h5 align="center">⭐ If LightMem-Ego is useful to you, a star helps more people find it.</h5>
+
+---
+
+<span id="workspace"></span>
+
+## 🧠 Memory Workspace
+
+An answer is only as good as the memory behind it, so the web UI now ships a memory workspace: the same sessions, opened up — so you can see what was stored, fix what is wrong, and move memory in and out.
+
+- 🗂️ **Every tier in one place** — episodic events, semantic facts, visual records and the long-term `M_lt` catalog, browsable per session; open a 30-second cell to read its caption, transcript, keyframes and timestamps.
+- 🕸️ **Walk the graphs** — episodic and semantic graphs as interactive node-link views; click an event, fact or entity to read its description, scene, critical speech, triples and first/last-seen time, with the evidence that links the two graphs.
+- ✏️ **Correct memory in place** — edit a 30-second episodic record and save; coarser summaries, semantic memories, graphs and retrieval indexes regenerate, and any earlier version can be rolled back.
+- 🏷️ **Rename sessions** — retitle a session without touching the media behind it.
+- 📦 **Export and import** — export records, or import a `.json` / `.txt` memory file (≤ 10 MiB) and follow the build task through to a ready query service.
+- 🎞️ **Upload a video, then ask** — drop in an MP4/MOV/WebM/MKV/AVI clip (≤ 95 MiB), let the backend build its full memory offline, then replay it and ask. The whole stack, tested without the glasses.
+- 🎨 **Reads the way you like** — light and dark themes, English or 中文, and three text sizes, remembered per browser on every page.
+
+> [!NOTE]
+> Editing controls unlock with an administrator passcode, so a shared demo link stays read-only while owners can still correct their own memory.
+
+The workspace lives at `/memories/` next to the live view, and the saved-video flow at `/history-demo/`; the [frontend README](src/frontend/README.md) covers both in detail.
 
 ---
 
@@ -421,7 +445,7 @@ Representative commercial assistants, text-based memory systems, and egocentric 
 | Path | What's inside | Docs |
 | :--- | :--- | :--- |
 | [`src/ai_glass_app/`](src/ai_glass_app/) | Android app for Rokid AI Glasses (Kotlin, Jetpack Compose, CameraX) | [README](src/ai_glass_app/README.md) |
-| [`src/frontend/`](src/frontend/) | Vite + React web UI for capture, sessions, QA, and evidence review | [README](src/frontend/README.md) |
+| [`src/frontend/`](src/frontend/) | Vite + React 19 web UI: live capture, Q&A, and a memory workspace with episodic and semantic graph views | [README](src/frontend/README.md) |
 | [`src/backend/`](src/backend/) | FastAPI service plus the online worker pipeline (ASR, memory, retrieval, QA) | [README](src/backend/README.md) |
 | [`research/em2mem/`](research/em2mem/) | Offline EM²Mem research implementation, preprocessing, and evaluation code | [README](research/em2mem/README.md) |
 | [`compose.yaml`](compose.yaml), [`deploy/`](deploy/) | Docker Compose stack and deployment notes | [DOCKER.md](deploy/DOCKER.md) |
@@ -436,7 +460,7 @@ Representative commercial assistants, text-based memory systems, and egocentric 
 - [ ] Release the end-to-end evaluation dataset and reproducibility scripts.
 - [ ] Pluggable ASR, VLM, and embedding backends beyond the current defaults.
 - [ ] Support wearable devices beyond Rokid AI Glass.
-- [ ] On-device filtering and user-controlled memory editing for privacy-sensitive capture.
+- [ ] On-device filtering for privacy-sensitive capture.
 - [ ] One-click deployment template for a full cloud deployment.
 
 ---
@@ -452,6 +476,7 @@ If you find LightMem-Ego useful, please cite our paper:
   title={LightMem-Ego: Your AI Memory for Everyday Life},
   author={Chen, Yijun and Xiao, Boyi and Zhao, Yixian and Xia, Haoting and Xu, Buqiang and Fang, Jizhan and Li, Yanya and Zheng, Yaqi and Wang, Xuehai and Xue, Zirui and others},
   journal={arXiv preprint arXiv:2607.11487},
+  note={Accepted at AAAI 2027 Demo},
   year={2026}
 }
 ```

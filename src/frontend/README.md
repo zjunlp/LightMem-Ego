@@ -21,8 +21,8 @@ A Vite + React web workspace for the [LightMem-Ego](../../README.md) memory syst
 - **Live session view** — watch the current session, its pipeline state, and stream status as memory is built.
 - **Ask panel** — submit typed questions and render memory-grounded answers, including token-by-token streaming replies.
 - **Evidence strip** — open the frames, transcripts, and timestamps that support each answer.
-- **Memory browser and editor** — review sessions and catalogs, edit 30-second memory entries, and roll back changes.
-- **Memory graph** — explore episodic and semantic links between memories.
+- **Memory browser and editor** — review sessions and catalogs, rename sessions, edit 30-second memory entries, and roll back changes.
+- **Memory graph** — explore episodic and semantic links between memories; select an event, fact or entity to read its description, scene, critical speech, triples and first/last-seen time.
 - **Independent memory workspace** — open `/memories/` directly, or use `?memory_session=<session-id>` to locate one session and return to its video.
 - **Saved-video Q&A** — `/history-demo/` preserves playback position, conversation history, task receipts and edit drafts.
 - **Video uploads** — upload a video up to 95 MiB, wait for full offline memory/index construction, then replay and ask. Refreshing resumes status checks for the original upload.
@@ -83,12 +83,16 @@ The backend must allow your dev origin — `EM2MEM_CORS_ORIGINS` in the backend 
 ```text
 src/frontend/
   online_web/          # Vite + React application
-    src/api/           # Backend API wrapper (lightmem_egoApi.js)
+    src/api/           # Backend API wrapper (lightmem_egoApi.js, memoryImportApi.js)
     src/components/    # Live view, ask panel, answer card, evidence strip, memory editor, graph
-    src/hooks/         # Session, stream, and question state
+    src/hooks/         # Session, stream, question, import and memory-edit state
     src/webrtc/        # WHIP/SRS browser streaming helpers
-    src/styles/        # Application styles
+    src/styles/        # Application styles (app.css, workspace.css, theme.css)
     src/utils/         # Shared helpers
+    src/i18n.jsx       # English/Chinese UI strings for every page
+    src/theme.js       # Light/dark theme preference
+    src/fontScale.js   # Small/default/large text-size preference
+    public/theme-init.js  # Applies the stored theme before first paint
     memories/          # Independent memory-management HTML entry
     history-demo/      # Saved-video HTML entry
   history_demo/        # Replay/upload modules and portable offline tests
