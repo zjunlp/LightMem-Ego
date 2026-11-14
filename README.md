@@ -297,6 +297,31 @@ An answer is only as good as the memory behind it, so the web UI ships a memory 
 > [!NOTE]
 > Editing controls unlock with an administrator passcode, so a shared demo link stays read-only while owners can still correct their own memory.
 
+<div align="center">
+  <img src="./figs/memory_management.png" width="100%" alt="The Memories page: a global M_lt catalog listing every session with its M_lt, episodic, semantic and visual versions, next to the current session memory panel">
+</div>
+
+*One catalog per session. Every session keeps its own `M_lt`, episodic, semantic and visual versions side by side, and any of them opens without leaving the page.*
+
+<div align="center">
+  <img src="./figs/graph_visualize.png" width="100%" alt="The episodic graph laid out as an event timeline with entities expanded, beside the semantic graph of facts with support-weighted edges">
+</div>
+
+*Both graphs at once. The episodic graph lays a session out as an event timeline, and selecting an event expands its entities; the semantic graph holds the stable facts, with edge width showing how much evidence supports each relation.*
+
+<table align="center">
+  <tr>
+    <td align="center" width="50%">
+      <img src="./figs/episodic.png" width="100%" alt="An episodic event opened to its description, visual summary, scene and visual objects">
+      <br><b>Open any event</b><br>Description, visual summary, scene,<br>and the objects it contains
+    </td>
+    <td align="center" width="50%">
+      <img src="./figs/graph.png" width="100%" alt="Session memory records with per-tier counts, readiness tags and a JSON export button">
+      <br><b>Read the records</b><br>Per-tier counts, readiness,<br>and one-click JSON export
+    </td>
+  </tr>
+</table>
+
 The workspace lives at `/memories/` next to the live view, and the saved-video flow at `/history-demo/`; the [frontend README](src/frontend/README.md) covers both in detail.
 
 ---
