@@ -21,7 +21,8 @@ A Vite + React web workspace for the [LightMem-Ego](../../README.md) memory syst
 - **Live session view** — watch the current session, its pipeline state, and stream status as memory is built.
 - **Ask panel** — submit typed questions and render memory-grounded answers, including token-by-token streaming replies.
 - **Evidence strip** — open the frames, transcripts, and timestamps that support each answer.
-- **Memory browser and editor** — review sessions and catalogs, rename sessions, edit 30-second memory entries, and roll back changes.
+- **Memory browser and editor** — review sessions and catalogs, rename sessions when supported by the backend, edit 30-second memory entries, and roll back changes.
+- **Memory import and export** — import JSON/TXT into a new session and download individual memory records as JSON from the Records tab.
 - **Memory graph** — explore episodic and semantic links between memories; select an event, fact or entity to read its description, scene, critical speech, triples and first/last-seen time.
 - **Independent memory workspace** — open `/memories/` directly, or use `?memory_session=<session-id>` to locate one session and return to its video.
 - **Saved-video Q&A** — `/history-demo/` preserves playback position, conversation history, task receipts and edit drafts.
@@ -29,6 +30,69 @@ A Vite + React web workspace for the [LightMem-Ego](../../README.md) memory syst
 - **Shared appearance** — Chinese/English, light/dark themes and font-size preferences across pages.
 - **Editing gate** — viewers can browse and ask; editing controls require administrator mode in the current browser tab.
 - **Multiple input modes** — browser capture, Rokid glasses sessions, and demo uploads share one UI.
+
+## 🧭 Workspace Pages
+
+| Entry | Purpose |
+| :--- | :--- |
+| `/` | Browser capture, live session status, questions, answers, and evidence. |
+| `/history-demo/` | Saved-video replay, new video uploads, question history, and session memory editing. |
+| `/memories/` | Independent session catalog, memory records and graphs, editing, rollback, and import/export. |
+
+The pages share Chinese/English, light/dark themes, font-size preferences, and
+administrator-mode state. The replay page links directly to the selected
+session's memory view with `?memory_session=<session-id>`, and the memory view
+provides a route back to that session's video.
+
+### Saved-video replay and upload
+
+1. Open `/history-demo/` and select a session, or choose **Upload video** and a
+   supported video file up to 95 MiB.
+2. For an upload, wait for full-video preprocessing, memory construction, and
+   retrieval indexing. The task receipt survives a page refresh so status checks
+   can continue for the same upload.
+3. Play, pause, seek, and resume the bound video. Playback position and question
+   history are retained; buffering does not require starting a new session.
+4. Submit a question, inspect its answer and timestamped evidence, or follow the
+   session memory link to browse the underlying records and graph.
+
+Saved-video questions use the session's generated memory independently of the
+player position. To ask about an earlier interval, state that interval in the
+question. Uploading a complete video is separate from live capture, whose memory
+is built from input received so far.
+
+### Memory viewing and editing
+
+Open a session in `/memories/` and switch between **Graph** and **Records**.
+Records are grouped into 30-second and coarser episodic memories, semantic facts,
+and visual records. The replay page also exposes an editor for its selected
+session.
+
+Enter administrator mode to edit supported 30-second event descriptions. The
+editor keeps drafts, previews changed records, and submits the base memory
+version and an idempotency key. Saving rebuilds related summaries and retrieval
+data; the backend publishes a new version after validation. Existing queries
+continue against the published version while the update is prepared. Refresh
+the memory view after publication, or use rollback when it is available.
+
+Administrator mode uses the local presentation code `lightmem-admin` by default,
+configurable through `window.__LIGHTMEM_ADMIN_CODE__`. It controls editing UI;
+server editability, version, and idempotency checks still apply.
+
+### Text-memory import and JSON export
+
+- **Import:** choose **Import memory** in `/memories/`, select UTF-8 JSON or TXT
+  (up to 10 MiB and 1000 records), and wait until the new session is ready to ask.
+  Progress checks resume after refresh. Existing sessions are preserved.
+- **Export:** open a session's **Records** tab, expand a memory group, and click
+  **Export JSON** on a record card. This exports one record from the published
+  version and does not require administrator mode.
+- **Reimport:** an exported JSON record can be uploaded into a new session. Text
+  and structured annotations are transferred; image/video files and local paths
+  are not included.
+
+See the [backend import/export contract](../backend/docs/memory_import_export.md)
+for accepted JSON formats, readiness, and failure states.
 
 ## 🚀 Quick Start
 
@@ -107,18 +171,22 @@ src/frontend/
 | **Sessions** | `POST /stream/start`, `POST /rokid/stream/start`, `GET /stream/{session_id}/status`, `GET /rokid/stream/active` |
 | **Capture** | `POST /stream/{session_id}/frame`, `POST /stream/{session_id}/audio_chunk`, `POST /rokid/{session_id}/frame`, `POST /rokid/{session_id}/audio_chunk` |
 | **Live ingest** | `POST /stream/{session_id}/live/ingest/start`, `POST /stream/{session_id}/live/ingest/stop` |
-| **Questions** | `POST /ask/{session_id}`, `POST /ask/{session_id}/stream` (streaming), `POST /stream/{session_id}/audio_question` |
+| **Questions** | `POST /ask/{session_id}`, `POST /session/{session_id}/ask`, `POST /ask/{session_id}/stream` (streaming), `POST /stream/{session_id}/audio_question` |
 | **Answers** | `GET /query_task/{task_id}`, `GET /session/{session_id}/qa_history` |
 | **Memory** | `GET /session/{session_id}/memories`, `PUT /session/{session_id}/memories/30sec`, `POST /session/{session_id}/memories/30sec/rollback`, `GET /session/{session_id}/memory-graph`, `GET /memories/sessions` |
 | **Evidence** | `GET /session/{session_id}/file?path=...`, `GET /stream/{session_id}/preview` |
 | **Saved video** | `GET /session/{session_id}/demo-media`, `GET /session/{session_id}/demo-video` (byte ranges) |
 | **Video upload** | `POST /video-uploads`, `GET /video-uploads/{upload_id}`, `POST /video-uploads/{upload_id}/resume` |
+| **Memory import** | `POST /memory-imports`, `GET /memory-imports/{task_id}` |
+| **Memory export** | `GET /session/{session_id}/memories/{memory_id}/export?format=json` |
+| **Readiness and capabilities** | `GET /session/{session_id}/status`, `GET /session/{session_id}/query_warmup`, `GET /openapi.json` |
 
 The replay page requests `GET /query_task/{task_id}?compact=1` so repeated retrieval traces do not delay answer delivery. Complete answers, evidence captions and capture times remain available; full diagnostics are retained by the backend's default task response.
 
-The updated backend branch supplies saved-video/upload APIs. Optional text-memory import, session renaming and individual-memory JSON export are shown only if the connected backend advertises their required routes in `/openapi.json`. Their absence does not block viewing, capture or Q&A.
-
-Administrator mode uses a local presentation code (`lightmem-admin` by default, configurable through `window.__LIGHTMEM_ADMIN_CODE__`). This controls the editing UI; it is not server authentication. Backend `canEdit`, record permissions, version and idempotency checks remain in force.
+The updated backend supplies saved-video/upload and text-memory import/export
+APIs. The frontend detects optional capabilities through `/openapi.json` so it
+can also connect to older backends. Session renaming remains available only when
+the connected backend advertises its route.
 
 The full contract is documented in [`../backend/docs/online_stream_api_contract.md`](../backend/docs/online_stream_api_contract.md).
 

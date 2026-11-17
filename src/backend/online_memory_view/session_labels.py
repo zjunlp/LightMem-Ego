@@ -28,6 +28,8 @@ def session_labels(session_dir: Path, metadata: dict[str, Any] | None = None) ->
     updated_at = metadata.get("title_updated_at")
     return {
         "title": title,
+        "session_kind": metadata.get("session_kind") or "video",
+        "interaction_mode": metadata.get("interaction_mode") or "video",
         "title_revision": revision,
         "title_updated_at": updated_at if isinstance(updated_at, str) else None,
     }

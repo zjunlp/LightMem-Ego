@@ -73,6 +73,7 @@
 ## 📢 News
 
 - **[2026-11]** 🎉🎉🎉 [**LightMem-Ego: Your AI Memory for Everyday Life**](https://arxiv.org/abs/2607.11487) has been accepted to **AAAI 2027 Demo**!
+- **[2026-11]** 🖥️ The web workspace adds saved-video replay and uploads, a standalone memory browser, administrator-gated editing, and JSON/TXT memory import and JSON export. Online memory updates refine retrieval, timestamped evidence selection, and versioned publication. See the [frontend guide](src/frontend/README.md) and [backend update notes](src/backend/docs/online_memory_upgrade.md).
 - **[2026-09]** ✨ Multi-session support, online memory editing, and streaming answers land in the backend and web UI.
 - **[2026-08]** 🎉🎉🎉 [**EM²Mem: Event-Centric Multimodal Memory for Large Language Models**](https://arxiv.org/abs/2609.00551) — the long-term memory engine behind this backend — has been accepted to **EMNLP 2026 Findings**!
 - **[2026-07-13]** 📄 [**LightMem-Ego: Your AI Memory for Everyday Life**](https://arxiv.org/abs/2607.11487) is released on arXiv.
@@ -141,6 +142,8 @@ Ask the glasses a question in the middle of your day, and get an answer grounded
 - 🧠 **Three-tier memory** — a rolling *current* memory, *short-term* micro-events, and consolidated *long-term* episodes, routines, and preferences.
 - ⏱️ **One aligned timeline** — frames, audio chunks, ASR transcripts and metadata all share a single session timeline.
 - 🔍 **Memory-grounded answers** — every answer ships with the timestamped visual and transcript evidence behind it.
+- 🖥️ **Video and memory workspace** — replay saved videos, upload new ones, inspect memory graphs, and edit event descriptions with versioning and rollback. The pages share Chinese/English, light/dark themes, and font-size preferences.
+- 📂 **Portable text memories** — import JSON/TXT into a new queryable session and export individual memory records as JSON.
 - 👓 **Glasses and web, one session** — start capture on the glasses, keep asking from the web page in the same live session.
 - 🐳 **Self-hostable** — `docker compose up --build` brings up the web UI and the full backend worker pipeline.
 
@@ -286,16 +289,24 @@ Details: [`src/backend/README.md`](src/backend/README.md) and [`DEPLOYMENT.md`](
 
 An answer is only as good as the memory behind it, so the web UI ships a memory workspace: the same sessions, opened up — so you can see what was stored, fix what is wrong, and move memory in and out.
 
+The frontend builds three pages together and connects them to the same backend:
+
+| Page | Use it to |
+| :--- | :--- |
+| `/` | Capture browser camera/microphone input, follow live memory construction, and ask questions. |
+| `/history-demo/` | Select a saved video or upload one, replay it, inspect answer evidence, and jump to that session's memories. |
+| `/memories/` | Browse session memories and graphs, edit 30-second event descriptions, roll back an edit, and import or export text memories. |
+
 - 🗂️ **Every tier in one place** — episodic events, semantic facts, visual records and the long-term `M_lt` catalog, browsable per session; open a 30-second cell to read its caption, transcript, keyframes and timestamps.
 - 🕸️ **Walk the graphs** — episodic and semantic graphs as interactive node-link views; click an event, fact or entity to read its description, scene, critical speech, triples and first/last-seen time, with the evidence that links the two graphs.
-- ✏️ **Correct memory in place** — edit a 30-second episodic record and save; coarser summaries, semantic memories, graphs and retrieval indexes regenerate, and any earlier version can be rolled back.
-- 🏷️ **Rename sessions** — retitle a session without touching the media behind it.
-- 📦 **Export and import** — export records, or import a `.json` / `.txt` memory file (≤ 10 MiB) and follow the build task through to a ready query service.
+- ✏️ **Correct memory in place** — edit a 30-second episodic record and save; coarser summaries, semantic memories, graphs and retrieval indexes regenerate, and the latest supported edit can be rolled back.
+- 🏷️ **Rename sessions** — retitle a session without touching the media behind it when the connected backend supports title updates.
+- 📦 **Export and import** — export individual records from the published memory version, or import a `.json` / `.txt` memory file (≤ 10 MiB, up to 1000 records) into a new session and follow the build task through to a ready query service. JSON transfers text and structured annotations; media files are not included.
 - 🎞️ **Upload a video, then ask** — drop in an MP4/MOV/WebM/MKV/AVI clip (≤ 95 MiB), let the backend build its full memory offline, then replay it and ask. The whole stack, tested without the glasses.
 - 🎨 **Reads the way you like** — light and dark themes, English or 中文, and three text sizes, remembered per browser on every page.
 
 > [!NOTE]
-> Editing controls unlock with an administrator passcode, so a shared demo link stays read-only while owners can still correct their own memory.
+> Administrator mode unlocks editing controls in the browser tab. Backend editability, version, and idempotency checks still apply.
 
 <div align="center">
   <picture>
@@ -328,7 +339,23 @@ An answer is only as good as the memory behind it, so the web UI ships a memory 
   </tr>
 </table>
 
-The workspace lives at `/memories/` next to the live view, and the saved-video flow at `/history-demo/`; the [frontend README](src/frontend/README.md) covers both in detail.
+**Replay and upload.** Saved-video playback preserves its position and question
+history. For a new video upload, wait for the full-video memory and retrieval
+indexes to finish, then replay and ask. Questions use the session's generated
+memories independently of playback position; include a time range in the question
+when needed. Live capture continues to use the input received so far.
+
+**Memory and evidence updates.** The backend retains `M_cur`, `M_st`, `M_lt`, and
+the interaction cache. Short-term retrieval can combine lexical and text-vector
+search; queries carry time constraints and follow-up context; event narratives
+are preserved before optional detail text; image evidence carries capture times
+and source metadata. Versioned snapshots keep queries on a published memory state
+while an update is being prepared.
+
+See the [frontend guide](src/frontend/README.md) for page workflows and deployment,
+the [backend guide](src/backend/README.md) for configuration, and the
+[import/export contract](src/backend/docs/memory_import_export.md) for file formats
+and task states.
 
 ---
 
@@ -476,8 +503,8 @@ Representative commercial assistants, text-based memory systems, and egocentric 
 | Path | What's inside | Docs |
 | :--- | :--- | :--- |
 | [`src/ai_glass_app/`](src/ai_glass_app/) | Android app for Rokid AI Glasses (Kotlin, Jetpack Compose, CameraX) | [README](src/ai_glass_app/README.md) |
-| [`src/frontend/`](src/frontend/) | Vite + React 19 web UI: live capture, Q&A, and a memory workspace with episodic and semantic graph views | [README](src/frontend/README.md) |
-| [`src/backend/`](src/backend/) | FastAPI service plus the online worker pipeline (ASR, memory, retrieval, QA) | [README](src/backend/README.md) |
+| [`src/frontend/`](src/frontend/) | Web pages for capture, replay/uploads, QA, graphs, memory management, and import/export | [README](src/frontend/README.md) |
+| [`src/backend/`](src/backend/) | FastAPI service and workers for ASR, memory construction, retrieval, QA, versioned editing, and import/export | [README](src/backend/README.md) |
 | [`research/em2mem/`](research/em2mem/) | Offline EM²Mem research implementation, preprocessing, and evaluation code | [README](research/em2mem/README.md) |
 | [`compose.yaml`](compose.yaml), [`deploy/`](deploy/) | Docker Compose stack and deployment notes | [DOCKER.md](deploy/DOCKER.md) |
 

@@ -175,11 +175,19 @@ def build_online_em2mem_memory(
         evidence_rel = "evidence/session_evidence.json"
         episodic_source = "legacy_evidence"
         em2mem_update_mode = "full_rebuild"
+    elif source == "imported_memory":
+        evidence_filename = "imported_memory_evidence.json"
+        captioned_30sec_rel = "captions/imported_30sec_captioned.json"
+        evidence_rel = "evidence/imported_memory_evidence.json"
+        episodic_source = "imported_memory"
+        em2mem_update_mode = "full_rebuild"
     else:
-        raise ValueError("source must be auto, online_evidence/legacy_evidence, or mst_episodic")
+        raise ValueError("source must be auto, online_evidence/legacy_evidence, mst_episodic, or imported_memory")
     memory_generation_backend = _memory_generation_backend(os.getenv("EM2MEM_MEMORY_GENERATION_BACKEND"))
 
-    if source == "mst_episodic":
+    if source == "imported_memory":
+        required = [session_dir / evidence_rel, session_dir / captioned_30sec_rel]
+    elif source == "mst_episodic":
         # Stage 5B2 uses refined M_st micro-events as the 30s source.
         # It must not depend on the legacy preprocess/session_30sec.json or segments_30s.json files.
         required = [
@@ -283,13 +291,22 @@ def build_online_em2mem_memory(
     _append_log(log_path, f"build start session={session_id} model={model} source={source}")
 
     evidence_docs = load_online_evidence(session_dir, evidence_filename=evidence_filename)
-    caption_30s = build_caption_items(session_id=session_id, evidence_docs=evidence_docs, limit_segments=limit_segments)
+    caption_30s = (read_json(session_dir / captioned_30sec_rel, default=[])
+                   if source == "imported_memory" else
+                   build_caption_items(session_id=session_id, evidence_docs=evidence_docs, limit_segments=limit_segments))
     caption_paths = write_caption_files(
         layout,
         caption_30s,
         model_name=model,
         generation_backend=memory_generation_backend,
     )
+    if source == "imported_memory" and all(item.get("timestamp_known") is False for item in caption_30s):
+        for scale, path in caption_paths.items():
+            if scale != "30sec":
+                rows = read_json(path, default=[])
+                for row in rows:
+                    row["timestamp_known"] = False
+                write_json(path, rows)
     caption_by_scale = {
         "30sec": caption_30s,
         "3min": _load_caption_scale(layout.caption_3min_path),
@@ -442,6 +459,10 @@ def build_online_em2mem_memory(
                 "mst_evidence_path": "evidence/mst_session_evidence.json" if mst_evidence_path.exists() else None,
             }
         )
+    if source == "imported_memory":
+        config.update(session_kind="imported_memory", interaction_mode="text")
+        config["source"]["input_video"] = None
+        config["source"]["adapter"] = "memory_text_import"
     write_json(layout.memory_config_path, config)
     write_status(
         session_dir,

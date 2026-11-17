@@ -30,7 +30,90 @@ offline regression suite.
 - **Evidence-grounded QA** — text, visual, current, short-term, and long-term retrieval, packed into a compact evidence view before answering.
 - **Streaming answers** — server-sent-event endpoints for token-by-token replies.
 - **Memory management** — inspection, editing, versioning, rollback, and a memory graph API.
+- **Historical-video APIs** — background full-video uploads, build progress and recovery, session-bound playback metadata, and HTTP byte-range video delivery.
+- **Text-memory transfer** — import JSON/TXT into an independent, queryable session and export individual memory records as JSON. See [Memory import and export](docs/memory_import_export.md).
 - **Worker isolation** — preprocessing, ASR, memory, visual embedding, and query work each run as separate processes.
+
+## 🧠 Online Memory Updates
+
+The online pipeline retains current memory (`M_cur`), short-term micro-events
+(`M_st`), long-term memory (`M_lt`), and the interaction cache. The updates cover
+how memories are formed, retrieved, published, and supplied to the answer model:
+
+- **Memory construction** — current-frame change scores use original source
+  captures; short-term refinement can inspect up to eight retained keyframes by
+  default. Long-term `visual_summary` is generated independently of the event
+  narrative; the OpenAI-compatible visual path inspects event images.
+- **Short-term retrieval** — lexical search can be combined with an incremental
+  text-vector index. Missing or pending vectors retain the lexical path. With
+  the remote text-embedding backend, semantic short-term retrieval is enabled by
+  default unless explicitly disabled.
+- **Time and follow-up context** — explicit question times and live input cutoffs
+  take precedence over cache hints. A follow-up can inherit a person or object
+  without automatically inheriting the previous event's time or transient state.
+- **Answer evidence** — selected event narratives are preserved before optional
+  detail text. Image ranking uses saved observations, action timestamps, event
+  priority, and coverage, with capture-time/source labels and duplicate handling.
+  Text and image budgets are independent.
+- **Versioned publication** — consolidation validates source versions and queries
+  pin a published snapshot. Editing a supported 30-second description rebuilds
+  related summaries and retrieval data before publication; version checks,
+  idempotent retries, and rollback support the editor workflow.
+- **Cache and failure handling** — failed generation, local evidence summaries,
+  text-only fallback, and successful multimodal answers have distinct outcomes.
+  A failed answer does not establish a normal follow-up cache anchor. Compact
+  task polling omits repeated debug traces while preserving answer evidence.
+
+| Setting | Default | Purpose |
+| :--- | :--- | :--- |
+| `EM2MEM_MST_REFINE_MAX_IMAGES` | `8` | Maximum retained frames supplied to a short-term refinement call. |
+| `EM2MEM_MST_SEMANTIC_ENABLED` | Enabled with the remote text-embedding backend | Enable or disable the additional short-term vector-retrieval path. |
+| `EM2MEM_PROMPT_EVIDENCE_TOKENS` | `6000` | Soft evidence-text target; preserve selected event narratives before optional detail units. |
+| `EM2MEM_LLM_EVENT_SELECTOR_ENABLED` | `1` | Set to `0` to bypass the query-time LLM event selector; the answer model remains enabled. |
+
+See [online memory upgrade notes](docs/online_memory_upgrade.md) for the policy
+details and regression workflow, and [`.env.example`](.env.example) for model and
+deployment settings.
+
+## 🎞️ Historical Video APIs
+
+Uploaded videos use the full-video preprocessing, memory-building, and retrieval
+indexing pipeline. They become available for replay and questions after the
+memory and indexes are ready; they do not become camera sessions.
+
+| Action | Endpoint |
+| :--- | :--- |
+| Upload a video (up to 95 MiB) | `POST /video-uploads` |
+| Poll upload/build progress | `GET /video-uploads/{upload_id}` |
+| Resume a recoverable upload | `POST /video-uploads/{upload_id}/resume` |
+| Read video binding and memory coverage | `GET /session/{session_id}/demo-media` |
+| Play or seek the bound video | `GET /session/{session_id}/demo-video` |
+
+Video responses support HTTP byte ranges and a media-version parameter. Saved
+video questions use generated session memory independently of playback position;
+live queries continue to respect their input cutoff. See the
+[frontend workflow](../frontend/README.md) for replay, upload,
+memory navigation, and editing.
+
+## 📂 Memory Import & Export
+
+The `/memories/` web workspace can import a UTF-8 JSON or TXT file up to 10 MiB
+and 1000 records. Each upload creates a new session; queries become available
+after memory construction, retrieval indexing, and query initialization succeed.
+Restarting the API recovers interrupted queued or processing imports.
+
+| Action | Endpoint |
+| :--- | :--- |
+| Upload text memories | `POST /memory-imports` (multipart `file`, `format`, optional `title`) |
+| Poll import progress | `GET /memory-imports/{task_id}` |
+| Download one memory | `GET /session/{session_id}/memories/{memory_id}/export?format=json` |
+| Download using only a memory ID | `GET /memories/{memory_id}/export?format=json` |
+
+Exports read the currently published memory version and preserve full text and
+structured record data. Exported JSON can be imported into a new session; media
+files, local filesystem paths, and embeddings are not included. Untimed text is
+marked as having no observed capture time. See the [format, readiness contract,
+examples, and verification instructions](docs/memory_import_export.md).
 
 ## 🚀 Quick Start
 

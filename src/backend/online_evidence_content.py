@@ -471,8 +471,8 @@ def content_fields(item: dict[str, Any]) -> dict[str, Any]:
     for source in sources:
         if not isinstance(source, dict):
             continue
-        for key in ("visual_summary", "main_actions", "state_changes", "visual_observations", "visual_objects", "supporting_facts", "parent_context", "keyframe_captions", "keyframes", "source_micro_events"):
-            if source.get(key):
+        for key in ("visual_summary", "main_actions", "state_changes", "visual_observations", "visual_objects", "supporting_facts", "parent_context", "keyframe_captions", "keyframes", "source_micro_events", "timestamp_known"):
+            if source.get(key) or (key == "timestamp_known" and source.get(key) is False):
                 fields[key] = source[key]
     return fields
 
@@ -723,6 +723,9 @@ def prompt_evidence(question: str, items: list[dict[str, Any]], max_tokens: int 
         entry = {"evidence_id": item.get("evidence_id") or item.get("memory_id"), "source": item.get("source_memory") or "M_lt", "time": [item.get("start_time"), item.get("end_time")], "status": item.get("status") or "final"}
         output.append(entry)
         fields = {"caption": item.get("caption") or "", "transcript": item.get("transcript") or "", **content_fields(item)}
+        if fields.get("timestamp_known") is False:
+            entry["time"] = [None, None]
+            entry["source_note"] = "Imported textual memory; no observed capture time was provided."
         # A selected event needs its own narrative, especially for action order.
         # Frame observations supplement that narrative instead of competing with
         # individual caption sentences and silently removing the event context.

@@ -45,8 +45,8 @@ class MemoryNormalizer:
             "status": _text_or_none(record.get("status")),
             "event_time": {
                 "date": _text_or_none(record.get("date")),
-                "start_seconds": _time_number(record.get("start_time", record.get("start"))),
-                "end_seconds": _time_number(record.get("end_time", record.get("end"))),
+                "start_seconds": None if record.get("timestamp_known") is False else _time_number(record.get("start_time", record.get("start"))),
+                "end_seconds": None if record.get("timestamp_known") is False else _time_number(record.get("end_time", record.get("end"))),
             },
             "data": self._data(record, EPISODIC_DATA_FIELDS),
         }
