@@ -95,6 +95,11 @@ class LongTermMemoryCatalogService:
             if not _valid_session_id(session_id):
                 continue
             try:
+                import_path = session_dir / "memory_import.json"
+                if import_path.exists():
+                    imported = json.loads(import_path.read_text(encoding="utf-8"))
+                    if imported.get("state") != "ready" or imported.get("query_ready") is not True:
+                        continue
                 upload_path = session_dir / 'video_upload.json'
                 if upload_path.exists():
                     upload = json.loads(upload_path.read_text(encoding='utf-8'))

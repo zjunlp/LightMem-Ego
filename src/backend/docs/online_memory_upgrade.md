@@ -72,13 +72,20 @@ and retrieval-index functions. It does not make future video frames available
 to a live prefix session. Camera sessions are separate from historical uploads.
 The legacy optional `demo.api` wrapper is not part of this update.
 
-The existing `PUT /session/{session_id}/title` route continues to update display
-titles using optimistic revision checks.
+Text-memory transfer adds `POST /memory-imports`,
+`GET /memory-imports/{task_id}`, and
+`GET /session/{session_id}/memories/{memory_id}/export?format=json`.
+Imports create independent sessions and wait for memory publication, retrieval
+indexes, and successful query initialization before permitting questions. Exports
+read the currently published record and can be reimported; media files and local
+paths are not transferred. See [Memory import and export](memory_import_export.md).
 
-The React frontend, glasses client, root Docker configuration, and offline
-research tree are retained. UI controls for new routes can be integrated
-separately. Existing memory-edit routes also expose additive editability and
-title metadata to clients.
+The [web frontend](../../frontend/README.md) integrates live capture, saved-video
+replay/uploads, and an independent memory workspace. It detects optional routes
+through `/openapi.json`; session title editing appears only when a connected
+backend advertises `PUT /session/{session_id}/title`. Existing memory-edit routes
+also expose editability and title metadata to clients. The glasses client and
+offline research tree remain separate from these web workflows.
 
 Task polling at `/query_task/{task_id}` and `/task/query/{task_id}` accepts
 `compact=1` to omit repeated retrieval traces from the client response while

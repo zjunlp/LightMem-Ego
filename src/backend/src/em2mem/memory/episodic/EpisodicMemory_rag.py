@@ -322,7 +322,9 @@
 #                 "child_ids": list(entry.get("child_ids", []) or []),
 #             }
 
-#             caption_entry = CaptionEntryRAG(
+#             if "timestamp_known" in entry:
+                metadata["timestamp_known"] = entry["timestamp_known"]
+            caption_entry = CaptionEntryRAG(
 #                 id=caption_id,
 #                 doc_id=doc_id,
 #                 text=entry.get("text", entry.get("fine_caption", "")),

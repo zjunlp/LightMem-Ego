@@ -91,7 +91,29 @@ GET  /session/{session_id}/demo-media
 GET  /session/{session_id}/demo-video
 GET  /session/{session_id}/memories
 GET  /memories/sessions
+PUT  /session/{session_id}/memories/30sec
+POST /session/{session_id}/memories/30sec/rollback
+GET  /session/{session_id}/memory-graph
+POST /session/{session_id}/ask
+GET  /session/{session_id}/status
+GET  /session/{session_id}/query_warmup
+POST /memory-imports
+GET  /memory-imports/{task_id}
+GET  /session/{session_id}/memories/{memory_id}/export?format=json
+GET  /openapi.json
 ```
+
+Video uploads and text-memory imports return task receipts and build memory in
+the background. Keep their session directories on persistent storage and retain
+the configured LLM and text-embedding services. The import service recovers
+queued/processing jobs when the API starts. The existing query workers serve
+questions once the new session is ready.
+
+After publishing, check all three HTML entries and the `/api/openapi.json`
+capability response through the same public proxy. Use a saved session to check
+video seeking, memory navigation, editing/rollback, and a JSON record download.
+See the [frontend workflows](README.md) and [import/export
+contract](../backend/docs/memory_import_export.md) for file limits and task states.
 
 ## Troubleshooting
 
@@ -99,7 +121,7 @@ GET  /memories/sessions
 - If API requests fail, check `VITE_API_BASE_URL`, Nginx proxy routing, backend availability, and backend CORS settings.
 - If refreshing a frontend route returns 404, ensure Nginx uses `try_files $uri $uri/ /index.html;`.
 - If static assets return 404, confirm that the contents of `online_web/dist/` were copied to the configured web root.
-- If upload, replay or compact task polling is unavailable, use the corresponding updated backend; copying frontend files does not install backend routes.
+- If upload, replay, import/export or compact task polling is unavailable, use the corresponding updated backend; copying frontend files does not install backend routes.
 - Optional import/rename/export actions follow backend OpenAPI capabilities. They remain hidden if unsupported or capability discovery fails.
 
 ## Offline Browser Checks

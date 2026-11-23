@@ -168,7 +168,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["ETag", "X-Request-ID"],
+    expose_headers=["ETag", "X-Request-ID", "Content-Disposition"],
 )
 
 
@@ -1236,7 +1236,8 @@ def _memory_error_response(exc: Exception, request_id: str | None = None) -> JSO
     from online_memory_edit.service import MemoryEditError
     from online_memory_view.graph_service import MemoryGraphError
     from online_memory_view.service import MemoryViewError
-    if isinstance(exc, (MemoryEditError, MemoryGraphError, MemoryViewError)):
+    from online_memory_transfer import MemoryTransferError
+    if isinstance(exc, (MemoryEditError, MemoryGraphError, MemoryViewError, MemoryTransferError)):
         payload = {
             "status": "error",
             "error": {"code": exc.code, "message": exc.message, "details": getattr(exc, "details", {})},
@@ -1291,6 +1292,77 @@ async def resume_history_video_upload(upload_id: str) -> JSONResponse:
 @app.on_event("startup")
 async def recover_history_video_uploads():
     await run_in_threadpool(_video_upload_service().recover)
+
+
+def _memory_import_service():
+    from online_memory_transfer import MemoryImportService
+    return MemoryImportService(ONLINE_SESSIONS_DIR, PROJECT_ROOT)
+
+
+@app.post("/memory-imports", status_code=202)
+async def create_memory_import(request: FastAPIRequest, file: UploadFile = File(...),
+                               format: str = Form("auto"), title: str = Form("")) -> JSONResponse:
+    request_id = request.headers.get("X-Request-ID") or uuid4().hex
+    try:
+        result = await run_in_threadpool(_memory_import_service().receive, file.file, file.filename or "memory.json", format, title)
+        return JSONResponse(status_code=202, content=result, headers={"X-Request-ID": request_id})
+    except Exception as exc:
+        return _memory_error_response(exc, request_id)
+    finally:
+        await file.close()
+
+
+@app.get("/memory-imports/{task_id}")
+async def memory_import_status(task_id: str, request: FastAPIRequest) -> JSONResponse:
+    request_id = request.headers.get("X-Request-ID") or uuid4().hex
+    try:
+        result = await run_in_threadpool(_memory_import_service().status, task_id)
+        return JSONResponse(content=result, headers={"X-Request-ID": request_id})
+    except Exception as exc:
+        return _memory_error_response(exc, request_id)
+
+
+@app.on_event("startup")
+async def recover_memory_imports():
+    await run_in_threadpool(_memory_import_service().recover)
+
+
+def _memory_export_response(session_id: str, memory_id: str, format: str, request_id: str):
+    from online_memory_transfer import MemoryTransferError, export_memory
+    try:
+        if format != "json":
+            raise MemoryTransferError(400, "unsupported_export_format", "Only JSON export is supported.")
+        result = export_memory(ONLINE_SESSIONS_DIR, session_id, memory_id)
+        # Use a fixed safe filename, independent of user-controlled titles.
+        filename = "memory-" + session_id + "-" + result["memory_type"] + ".json"
+        return Response(content=json.dumps(result, ensure_ascii=False, allow_nan=False).encode("utf-8"),
+                        media_type="application/json", headers={"X-Request-ID": request_id,
+                        "Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"})
+    except Exception as exc:
+        return _memory_error_response(exc, request_id)
+
+
+@app.get("/session/{session_id}/memories/{memory_id}/export")
+async def export_session_memory(session_id: str, memory_id: str, request: FastAPIRequest, format: str = "json") -> Response:
+    request_id = request.headers.get("X-Request-ID") or uuid4().hex
+    return await run_in_threadpool(_memory_export_response, session_id, memory_id, format, request_id)
+
+
+@app.get("/memories/{memory_id}/export")
+async def export_memory_by_id(memory_id: str, request: FastAPIRequest, format: str = "json") -> Response:
+    from online_memory_transfer import MemoryTransferError
+    request_id = request.headers.get("X-Request-ID") or uuid4().hex
+    def find():
+        if format != "json":
+            return _memory_error_response(MemoryTransferError(400, "unsupported_export_format", "Only JSON export is supported."), request_id)
+        for session in ONLINE_SESSIONS_DIR.iterdir():
+            if not session.is_dir() or session.is_symlink() or not _valid_memory_session_id(session.name):
+                continue
+            response = _memory_export_response(session.name, memory_id, format, request_id)
+            if response.status_code == 200:
+                return response
+        return _memory_error_response(MemoryTransferError(404, "memory_not_found", "Memory record not found."), request_id)
+    return await run_in_threadpool(find)
 
 
 @app.get("/memories/sessions")
@@ -1508,13 +1580,19 @@ async def query_task_status_alias(task_id: str, http_request: FastAPIRequest = N
 
 @app.get("/session/{session_id}/status")
 async def session_status(session_id: str) -> JSONResponse:
+    if not _valid_memory_session_id(session_id):
+        return JSONResponse(status_code=400, content={"status": "error", "message": "invalid session_id"})
     status_path = ONLINE_SESSIONS_DIR / session_id / "status.json"
     if not status_path.exists():
         return JSONResponse(
             status_code=404,
             content={"status": "error", "message": f"status.json not found for session {session_id}"},
         )
-    return JSONResponse(status_code=200, content=read_json(status_path, default={}))
+    payload = read_json(status_path, default={})
+    if payload.get("session_kind") == "imported_memory":
+        config = read_json(ONLINE_SESSIONS_DIR / session_id / "em2mem/memory_config.json", default={})
+        payload["memory_version"] = config.get("latest_ready_memory_version") or config.get("memory_version")
+    return JSONResponse(status_code=200, content=payload)
 
 
 @app.get("/session/{session_id}/demo-media")
@@ -2373,6 +2451,12 @@ async def _handle_ask_session(
     allow_inactive_session: bool = False,
     task_source: str = "api",
 ) -> JSONResponse | StreamingResponse:
+    import_state_path = ONLINE_SESSIONS_DIR / session_id / "memory_import.json" if _valid_memory_session_id(session_id) else None
+    if import_state_path is not None and import_state_path.exists():
+        imported = read_json(import_state_path, default={})
+        if imported.get("state") != "ready" or imported.get("query_ready") is not True:
+            return JSONResponse(status_code=409, content={"status": "not_ready", "session_id": session_id,
+                "error": {"code": "memory_import_query_not_ready", "message": "Imported memories are still being prepared."}})
     upload_state_path = ONLINE_SESSIONS_DIR / session_id / "video_upload.json" if _valid_session_id(session_id) else None
     if upload_state_path is not None and upload_state_path.exists():
         upload_state = read_json(upload_state_path, default={})
